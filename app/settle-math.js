@@ -67,6 +67,11 @@ export function holderPayoff(kind, settlement, strike, collateral) {
   return ph;
 }
 
+/** What the seller keeps of the locked collateral. The premium is paid separately. */
+export function writerPayoff(kind, settlement, strike, collateral) {
+  return collateral - holderPayoff(kind, settlement, strike, collateral);
+}
+
 // Mirrors the vault's output rules. A holder leg at or below dust pays the
 // whole coin to the writer, including when the writer leg is dust too.
 export function settlementOutputs(ph, locked) {

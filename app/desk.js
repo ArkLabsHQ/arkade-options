@@ -6,9 +6,9 @@ import {
   PRICE_MAX,
   Q_MAX,
   Q_MIN,
-  holderPayoff,
   settle,
   windows,
+  writerPayoff,
 } from "./settle-math.js";
 
 const ORACLES = ["Chainlink", "DIA", "Pyth", "Stork", "Band"];
@@ -24,6 +24,7 @@ const state = {
   quotes: null,
   deposit: null,
   quoting: false,
+  view: "quote",
   positions: loadPositions(),
   selected: null,
   settleText: "",
@@ -187,8 +188,6 @@ function renderStrikes() {
     strikeKey = key;
     host.replaceChildren();
     rows.forEach((cents, index) => {
-      const delta = Number((cents - state.spotCents) * 10000n / state.spotCents) / 100;
-      const sign = delta > 0 ? "+" : "";
       const btn = document.createElement("button");
       btn.type = "button";
       btn.className = "strike";
@@ -196,7 +195,7 @@ function renderStrikes() {
       btn.dataset.index = String(index);
       const d = document.createElement("span");
       d.className = "delta";
-      d.textContent = `${sign}${delta.toFixed(1)}%`;
+      d.textContent = pctFromSpot(cents);
       const px = document.createElement("span");
       px.className = "px";
       px.textContent = fmtUsdFromCents(cents);
@@ -209,37 +208,99 @@ function renderStrikes() {
   }
 }
 
+function pctFromSpot(cents) {
+  const delta = Number((cents - state.spotCents) * 10000n / state.spotCents) / 100;
+  const sign = delta > 0 ? "+" : "";
+  return `${sign}${delta.toFixed(1)}%`;
+}
+
 function renderPayoff() {
-  const host = $("payoff");
   const sats = sizeSats();
   if (state.spotCents == null || sats == null || sizeError(sats)) {
-    host.replaceChildren();
+    $("payoff").replaceChildren();
     return;
   }
-  const k = strike();
-  const q = sats;
-  const lo = state.kind === 0 ? k * 70n / 100n : k * 30n / 100n;
-  const hi = state.kind === 0 ? k * 160n / 100n : k * 130n / 100n;
+  drawPayoff($("payoff"), {
+    kind: state.kind,
+    strike: strike(),
+    collateral: sats,
+    spot: state.spotCents,
+  });
+}
+
+function drawPayoff(host, { kind, strike: k, collateral: q, spot }) {
+  host.replaceChildren();
+  if (spot == null || q == null || q <= 0n || k == null) return;
+  let lo = kind === 0 ? k * 70n / 100n : k * 30n / 100n;
+  let hi = kind === 0 ? k * 160n / 100n : k * 130n / 100n;
+  if (spot < lo) lo = spot * 90n / 100n;
+  if (spot > hi) hi = spot * 110n / 100n;
+  if (hi <= lo) hi = lo + 1n;
+  const steps = 48;
   const points = [];
-  for (let i = 0; i <= 48; i += 1) {
-    const px = lo + (hi - lo) * BigInt(i) / 48n;
-    const y = holderPayoff(state.kind, px === 0n ? 1n : px, k, q);
-    points.push([px, y]);
+  for (let i = 0; i <= steps; i += 1) {
+    const px = lo + (hi - lo) * BigInt(i) / BigInt(steps);
+    const price = px === 0n ? 1n : px;
+    points.push([price, writerPayoff(kind, price, k, q)]);
   }
-  const w = 320;
-  const h = 96;
-  const pad = 8;
-  const sx = (px) => pad + Number(px - lo) / Number(hi - lo) * (w - pad * 2);
-  const sy = (y) => h - pad - Number(y) / Number(q) * (h - pad * 2);
-  const line = points.map(([px, y], i) => `${i ? "L" : "M"}${sx(px).toFixed(1)},${sy(y).toFixed(1)}`).join(" ");
+  const w = 480;
+  const h = 210;
+  const left = 78;
+  const right = 12;
+  const top = 28;
+  const bottom = 46;
+  const plotW = w - left - right;
+  const plotH = h - top - bottom;
+  const sx = (px) => left + Number(px - lo) / Number(hi - lo) * plotW;
+  const sy = (y) => top + (1 - Number(y) / Number(q)) * plotH;
+  const svg = svgEl("svg", {
+    viewBox: `0 0 ${w} ${h}`,
+    role: "img",
+    "aria-label": `Writer payoff. Spot ${fmtUsdFromCents(spot)}, strike ${fmtUsdFromCents(k)} (${pctFromSpot(k)}). You keep between 0 and ${fmtBtc(q)} BTC of collateral.`,
+  });
+  const levels = [0n, q / 4n, q / 2n, q];
+  for (const level of levels) {
+    const y = sy(level);
+    svg.append(svgEl("line", { x1: left, x2: w - right, y1: y, y2: y, class: "grid" }));
+    svg.append(svgEl("text", { x: left - 8, y, class: "ylab" }, fmtBtc(level)));
+  }
+  const spotX = sx(spot);
   const strikeX = sx(k);
-  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-  svg.setAttribute("viewBox", `0 0 ${w} ${h}`);
-  svg.setAttribute("role", "img");
-  svg.setAttribute("aria-label", `Holder payoff from ${fmtUsdFromCents(lo)} to ${fmtUsdFromCents(hi)}`);
-  svg.innerHTML = `<path d="${line}" fill="none" stroke="#dff25a" stroke-width="1.5"/>
-    <line x1="${strikeX.toFixed(1)}" y1="${pad}" x2="${strikeX.toFixed(1)}" y2="${h - pad}" stroke="#9a947f" stroke-dasharray="2 3"/>`;
-  host.replaceChildren(svg);
+  svg.append(svgEl("line", { x1: spotX, x2: spotX, y1: top, y2: top + plotH, class: "spot-line" }));
+  svg.append(svgEl("line", { x1: strikeX, x2: strikeX, y1: top, y2: top + plotH, class: "strike-line" }));
+  const line = points.map(([px, y], i) => `${i ? "L" : "M"}${sx(px).toFixed(1)},${sy(y).toFixed(1)}`).join(" ");
+  svg.append(svgEl("path", { d: line, class: "curve" }));
+  const crowded = Math.abs(spotX - strikeX) < 96;
+  svg.append(svgEl("text", {
+    x: clamp(spotX, left + 28, w - right - 28),
+    y: top + plotH + 16,
+    class: "xlab spot-label",
+  }, fmtUsdFromCents(spot)));
+  svg.append(svgEl("text", {
+    x: clamp(spotX, left + 28, w - right - 28),
+    y: top + plotH + 30,
+    class: "xlab spot-label sub",
+  }, "spot"));
+  const strikeAnchorX = crowded ? clamp(strikeX + (strikeX >= spotX ? 54 : -54), left + 36, w - right - 36) : clamp(strikeX, left + 36, w - right - 36);
+  const strikeY = crowded ? top - 6 : top + plotH + 16;
+  svg.append(svgEl("text", { x: strikeAnchorX, y: strikeY, class: "xlab strike-label" }, fmtUsdFromCents(k)));
+  svg.append(svgEl("text", {
+    x: strikeAnchorX,
+    y: crowded ? top + 10 : top + plotH + 30,
+    class: "xlab strike-label sub",
+  }, `strike ${pctFromSpot(k)}`));
+  host.append(svg);
+}
+
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function svgEl(name, attrs, text) {
+  const node = document.createElementNS("http://www.w3.org/2000/svg", name);
+  for (const [key, value] of Object.entries(attrs)) node.setAttribute(key, String(value));
+  if (text != null) node.textContent = text;
+  return node;
 }
 
 function renderTicket() {
@@ -410,9 +471,26 @@ function countdown(deadline) {
   return `Closes in ${m}:${s.toString().padStart(2, "0")}`;
 }
 
+function positionChart(position) {
+  const chart = document.createElement("figure");
+  chart.className = "payoff";
+  const caption = document.createElement("figcaption");
+  caption.textContent = "Writer payoff in BTC for this position, at the current spot.";
+  const host = document.createElement("div");
+  drawPayoff(host, {
+    kind: position.kind,
+    strike: position.strike,
+    collateral: position.collateral,
+    spot: state.spotCents,
+  });
+  chart.append(caption, host);
+  return chart;
+}
+
 function detail(position) {
   const box = document.createElement("div");
   box.className = "lab";
+  box.append(positionChart(position));
   if (position.status === "locking" || position.status === "deposited" || position.status === "expired") {
     box.append(depositDetail(position));
     return box;
@@ -670,8 +748,22 @@ async function lock() {
   state.selected = position.id;
   state.settleText = fmtUsdFromCents(state.spotCents);
   persist();
+  setView("positions");
   renderTicket();
   renderBlotter();
+}
+
+function setView(view) {
+  state.view = view;
+  document.body.dataset.view = view;
+  $("view-quote").setAttribute("aria-pressed", String(view === "quote"));
+  $("view-positions").setAttribute("aria-pressed", String(view === "positions"));
+  const n = state.positions.length;
+  $("view-positions").textContent = n ? `Positions (${n})` : "Positions";
+  if (view === "positions" && n && !state.positions.some((p) => p.id === state.selected)) {
+    state.selected = state.positions[0].id;
+    renderBlotter();
+  }
 }
 
 function tick() {
@@ -783,6 +875,8 @@ function bind() {
   });
   $("size").addEventListener("input", onTermsChanged);
   $("lock").addEventListener("click", lock);
+  $("view-quote").addEventListener("click", () => setView("quote"));
+  $("view-positions").addEventListener("click", () => setView("positions"));
   $("copy-address").addEventListener("click", async () => {
     const address = state.deposit?.address;
     if (!address) return;
@@ -828,6 +922,7 @@ function loadArtifact() {
 }
 
 bind();
+setView("quote");
 reconcileLocks();
 renderTicket();
 renderBlotter();

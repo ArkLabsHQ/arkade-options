@@ -15,6 +15,10 @@
     <div>
       <h1>Arkade Options</h1>
       <p class="sub">Sell a covered call or a limited put on Mutinynet. You send the collateral. Settlement price is a three-median TWAP.</p>
+      <nav class="views" aria-label="Pages">
+        <button type="button" id="view-quote" aria-pressed="true">Quote</button>
+        <button type="button" id="view-positions" aria-pressed="false">Positions</button>
+      </nav>
     </div>
     <p class="spot"><span id="network" class="network">Mutinynet</span><span id="spot-source">BTC/USD</span> <strong id="spot-px">Loading</strong></p>
   </header>
@@ -63,7 +67,7 @@
       </div>
 
       <figure class="payoff">
-        <figcaption>Holder payoff in BTC, if this strike settled along the curve</figcaption>
+        <figcaption id="payoff-caption">Writer payoff in BTC. This is the collateral you keep.</figcaption>
         <div id="payoff"></div>
       </figure>
     </section>

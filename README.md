@@ -12,7 +12,7 @@ pnpm test
 pnpm dev
 ```
 
-Open http://127.0.0.1:4173. The network is Mutinynet. Buying is off. You sell a covered call or a limited put, and the ticket shows the `tark1…` address that receives your collateral. The desk does not lock that coin.
+Open http://127.0.0.1:4173/app/. The network is Mutinynet. Buying is off. You sell a covered call or a limited put, and the ticket shows the `tark1…` address that receives your collateral. The desk does not lock that coin. The chart is the writer's collateral: spot, strike and its distance from spot, and 0, 1/4, 1/2, and the full notional. Positions is a separate page and draws that same chart for the position you open.
 
 A premium of 330 sats or less cannot be enforced by `option_intent.ark`, so that strike has no deposit address. A 7-day covered call at the farthest strike is the case that hits it. A closer strike is above the line.
 
@@ -30,14 +30,14 @@ Quotes are Black-Scholes with zero rates. A covered call is priced as a call. A 
 
 [`.github/workflows/pages.yml`](.github/workflows/pages.yml) runs `pnpm test`, builds `dist/`, and publishes that directory to GitHub Pages on every push to `master`.
 
-A repository admin turns the site on once: Settings → Pages → Build and deployment → Source: GitHub Actions. The site is [https://arklabshq.github.io/arkade-options/](https://arklabshq.github.io/arkade-options/).
+A repository admin turns the site on once: Settings → Pages → Build and deployment → Source: GitHub Actions. The site is [https://arklabshq.github.io/arkade-options/app/](https://arklabshq.github.io/arkade-options/app/).
 
 ```bash
 docker build -t arkade-options .
 docker run --rm -p 8080:80 arkade-options
 ```
 
-Open `http://127.0.0.1:8080/`. The image serves the built page.
+Open `http://127.0.0.1:8080/app/`. The image serves the built page.
 
 ## Artifacts
 

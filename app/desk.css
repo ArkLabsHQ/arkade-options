@@ -179,9 +179,60 @@ main {
 
 .error { min-height: 1.2em; margin: 6px 0 0; color: var(--danger); font-size: 13px; }
 
+.views {
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.views button {
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  padding: 6px 12px;
+  color: var(--muted);
+}
+
+.views button[aria-pressed="true"] {
+  background: var(--ink);
+  color: var(--accent-ink);
+  border-color: var(--ink);
+}
+
 .payoff { margin: 26px 0 0; }
 
 .payoff svg { width: 100%; height: auto; display: block; }
+
+.payoff text {
+  font-family: var(--mono);
+  font-size: 11px;
+  fill: var(--muted);
+}
+
+.payoff .ylab { text-anchor: end; dominant-baseline: middle; }
+
+.payoff .xlab { text-anchor: middle; }
+
+.payoff .spot-label { fill: var(--ink); }
+
+.payoff .strike-label { fill: var(--faint); }
+
+.payoff .grid { stroke: var(--line); stroke-width: 1; }
+
+.payoff .spot-line { stroke: var(--ink); stroke-width: 1; }
+
+.payoff .strike-line { stroke: var(--faint); stroke-width: 1; stroke-dasharray: 2 3; }
+
+.payoff .curve { fill: none; stroke: var(--accent); stroke-width: 1.75; }
+
+body[data-view="quote"] .blotter { display: none; }
+
+body[data-view="positions"] .book,
+body[data-view="positions"] .ticket { display: none; }
+
+body[data-view="positions"] main { grid-template-columns: 1fr; }
+
+body[data-view="positions"] .blotter { border-top: 0; }
 
 .ticket-kicker { margin: 0; color: var(--faint); font-size: 13px; }
 

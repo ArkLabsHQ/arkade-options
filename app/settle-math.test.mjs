@@ -3,6 +3,7 @@ import test from "node:test";
 import { bestQuote, bsCall, deskQuotes } from "./quote.js";
 import {
   holderPayoff,
+  writerPayoff,
   median3,
   oraclePreimage,
   settle,
@@ -35,6 +36,15 @@ test("covered call and limited put payoffs", () => {
   assert.equal(holderPayoff(1, 8_000n, 10_000n, q), 25_000n);
   assert.equal(holderPayoff(1, 4_000n, 10_000n, q), q);
   assert.equal(holderPayoff(1, 10_000n, 10_000n, q), 0n);
+});
+
+test("writer payoff is the collateral the seller keeps", () => {
+  const q = 100_000n;
+  assert.equal(writerPayoff(0, 20_000n, 10_000n, q), 50_000n);
+  assert.equal(writerPayoff(0, 10_000n, 10_000n, q), q);
+  assert.equal(writerPayoff(1, 8_000n, 10_000n, q), 75_000n);
+  assert.equal(writerPayoff(1, 4_000n, 10_000n, q), 0n);
+  assert.equal(writerPayoff(0, 20_000n, 10_000n, q) + holderPayoff(0, 20_000n, 10_000n, q), q);
 });
 
 test("dust folds the small leg into the other output", () => {
