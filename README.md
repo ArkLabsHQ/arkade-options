@@ -2,7 +2,7 @@
 
 Cash-settled covered calls and limited puts. The writer locks BTC notional. At expiry the covenant reads three oracle slices, takes the median of each, and computes the settlement price with multiplies and a divide.
 
-The covenants are `option_vault.ark` and `option_intent.ark` in [arkade-os/compiler](https://github.com/arkade-os/compiler/tree/master/examples/arkade_options). This repo is the desk: the page, the simulated quotes, and the image that serves them.
+The covenants are `option_vault.ark` and `option_intent.ark` in the compiler at [`examples/arkade_options`](https://github.com/arkade-os/compiler/tree/cursor/arkade-options-contracts-9f6e/examples/arkade_options). This repo is the desk: the page, the simulated quotes, and the image that serves them.
 
 ## Run
 
