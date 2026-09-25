@@ -195,10 +195,41 @@ function shortAddress(address) {
   return `${address.slice(0, 12)}…${address.slice(-6)}`;
 }
 
+const STEPS = ["Waiting for deposit", "Deposited", "Waiting for payout", "Paid out"];
+
+function progressIndex(status) {
+  if (status === "locking") return 0;
+  if (status === "deposited") return 2;
+  if (status === "filled") return 3;
+  return -1;
+}
+
+function progressSteps(status) {
+  const index = progressIndex(status);
+  if (index < 0) return null;
+  const list = document.createElement("ol");
+  list.className = "steps";
+  list.setAttribute("aria-label", "Progress");
+  STEPS.forEach((label, step) => {
+    const item = document.createElement("li");
+    item.textContent = label;
+    if (step < index || (index === STEPS.length - 1 && step === index)) item.className = "done";
+    else if (step === index) {
+      item.className = "now";
+      const spin = document.createElement("span");
+      spin.className = "spin";
+      spin.setAttribute("aria-hidden", "true");
+      item.append(spin);
+    }
+    list.append(item);
+  });
+  return list;
+}
+
 function statusLabel(position) {
   if (position.status === "locking") return "Waiting for deposit";
-  if (position.status === "deposited") return "Deposited";
-  if (position.status === "filled") return "Premium paid";
+  if (position.status === "deposited") return "Waiting for payout";
+  if (position.status === "filled") return "Paid out";
   if (position.status === "expired") return "Window closed";
   if (position.status === "refunded") return "Refunded";
   if (position.status === "settled") return "Settled";
@@ -209,8 +240,8 @@ function statusLead(position) {
   if (position.status === "locking") {
     return "Waiting for your deposit. This address keeps the payout below. The market can move until the coins arrive.";
   }
-  if (position.status === "deposited") return "Deposited. The payout is set, and the desk pays it to your address.";
-  if (position.status === "filled") return "Premium paid to your address.";
+  if (position.status === "deposited") return "Deposit received. Waiting for the desk to pay your address.";
+  if (position.status === "filled") return "Paid out to your address.";
   if (position.status === "expired") return "The fill window closed. Coins sent after that can be refunded to your address.";
   if (position.status === "refunded") return "Refunded to your address.";
   if (position.status === "settled") return "Settled.";
@@ -462,6 +493,13 @@ function renderSell() {
   }
   $("status").textContent = note;
   $("ticket-kicker").textContent = frozen ? statusLabel(position) : "Payout now";
+  const track = $("steps");
+  if (track) {
+    track.replaceChildren();
+    const steps = frozen ? progressSteps(position.status) : null;
+    track.hidden = !steps;
+    if (steps) track.append(steps);
+  }
 }
 
 function renderHome() {
@@ -494,6 +532,8 @@ function show(view, mode = "push") {
   $("who").hidden = !known || view === "connect";
   $("who-address").textContent = known ? shortAddress(state.address) : "";
   $("sub").hidden = view !== "connect";
+  const tabs = $("tabs");
+  if (tabs) tabs.hidden = view === "connect";
   document.querySelectorAll("[data-tab]").forEach((btn) => {
     btn.setAttribute("aria-pressed", String(btn.dataset.tab === view));
   });
@@ -543,6 +583,8 @@ function renderBlotter() {
     status.textContent = statusLabel(position);
     head.append(main, status);
     wrap.append(head);
+    const steps = progressSteps(position.status);
+    if (steps) wrap.append(steps);
     if (state.selected === position.id) wrap.append(detail(position));
     host.append(wrap);
   }
@@ -982,12 +1024,17 @@ function tick() {
   }
 }
 
+function listen(id, type, fn) {
+  const node = $(id);
+  if (node) node.addEventListener(type, fn);
+}
+
 function bind() {
-  $("account-save").addEventListener("click", connectAddress);
-  $("account-key").addEventListener("keydown", (event) => {
+  listen("account-save", "click", connectAddress);
+  listen("account-key", "keydown", (event) => {
     if (event.key === "Enter") connectAddress();
   });
-  $("account-change").addEventListener("click", disconnect);
+  listen("account-change", "click", disconnect);
   document.querySelectorAll("[data-tab]").forEach((btn) => {
     btn.addEventListener("click", () => {
       const view = btn.dataset.tab;
@@ -1006,7 +1053,7 @@ function bind() {
       onTermsChanged();
     });
   });
-  $("strikes").addEventListener("click", (event) => {
+  listen("strikes", "click", (event) => {
     const btn = event.target.closest("button");
     if (!btn) return;
     const index = Number(btn.dataset.index);
@@ -1014,11 +1061,11 @@ function bind() {
     state.strikeIndex = index;
     onTermsChanged();
   });
-  $("size").addEventListener("input", onTermsChanged);
-  $("confirm").addEventListener("click", () => {
+  listen("size", "input", onTermsChanged);
+  listen("confirm", "click", () => {
     void confirm();
   });
-  $("copy-address").addEventListener("click", () => {
+  listen("copy-address", "click", () => {
     const deposit = shownDeposit();
     if (!deposit) return;
     void copyToClipboard($("copy-address"), deposit.uri || paymentUri(deposit.address, deposit.amountSats));
@@ -1026,7 +1073,7 @@ function bind() {
   document.querySelectorAll("[data-kind]").forEach((btn) => {
     btn.addEventListener("click", () => openSell(Number(btn.dataset.kind)));
   });
-  $("payoff-details").addEventListener("toggle", renderPayoff);
+  listen("payoff-details", "toggle", renderPayoff);
 }
 
 async function loadSpot() {
@@ -1085,8 +1132,8 @@ function showFromHash() {
   show("home", "quiet");
 }
 
-bind();
 state.address = readAddress() || "";
+bind();
 {
   const route = routeFromHash();
   if (!state.address) show("connect", "replace");

@@ -1,4 +1,4 @@
-import { cpSync, createReadStream, existsSync, mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { cpSync, createReadStream, existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
 import http from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -7,27 +7,24 @@ import esbuild from "esbuild";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const dist = path.join(root, "dist");
-const page = path.join(dist, "app");
-mkdirSync(page, { recursive: true });
+const legacy = path.join(dist, "app");
+mkdirSync(legacy, { recursive: true });
 
 const publish = () => {
-  for (const stale of ["app.js", "app.js.map", "desk.css"]) {
-    rmSync(path.join(dist, stale), { force: true });
-  }
-  cpSync(path.join(root, "app/index.html"), path.join(page, "index.html"));
-  cpSync(path.join(root, "app/desk.css"), path.join(page, "desk.css"));
+  cpSync(path.join(root, "app/index.html"), path.join(dist, "index.html"));
+  cpSync(path.join(root, "app/desk.css"), path.join(dist, "desk.css"));
   writeFileSync(path.join(dist, ".nojekyll"), "");
   writeFileSync(
-    path.join(dist, "index.html"),
+    path.join(legacy, "index.html"),
     `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="refresh" content="0; url=app/">
+  <meta http-equiv="refresh" content="0; url=../">
   <title>Arkade Options</title>
-  <script>location.replace("app/")</script>
+  <script>location.replace("../")</script>
 </head>
-<body><p><a href="app/">Arkade Options</a></p></body>
+<body><p><a href="../">Arkade Options</a></p></body>
 </html>
 `,
   );
@@ -37,7 +34,7 @@ const ctx = await esbuild.context({
   entryPoints: [path.join(root, "app/desk.js")],
   bundle: true,
   format: "esm",
-  outfile: path.join(page, "app.js"),
+  outfile: path.join(dist, "app.js"),
   platform: "browser",
   target: "es2022",
   sourcemap: true,
@@ -64,8 +61,8 @@ const types = {
 http
   .createServer((req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");
-    if (url.pathname === "/app") {
-      res.writeHead(302, { location: "/app/" });
+    if (url.pathname === "/app" || url.pathname === "/app/") {
+      res.writeHead(302, { location: "/" });
       res.end();
       return;
     }

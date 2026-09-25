@@ -4,7 +4,7 @@ Cash-settled covered calls and limited puts on Mutinynet. The desk pays the prem
 
 ## Live
 
-- Page: <https://arklabshq.github.io/arkade-options/app/>
+- Page: <https://arklabshq.github.io/arkade-options/>
 - Desk: <https://prod-mutinynet-optionsdesk-gk1vzy-1e84a5-138-199-218-130.traefik.me/>
 
 ## Fund the desk
@@ -37,7 +37,7 @@ pnpm install
 pnpm dev
 ```
 
-- Open <http://127.0.0.1:4173/app/>
+- Open <http://127.0.0.1:4173/>
 - Paste a Mutinynet address from <https://mutinynet.arkade.money>
 - Quotes use `wss://nostr.arkade.sh`
 
@@ -46,7 +46,7 @@ docker build -f site.Dockerfile -t arkade-options .
 docker run --rm -p 8080:80 arkade-options
 ```
 
-- Open <http://127.0.0.1:8080/app/>
+- Open <http://127.0.0.1:8080/>
 - GitHub Pages publishes `dist/` on every push to `master`.
 
 ## Desk

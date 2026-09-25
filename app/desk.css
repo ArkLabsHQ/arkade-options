@@ -44,11 +44,12 @@ body[data-view="sell"] #home {
 }
 
 .tabs button {
-  background: transparent;
   border: 0;
   border-bottom: 2px solid transparent;
+  border-radius: 0;
   margin-bottom: -1px;
-  padding: 10px 12px;
+  padding: 10px 2px;
+  margin-right: 18px;
   color: var(--muted);
 }
 
@@ -69,7 +70,11 @@ body {
 
 button, input { font: inherit; color: inherit; }
 
-button { cursor: pointer; }
+button {
+  cursor: pointer;
+  appearance: none;
+  background: transparent;
+}
 
 :focus-visible {
   outline: 2px solid var(--accent);
@@ -539,6 +544,48 @@ a { color: var(--accent); }
 .position-main strong { font-weight: 500; }
 
 .position-status { color: var(--muted); font-size: 13px; }
+
+.steps {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0;
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  font-size: 12px;
+}
+
+.steps li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--faint);
+}
+
+.steps li:not(:last-child)::after {
+  content: "";
+  width: 16px;
+  height: 1px;
+  margin: 0 8px;
+  background: var(--line);
+}
+
+.steps li.done { color: var(--ink); }
+.steps li.now { color: var(--accent); }
+
+.spin {
+  width: 10px;
+  height: 10px;
+  border: 1.5px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
 
 .tag {
   color: var(--faint);
