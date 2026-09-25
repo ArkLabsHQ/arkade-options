@@ -10,7 +10,7 @@
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="desk.css">
 </head>
-<body>
+<body data-view="quote">
   <header class="top">
     <div>
       <h1>Arkade Options</h1>
@@ -24,6 +24,7 @@
   </header>
 
   <main>
+    <div class="desk">
     <section class="book" aria-label="Build an option">
       <div class="control-row">
         <div class="seg" role="group" aria-label="Your side">
@@ -78,6 +79,14 @@
       <p class="premium-meta" id="premium-meta"></p>
       <div id="quotes" class="quotes"></div>
       <p class="lock-note" id="lock-note"></p>
+      <div id="payout" class="payout" hidden>
+        <div class="field-label">
+          <span>Premium payout</span>
+          <span>On finalize</span>
+        </div>
+        <p id="payout-address" class="deposit-address"></p>
+        <p class="lock-note">This is not part of the deposit. Finalize pays the premium here. Cancel sends the collateral here too. The key is already in this browser.</p>
+      </div>
       <div id="deposit" class="deposit" hidden>
         <div class="field-label">
           <span>Send collateral</span>
@@ -91,6 +100,7 @@
       <button type="button" class="lock" id="lock" disabled>Track this deposit</button>
       <p class="status" id="status"></p>
     </aside>
+    </div>
 
     <section class="blotter" aria-label="Positions">
       <div class="field-label">

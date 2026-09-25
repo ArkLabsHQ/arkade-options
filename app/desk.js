@@ -1,4 +1,4 @@
-import { depositAddress, hasDeposit, writerHex } from "./src/fund.ts";
+import { depositAddress, hasDeposit, writerHex, writerPayoutAddress } from "./src/fund.ts";
 import { artifactLine } from "./src/program.ts";
 import { bestQuote, deskQuotes } from "./quote.js";
 import {
@@ -24,6 +24,7 @@ const state = {
   quotes: null,
   deposit: null,
   quoting: false,
+  payoutAddress: "",
   view: "quote",
   positions: loadPositions(),
   selected: null,
@@ -345,7 +346,7 @@ function renderTicket() {
     const notionalUsd = Number(sats) / 1e8 * Number(state.spotCents) / 100;
     const ann = notionalUsd > 0 ? best.usd / notionalUsd * (365 / state.days) * 100 : 0;
     $("premium-meta").textContent = `$${best.usd.toLocaleString("en-US", { maximumFractionDigits: 2 })} · ${ann.toFixed(1)}% annualized · ${best.name}`;
-    $("lock-note").textContent = `You send ${fmtBtc(sats)} BTC on Mutinynet. ${best.name} pays ${fmtBtc(best.sats)} BTC if the intent finalizes.`;
+    $("lock-note").textContent = `You send ${fmtBtc(sats)} BTC of collateral. The ${fmtBtc(best.sats)} BTC premium is paid to your writer address when the intent finalizes, not when you deposit.`;
   }
   renderDeposit(best, err);
   const locking = state.positions.some((p) => p.status === "locking");
@@ -354,19 +355,28 @@ function renderTicket() {
   $("lock").textContent = "Track this deposit";
 }
 
+function renderPayout(show) {
+  const box = $("payout");
+  box.hidden = !show;
+  $("payout-address").textContent = state.payoutAddress || "Fetching your writer address…";
+}
+
 function renderDeposit(best, err) {
   const box = $("deposit");
   const tooSmall = best && best.sats <= DUST;
   if (!best || err || state.quoting) {
     box.hidden = true;
+    renderPayout(false);
     if (!state.positions.some((p) => p.status === "locking")) $("status").textContent = "";
     return;
   }
   if (tooSmall) {
     box.hidden = true;
+    renderPayout(false);
     $("status").textContent = `Premium is ${best.sats} sats. Finalize only enforces a premium above ${DUST} sats, so this strike has no Mutinynet deposit. A closer strike does.`;
     return;
   }
+  renderPayout(true);
   const deposit = state.deposit;
   if (!deposit || deposit.status === "loading") {
     box.hidden = false;
@@ -380,6 +390,7 @@ function renderDeposit(best, err) {
   }
   if (deposit.status === "error") {
     box.hidden = true;
+    renderPayout(false);
     $("status").textContent = deposit.message;
     return;
   }
@@ -518,9 +529,9 @@ function depositDetail(position) {
   if (position.status === "deposited") {
     net.textContent = "Collateral is on this Mutinynet address.";
   } else if (position.status === "expired") {
-    net.textContent = "The deposit window closed. A coin sent here refunds with cancel once this time has passed.";
+    net.textContent = "The deposit window closed. Cancel pays this coin to your writer address once this time has passed.";
   } else {
-    net.textContent = `Send ${fmtBtc(position.collateral)} BTC to this address on Mutinynet. You lock the collateral. The desk does not.`;
+    net.textContent = `Send ${fmtBtc(position.collateral)} BTC of collateral here. The premium is paid to your writer address when this intent finalizes.`;
   }
   const addr = document.createElement("p");
   addr.className = "deposit-address";
@@ -534,6 +545,15 @@ function depositDetail(position) {
     void copyToClipboard(copy, paymentUri(position));
   });
   frag.append(net, addr, copy);
+  if (state.payoutAddress) {
+    const where = document.createElement("p");
+    where.className = "lock-note";
+    where.textContent = "Premium payout, and the collateral refund, go to your writer address.";
+    const payout = document.createElement("p");
+    payout.className = "deposit-address";
+    payout.textContent = state.payoutAddress;
+    frag.append(where, payout);
+  }
   return frag;
 }
 
@@ -947,6 +967,16 @@ function loadArtifact() {
 
 bind();
 setView("quote");
+writerHex()
+  .then((hex) => writerPayoutAddress(hex))
+  .then((address) => {
+    state.payoutAddress = address;
+    renderTicket();
+    renderBlotter();
+  })
+  .catch(() => {
+    state.payoutAddress = "";
+  });
 reconcileLocks();
 renderTicket();
 renderBlotter();

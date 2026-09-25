@@ -70,7 +70,7 @@ h1, h2 {
 
 .spot strong { font-size: 20px; font-weight: 500; }
 
-main {
+.desk {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(280px, 380px);
 }
@@ -82,6 +82,8 @@ main {
   position: sticky;
   top: 0;
   align-self: start;
+  background: var(--bg);
+  z-index: 1;
 }
 
 .control-row, .seg {
@@ -227,10 +229,7 @@ main {
 
 body[data-view="quote"] .blotter { display: none; }
 
-body[data-view="positions"] .book,
-body[data-view="positions"] .ticket { display: none; }
-
-body[data-view="positions"] main { grid-template-columns: 1fr; }
+body[data-view="positions"] .desk { display: none; }
 
 body[data-view="positions"] .blotter { border-top: 0; }
 
@@ -270,6 +269,7 @@ body[data-view="positions"] .blotter { border-top: 0; }
 
 .lock-note { margin: 16px 0 0; font-size: 14px; }
 
+.payout,
 .deposit {
   margin-top: 16px;
   padding-top: 12px;
@@ -445,7 +445,7 @@ body[data-view="positions"] .blotter { border-top: 0; }
 
 @media (max-width: 860px) {
   .top, .book, .ticket, .blotter { padding-left: 16px; padding-right: 16px; }
-  main { grid-template-columns: 1fr; }
+  .desk { grid-template-columns: 1fr; }
   .ticket { border-left: 0; border-top: 1px solid var(--line); position: static; }
   .position-head, .slice { grid-template-columns: 1fr 1fr; }
   .spot { text-align: left; }

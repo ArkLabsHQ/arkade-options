@@ -133,6 +133,24 @@ async function buildIntent(req: FundRequest): Promise<Deposit & { intent: { addr
   };
 }
 
+function xOnly(key: Uint8Array): Uint8Array {
+  if (key.length === 32) return key;
+  if (key.length === 33) return key.subarray(1);
+  throw new Error(`Expected a 32-byte key, got ${key.length} bytes.`);
+}
+
+/** Address finalize pays the premium to, and cancel refunds the collateral to. */
+export async function writerPayoutAddress(writerHex: string): Promise<string> {
+  const writer = SingleKey.fromHex(writerHex);
+  const { client } = await openSession(writer);
+  const script = new DefaultVtxo.Script({
+    pubKey: await writer.xOnlyPublicKey(),
+    serverPubKey: client.serverKey,
+    csvTimelock: { type: "seconds", value: EXIT },
+  });
+  return script.address(networks.mutinynet.hrp, xOnly(client.serverKey)).encode();
+}
+
 /** Mutinynet address the seller funds. Collateral stays with the seller until finalize. */
 export async function depositAddress(req: FundRequest): Promise<Deposit> {
   const { intent: _intent, ...deposit } = await buildIntent(req);
