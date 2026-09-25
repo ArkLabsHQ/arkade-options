@@ -290,13 +290,16 @@ body[data-view="positions"] .blotter { border-top: 0; }
   word-break: break-all;
 }
 
-.deposit button {
+.deposit button,
+.copy-uri {
   background: transparent;
   color: var(--ink);
   border: 1px solid var(--line);
   border-radius: 2px;
   padding: 6px 10px;
 }
+
+.copy-uri:disabled { opacity: 0.38; cursor: not-allowed; }
 
 .spot .network {
   color: var(--accent);

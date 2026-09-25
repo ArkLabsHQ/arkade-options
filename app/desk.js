@@ -372,6 +372,7 @@ function renderDeposit(best, err) {
     box.hidden = false;
     $("deposit-amount").textContent = "Fetching the Mutinynet address…";
     $("deposit-address").textContent = "";
+    $("copy-address").textContent = "Copy BIP21";
     $("copy-address").disabled = true;
     $("deposit-clock").textContent = "";
     $("status").textContent = "";
@@ -385,6 +386,7 @@ function renderDeposit(best, err) {
   box.hidden = false;
   $("deposit-amount").textContent = `${fmtBtc(deposit.amountSats)} BTC`;
   $("deposit-address").textContent = deposit.address;
+  $("copy-address").textContent = "Copy BIP21";
   $("copy-address").disabled = false;
   $("deposit-clock").dataset.deadline = String(deposit.deadline);
   $("deposit-clock").textContent = `Send it on Mutinynet. ${countdown(deposit.deadline)}`;
@@ -523,8 +525,35 @@ function depositDetail(position) {
   const addr = document.createElement("p");
   addr.className = "deposit-address";
   addr.textContent = position.address || "Address unavailable.";
-  frag.append(net, addr);
+  const copy = document.createElement("button");
+  copy.type = "button";
+  copy.className = "copy-uri";
+  copy.textContent = "Copy BIP21";
+  copy.disabled = !position.address;
+  copy.addEventListener("click", () => {
+    void copyToClipboard(copy, paymentUri(position));
+  });
+  frag.append(net, addr, copy);
   return frag;
+}
+
+function paymentUri(source) {
+  if (source.uri) return source.uri;
+  if (!source.address) return "";
+  return `bitcoin:?ark=${source.address}&amount=${fmtBtc(source.amountSats ?? source.collateral)}`;
+}
+
+async function copyToClipboard(button, text) {
+  if (!text) return;
+  try {
+    await navigator.clipboard.writeText(text);
+    button.textContent = "Copied";
+  } catch {
+    button.textContent = "Copy failed";
+  }
+  setTimeout(() => {
+    if (button.isConnected) button.textContent = "Copy BIP21";
+  }, 1200);
 }
 
 function resultLine(settlement) {
@@ -877,15 +906,10 @@ function bind() {
   $("lock").addEventListener("click", lock);
   $("view-quote").addEventListener("click", () => setView("quote"));
   $("view-positions").addEventListener("click", () => setView("positions"));
-  $("copy-address").addEventListener("click", async () => {
-    const address = state.deposit?.address;
-    if (!address) return;
-    try {
-      await navigator.clipboard.writeText(address);
-      $("copy-address").textContent = "Copied";
-    } catch {
-      $("copy-address").textContent = "Copy failed";
-    }
+  $("copy-address").addEventListener("click", () => {
+    const deposit = state.deposit;
+    if (!deposit || deposit.status !== "ready") return;
+    void copyToClipboard($("copy-address"), paymentUri(deposit));
   });
 }
 
