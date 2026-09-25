@@ -24,7 +24,9 @@ node --experimental-strip-types scripts/options-example.ts
 
 The page keeps positions in `localStorage`. The deposit address is the OptionIntent output, built with `programFromArtifact` against the Mutinynet operator. Settlement numbers on an open position use the same integer arithmetic as `option_vault.ark`.
 
-Quotes follow the Deribit BTC option mark. A covered call uses the call mark. A limited put is the put spread struck at K and K/2. The annualized figure is that premium divided by the collateral, scaled to a year. The spot on the chart comes from Coinbase, then Binance, and otherwise a labeled simulated price. Relays are `wss://nostr.arkade.sh` and the public Nostr relays.
+The page asks the pinned desk over Nostr. Relays are `wss://nostr.arkade.sh` and the public relays. For now that desk is the Mutinynet process at <https://prod-mutinynet-optionsdesk-gk1vzy-1e84a5-138-199-218-130.traefik.me/>. Its hostname uses the Traefik default certificate. `GET /` returns `commit`, the Nostr pubkey, the `tark1…` address to fund, the float, the spot, and the quote book. `app/rfq-config.js` pins that pubkey. An empty `PINNED_DESKS` prices the page from the Deribit mark on its own.
+
+The desk prices a covered call from the Deribit call mark and a limited put from the put spread struck at K and K/2. The annualized figure is that premium divided by the collateral, scaled to a year. The spot on the chart comes from Coinbase, then Binance, and otherwise a labeled simulated price. The desk's own spot is the median of Coinbase, Kraken, and Binance.
 
 ## Deploy
 
@@ -51,19 +53,13 @@ docker run --rm -p 8788:8788 -e DESK_KEY -v desk-data:/data arkade-options-desk
 
 Dokploy builds the repository `Dockerfile`. That file clones this repo during the build and records `HEAD` in the image, so a context path of `desk` still produces the desk and `GET /` shows that commit. Set the container port to `8788` and set `DESK_KEY`. The page image is `site.Dockerfile`.
 
-Send sats to the printed address. `GET /` and `GET /status` return `commit`, the git hash baked into the image, plus the float, the spot, and the quote book. The volume stores that book and `oracles.json` (five keys, written on first start). The process exits when the server's unilateral exit delay is not 2048 seconds.
+Send sats to the address from `GET /`. `GET /` and `GET /status` return the same JSON. The volume stores the quote book and `oracles.json` (five keys, written on first start). The process exits when the server's unilateral exit delay is not 2048 seconds.
 
-Without Docker, from this repo: `DESK_KEY=<32-byte hex> pnpm desk`.
+Without Docker, from this repo: `DESK_KEY=<32-byte hex> pnpm desk`. `pnpm e2e` prints the Mutinynet addresses. `pnpm e2e -- --spend` finalizes one funded intent, cancels the other, and settles the vault.
 
-Optional environment, with the defaults in parentheses: `RELAYS` (Arkade plus the public relays), `ARK_URL` (`https://mutinynet.arkade.sh`), `EMULATOR_URL` (`https://emulator.mutinynet.arkade.sh`), `DATA_DIR` (`/data` in the image, `./data` under `pnpm desk`), `PORT` (`8788`), `DESK_STRIKE_CAP` (`100000000`), `DESK_TOTAL_CAP` (`500000000`), `DESK_VOL` (unset, so quotes use the Deribit mark).
+Optional environment, with the defaults in parentheses: `RELAYS` (Arkade plus the public relays), `ARK_URL` (`https://mutinynet.arkade.sh`), `EMULATOR_URL` (`https://emulator.mutinynet.arkade.sh`), `DATA_DIR` (`/data` in the image, `./data` under `pnpm desk`), `PORT` (`8788`), `GIT_COMMIT` (the hash baked into the image, else `git rev-parse HEAD`), `DESK_STRIKE_CAP` (`100000000`), `DESK_TOTAL_CAP` (`500000000`), `DESK_VOL` (unset, so quotes use the Deribit mark).
 
-The page asks this process for quotes after the pubkey is listed in `app/rfq-config.js` and the page is published again:
-
-```js
-export const PINNED_DESKS = [{ name: "Desk", pubkey: "<x-only printed at startup>" }];
-```
-
-With `PINNED_DESKS` empty, the page prices from the Deribit mark on its own.
+After the desk key changes, copy `pubkey` from `GET /` into `app/rfq-config.js` and publish the page again.
 
 ## Artifacts
 
@@ -75,10 +71,10 @@ cargo run --release -- examples/arkade_options/option_intent.ark -o /path/to/ark
 cargo run --release -- /path/to/arkade-options/contracts/non_interactive_swap.ark -o /path/to/arkade-options/contracts/non_interactive_swap.artifact.json
 ```
 
-`pnpm check` loads every artifact and fails if anything but the `older(exit)` CSV type differs from what the compiler emitted. [PLAN.md](PLAN.md) is the path to live fills.
+`pnpm check` loads every artifact and fails if anything but the `older(exit)` CSV type differs from what the compiler emitted. [PLAN.md](PLAN.md) is the design of the fill.
 
 ## Check
 
 ```bash
-node --test app/settle-math.test.mjs
+pnpm test
 ```
