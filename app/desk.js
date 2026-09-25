@@ -1,6 +1,8 @@
-import { depositAddress, hasDeposit, writerHex, writerPayoutAddress } from "./src/fund.ts";
+import { cancelIntent, depositAddress, fundingState, writerHex, writerPayoutAddress } from "./src/fund.ts";
 import { artifactLine } from "./src/program.ts";
+import { requestQuotes } from "./src/rfq.ts";
 import { bestQuote, deskQuotes } from "./quote.js";
+import { PINNED_DESKS, RELAYS } from "./rfq-config.js";
 import {
   DUST,
   PRICE_MAX,
@@ -24,6 +26,9 @@ const state = {
   quotes: null,
   deposit: null,
   quoting: false,
+  quoteNote: "",
+  quoteHold: 0,
+  quoteMeta: "",
   payoutAddress: "",
   view: "quote",
   positions: loadPositions(),
@@ -81,6 +86,11 @@ function persist() {
     uri: p.uri,
     deadline: p.deadline,
     commitment: p.commitment,
+    holderPkHex: p.holderPkHex,
+    oraclePkHex: p.oraclePkHex,
+    exit: p.exit,
+    vaultAddress: p.vaultAddress,
+    validUntil: p.validUntil,
     settlement: p.settlement && {
       twap: p.settlement.twap.toString(),
       holder: p.settlement.holder.toString(),
@@ -311,13 +321,16 @@ function renderTicket() {
   const sats = sizeSats();
   const err = state.spotCents == null ? "" : sizeError(sats);
   $("size-error").textContent = err;
-  const best = state.quotes && bestQuote(state.quotes, state.side);
+  const best = topQuote();
   const host = $("quotes");
   host.replaceChildren();
   if (state.quoting) {
     const p = document.createElement("p");
     p.className = "lock-note";
-    p.textContent = "Asking Northbridge, Harbor, and Kestrel.";
+    const who = PINNED_DESKS.length
+      ? PINNED_DESKS.map((desk) => desk.name).join(", ")
+      : "Northbridge, Harbor, and Kestrel";
+    p.textContent = `Asking ${who}.`;
     host.append(p);
   } else if (best) {
     state.quotes.forEach((row, index) => {
@@ -336,8 +349,15 @@ function renderTicket() {
       line.append(name, prem, flag);
       host.append(line);
     });
+  } else if (state.quoteNote) {
+    const p = document.createElement("p");
+    p.className = "lock-note";
+    p.textContent = state.quoteNote;
+    host.append(p);
   }
   if (!best || err) {
+    state.quoteHold = 0;
+    state.quoteMeta = "";
     $("premium").textContent = "—";
     $("premium-meta").textContent = err ? "" : "Enter a size. The desks answer with a premium.";
     $("lock-note").textContent = "";
@@ -345,7 +365,10 @@ function renderTicket() {
     $("premium").textContent = `${fmtBtc(best.sats)} BTC`;
     const notionalUsd = Number(sats) / 1e8 * Number(state.spotCents) / 100;
     const ann = notionalUsd > 0 ? best.usd / notionalUsd * (365 / state.days) * 100 : 0;
-    $("premium-meta").textContent = `$${best.usd.toLocaleString("en-US", { maximumFractionDigits: 2 })} · ${ann.toFixed(1)}% annualized · ${best.name}`;
+    state.quoteMeta = `$${best.usd.toLocaleString("en-US", { maximumFractionDigits: 2 })} · ${ann.toFixed(1)}% annualized · ${best.name}`;
+    state.quoteHold = best.validUntil || 0;
+    const left = state.quoteHold ? Math.max(0, state.quoteHold - Math.floor(Date.now() / 1000)) : 0;
+    $("premium-meta").textContent = left ? `${state.quoteMeta} · holds ${left}s` : state.quoteMeta;
     $("lock-note").textContent = `You send ${fmtBtc(sats)} BTC of collateral. The ${fmtBtc(best.sats)} BTC premium is paid to your writer address when the intent finalizes, not when you deposit.`;
   }
   renderDeposit(best, err);
@@ -397,7 +420,7 @@ function renderDeposit(best, err) {
   box.hidden = false;
   $("deposit-amount").textContent = `${fmtBtc(deposit.amountSats)} BTC`;
   $("deposit-address").textContent = deposit.address;
-  $("copy-address").textContent = "Copy BIP21";
+  $("copy-address").textContent = copyLabel();
   $("copy-address").disabled = false;
   $("deposit-clock").dataset.deadline = String(deposit.deadline);
   $("deposit-clock").textContent = `Send it on Mutinynet. ${countdown(deposit.deadline)}`;
@@ -473,6 +496,7 @@ function statusLabel(position) {
   if (position.status === "deposited") return "Deposited";
   if (position.status === "expired") return "Window closed";
   if (position.status === "refunded") return "Refunded";
+  if (position.status === "filled") return "Filled";
   if (position.status === "settled") return "Settled";
   return "Open";
 }
@@ -508,9 +532,23 @@ function detail(position) {
     box.append(depositDetail(position));
     return box;
   }
+  if (position.status === "filled") {
+    const note = document.createElement("p");
+    note.className = "lock-note";
+    note.textContent = "The desk paid the premium to your writer address. Collateral sits in the option vault.";
+    box.append(note);
+    if (position.vaultAddress) {
+      const addr = document.createElement("p");
+      addr.className = "deposit-address";
+      addr.textContent = position.vaultAddress;
+      box.append(addr);
+    }
+    box.append(settleLab(position));
+    return box;
+  }
   if (position.status === "refunded") {
     const p = document.createElement("p");
-    p.textContent = "The deposit window closed before a coin arrived.";
+    p.textContent = "Cancel returned this coin to your writer address.";
     box.append(p);
     return box;
   }
@@ -526,8 +564,11 @@ function depositDetail(position) {
   const frag = document.createDocumentFragment();
   const net = document.createElement("p");
   net.className = "lock-note";
+  const closed = Math.floor(Date.now() / 1000) >= position.deadline;
   if (position.status === "deposited") {
-    net.textContent = "Collateral is on this Mutinynet address.";
+    net.textContent = closed
+      ? "The fill window has closed. Cancel returns this coin to your writer address."
+      : "Collateral is on this Mutinynet address. The desk pays the premium when it finalizes.";
   } else if (position.status === "expired") {
     net.textContent = "The deposit window closed. Cancel pays this coin to your writer address once this time has passed.";
   } else {
@@ -545,6 +586,16 @@ function depositDetail(position) {
     void copyToClipboard(copy, paymentUri(position));
   });
   frag.append(net, addr, copy);
+  if (closed && (position.status === "deposited" || position.status === "expired")) {
+    const cancel = document.createElement("button");
+    cancel.type = "button";
+    cancel.className = "copy-uri";
+    cancel.textContent = "Cancel and refund";
+    cancel.addEventListener("click", () => {
+      void refund(position, cancel);
+    });
+    frag.append(cancel);
+  }
   if (state.payoutAddress) {
     const where = document.createElement("p");
     where.className = "lock-note";
@@ -563,16 +614,34 @@ function paymentUri(source) {
   return `bitcoin:?ark=${source.address}&amount=${fmtBtc(source.amountSats ?? source.collateral)}`;
 }
 
+let copiedUntil = 0;
+
+function copyLabel() {
+  return Date.now() < copiedUntil ? "Copied" : "Copy BIP21";
+}
+
 async function copyToClipboard(button, text) {
   if (!text) return;
+  copiedUntil = Date.now() + 1200;
+  button.textContent = "Copied";
   try {
     await navigator.clipboard.writeText(text);
-    button.textContent = "Copied";
   } catch {
-    button.textContent = "Copy failed";
+    const area = document.createElement("textarea");
+    area.value = text;
+    area.setAttribute("readonly", "");
+    document.body.append(area);
+    area.select();
+    const ok = document.execCommand("copy");
+    area.remove();
+    if (!ok) {
+      copiedUntil = 0;
+      button.textContent = "Copy failed";
+      return;
+    }
   }
   setTimeout(() => {
-    if (button.isConnected) button.textContent = "Copy BIP21";
+    if (button.isConnected && Date.now() >= copiedUntil) button.textContent = "Copy BIP21";
   }, 1200);
 }
 
@@ -727,17 +796,45 @@ function onTermsChanged() {
   quoteTimer = setTimeout(() => ask(gen), 900);
 }
 
+function topQuote() {
+  if (!state.quotes?.length) return null;
+  return bestQuote(state.quotes, state.side);
+}
+
 async function ask(gen) {
   const sats = sizeSats();
-  if (gen !== quoteGen || sats == null) return;
+  if (gen !== quoteGen || sats == null || state.spotCents == null) return;
   const years = state.days / 365;
-  state.quotes = deskQuotes({
-    kind: state.kind,
-    spotCents: Number(state.spotCents),
-    strikeCents: Number(strike()),
-    years,
-    collateralSats: sats,
-  });
+  if (PINNED_DESKS.length === 0) {
+    state.quotes = deskQuotes({
+      kind: state.kind,
+      spotCents: Number(state.spotCents),
+      strikeCents: Number(strike()),
+      years,
+      collateralSats: sats,
+    });
+    state.quoteNote = "";
+  } else {
+    try {
+      const live = await requestQuotes({
+        relays: RELAYS,
+        desks: PINNED_DESKS,
+        kind: state.kind,
+        strike: strike(),
+        collateral: sats,
+        expiry: expiryUnix(state.days),
+        spotCents: state.spotCents,
+        writerHex: await writerHex(),
+      });
+      if (gen !== quoteGen) return;
+      state.quotes = live.quotes;
+      state.quoteNote = live.note;
+    } catch (err) {
+      if (gen !== quoteGen) return;
+      state.quotes = [];
+      state.quoteNote = err instanceof Error ? err.message : "The desk did not answer.";
+    }
+  }
   state.quoting = false;
   if (gen === quoteGen) {
     renderTicket();
@@ -747,9 +844,9 @@ async function ask(gen) {
 
 async function loadDeposit(gen) {
   const sats = sizeSats();
-  const best = state.quotes && bestQuote(state.quotes, 0);
+  const best = topQuote();
   if (gen !== quoteGen || !best || sats == null || best.sats <= DUST) return;
-  const deadline = BigInt(Math.floor(Date.now() / 1000) + 60);
+  const deadline = best.deadline ?? Math.floor(Date.now() / 1000) + 180;
   state.deposit = { status: "loading" };
   renderTicket();
   try {
@@ -759,11 +856,17 @@ async function loadDeposit(gen) {
       collateral: sats,
       premium: best.sats,
       expiry: expiryUnix(state.days),
-      deadline,
+      deadline: BigInt(deadline),
       writerHex: await writerHex(),
+      holderPkHex: best.holderPkHex,
+      oraclePkHex: best.oraclePkHex,
+      exit: best.exit != null ? BigInt(best.exit) : undefined,
     });
+    if (best.intentAddress && (deposit.address !== best.intentAddress || deposit.vaultAddress !== best.vaultAddress)) {
+      throw new Error("The desk address does not match this page's contract.");
+    }
     if (gen !== quoteGen) return;
-    state.deposit = { status: "ready", ...deposit, deadline: Number(deadline), premium: best.sats };
+    state.deposit = { status: "ready", ...deposit, deadline, premium: best.sats };
   } catch (err) {
     if (gen !== quoteGen) return;
     state.deposit = { status: "error", message: err instanceof Error ? err.message : "Could not build the Mutinynet address." };
@@ -774,7 +877,7 @@ async function loadDeposit(gen) {
 async function lock() {
   const deposit = state.deposit;
   const sats = sizeSats();
-  const best = state.quotes && bestQuote(state.quotes, 0);
+  const best = topQuote();
   if (!deposit || deposit.status !== "ready" || sats == null || !best) return;
   if (state.positions.some((p) => p.status === "locking" && p.address === deposit.address)) return;
   const position = {
@@ -792,6 +895,11 @@ async function lock() {
     address: deposit.address,
     uri: deposit.uri,
     commitment: deposit.address,
+    holderPkHex: deposit.holderPkHex,
+    oraclePkHex: deposit.oraclePkHex,
+    exit: deposit.exit,
+    vaultAddress: deposit.vaultAddress,
+    validUntil: best.validUntil,
   };
   state.positions.unshift(position);
   state.selected = position.id;
@@ -824,9 +932,18 @@ function tick() {
       changed = true;
     }
   }
+  if (state.quoteHold && now >= state.quoteHold && !state.quoting) {
+    state.quoteHold = 0;
+    onTermsChanged();
+    return;
+  }
   if (state.deposit?.status === "ready" && now >= state.deposit.deadline) {
     onTermsChanged();
     return;
+  }
+  if (state.quoteHold && state.quoteMeta) {
+    const meta = $("premium-meta");
+    if (meta) meta.textContent = `${state.quoteMeta} · holds ${state.quoteHold - now}s`;
   }
   if (changed) {
     persist();
@@ -862,20 +979,45 @@ function reconcileLocks() {
   if (changed) persist();
 }
 
+async function fundRequest(position) {
+  return {
+    kind: position.kind,
+    strike: position.strike,
+    collateral: position.collateral,
+    premium: position.premiumSats,
+    expiry: position.expiry,
+    deadline: BigInt(position.deadline),
+    writerHex: await writerHex(),
+    holderPkHex: position.holderPkHex,
+    oraclePkHex: position.oraclePkHex,
+    exit: position.exit != null ? BigInt(position.exit) : undefined,
+  };
+}
+
+async function refund(position, button) {
+  button.disabled = true;
+  button.textContent = "Cancelling";
+  try {
+    await cancelIntent(await fundRequest(position));
+    position.status = "refunded";
+    persist();
+    renderBlotter();
+  } catch (err) {
+    button.disabled = false;
+    button.textContent = err instanceof Error ? err.message : "Cancel failed";
+  }
+}
+
 async function pollDeposits() {
   for (const position of state.positions) {
-    if (position.status !== "locking" || !position.address) continue;
+    if ((position.status !== "locking" && position.status !== "deposited") || !position.address) continue;
     try {
-      const seen = await hasDeposit({
-        kind: position.kind,
-        strike: position.strike,
-        collateral: position.collateral,
-        premium: position.premiumSats,
-        expiry: position.expiry,
-        deadline: BigInt(position.deadline),
-        writerHex: await writerHex(),
-      });
-      if (seen && position.status === "locking") {
+      const seen = await fundingState(await fundRequest(position));
+      if (seen === "filled" && position.status !== "filled") {
+        position.status = "filled";
+        persist();
+        renderBlotter();
+      } else if (seen === "funded" && position.status === "locking") {
         position.status = "deposited";
         persist();
         renderBlotter();
@@ -896,12 +1038,14 @@ function bind() {
     press("side-sell", true);
   });
   $("kind-call").addEventListener("click", () => {
+    if (state.kind === 0) return;
     state.kind = 0;
     press("kind-call", true);
     press("kind-put", false);
     onTermsChanged();
   });
   $("kind-put").addEventListener("click", () => {
+    if (state.kind === 1) return;
     state.kind = 1;
     press("kind-call", false);
     press("kind-put", true);
@@ -909,7 +1053,9 @@ function bind() {
   });
   document.querySelectorAll("[data-days]").forEach((btn) => {
     btn.addEventListener("click", () => {
-      state.days = Number(btn.dataset.days);
+      const days = Number(btn.dataset.days);
+      if (days === state.days) return;
+      state.days = days;
       document.querySelectorAll("[data-days]").forEach((other) => {
         other.setAttribute("aria-pressed", String(other === btn));
       });
@@ -919,7 +1065,9 @@ function bind() {
   $("strikes").addEventListener("click", (event) => {
     const btn = event.target.closest("button");
     if (!btn) return;
-    state.strikeIndex = Number(btn.dataset.index);
+    const index = Number(btn.dataset.index);
+    if (index === state.strikeIndex) return;
+    state.strikeIndex = index;
     onTermsChanged();
   });
   $("size").addEventListener("input", onTermsChanged);
