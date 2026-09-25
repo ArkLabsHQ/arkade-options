@@ -14,7 +14,7 @@ pnpm dev
 
 Open http://127.0.0.1:4173/app/. The network is Mutinynet. Buying is off. You sell a covered call or a limited put, and the ticket shows the `tark1…` address that receives your collateral. Copy BIP21 puts `bitcoin:?ark=<address>&amount=<btc>` on the clipboard, on the quote and on the open position. The deposit is only the collateral. The premium is paid to the writer address already stored in this browser when the intent is finalized, and a cancel refunds the collateral there too. The desk does not lock that coin. The chart is the writer's collateral: spot, strike and its distance from spot, and 0, 1/4, 1/2, and the full notional. Positions is a separate page and draws that same chart for the position you open.
 
-A premium of 330 sats or less cannot be enforced by `option_intent.ark`, so that strike has no deposit address. A 7-day covered call at the farthest strike is the case that hits it. A closer strike is above the line.
+A premium of 330 sats or less cannot be enforced by `option_intent.ark`, so that strike has no deposit address. A far, short-dated strike is the case that hits it. A closer strike is above the line.
 
 `scripts/options-example.ts` prints one address:
 
@@ -24,7 +24,7 @@ node --experimental-strip-types scripts/options-example.ts
 
 The page keeps positions in `localStorage`. The deposit address is the OptionIntent output, built with `programFromArtifact` against the Mutinynet operator. Settlement numbers on an open position use the same integer arithmetic as `option_vault.ark`.
 
-Quotes are Black-Scholes with zero rates. A covered call is priced as a call. A limited put is priced as a put spread struck at K and K/2. The spot comes from Coinbase, then Binance, and otherwise a labeled simulated price.
+Quotes follow the Deribit BTC option mark. A covered call uses the call mark. A limited put is the put spread struck at K and K/2. The annualized figure is that premium divided by the collateral, scaled to a year. The spot on the chart comes from Coinbase, then Binance, and otherwise a labeled simulated price. Relays are `wss://nostr.arkade.sh` and the public Nostr relays.
 
 ## Deploy
 

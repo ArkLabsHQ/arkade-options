@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { bestQuote, bsCall, deskQuotes } from "./quote.js";
+import { premiumSats } from "../protocol/pricing.ts";
+import { bestQuote, bsCall } from "./quote.js";
 import {
   holderPayoff,
   writerPayoff,
@@ -99,33 +100,28 @@ test("black-scholes call is near the known one-year value", () => {
   assert.ok(Math.abs(px - 7.9656) < 0.02, px);
 });
 
-test("a 7-day covered call only refuses a premium at or below dust", () => {
+test("a 7-day covered call at 62% vol is dust only at the far strike", () => {
   const spot = 8_461_728n;
   const grid = 100_000n;
   const steps = [105n, 110n, 115n, 125n, 140n];
   const strikes = steps.map((step) => ((spot * step) / 100n + grid / 2n) / grid * grid);
-  const rows = strikes.map((strike) =>
-    deskQuotes({
-      kind: 0,
-      spotCents: Number(spot),
-      strikeCents: Number(strike),
-      years: 7 / 365,
-      collateralSats: 100_000_000n,
-    }),
-  );
-  assert.ok(rows.slice(0, 4).every((row) => row[2].sats > 330n));
-  assert.ok(rows[4][2].sats <= 330n);
+  const premiums = strikes.map((strike) => premiumSats({
+    kind: 0,
+    spotCents: Number(spot),
+    strikeCents: Number(strike),
+    years: 7 / 365,
+    collateralSats: 100_000_000n,
+    vol: 0.62,
+  }).sats);
+  assert.ok(premiums.slice(0, 4).every((sats) => sats > 330n));
+  assert.ok(premiums[4] <= 330n);
 });
 
-test("the highest vol desk wins a covered-call auction", () => {
-  const rows = deskQuotes({
-    kind: 0,
-    spotCents: 10_000_000,
-    strikeCents: 11_000_000,
-    years: 30 / 365,
-    collateralSats: 10_000_000n,
-  });
-  assert.equal(bestQuote(rows, 0).name, "Kestrel");
-  assert.equal(bestQuote(rows, 1).name, "Northbridge");
-  assert.ok(rows.every((row) => row.sats > 331n));
+test("the larger premium wins a sale and the smaller premium wins a buy", () => {
+  const rows = [
+    { name: "A", sats: 1_000n },
+    { name: "B", sats: 2_000n },
+  ];
+  assert.equal(bestQuote(rows, 0).name, "B");
+  assert.equal(bestQuote(rows, 1).name, "A");
 });

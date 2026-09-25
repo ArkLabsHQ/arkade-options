@@ -31,7 +31,8 @@ import {
   type RfqStatus,
 } from "../protocol/messages.ts";
 import { connectTransport, nostrPubkey, type Incoming } from "../protocol/nostr.ts";
-import { premiumSats, tenorVol } from "../protocol/pricing.ts";
+import { deribitPremium, fetchSurface, surfaceStatus } from "../protocol/deribit.ts";
+import { premiumSats } from "../protocol/pricing.ts";
 import { Book, type QuoteRow } from "./book.ts";
 import { fillQuote } from "./fill.ts";
 import { spotCents } from "./spot.ts";
@@ -47,7 +48,7 @@ import { spotCents } from "./spot.ts";
  *   PORT            status HTTP. Default 8788
  *   DESK_STRIKE_CAP per-strike collateral cap in sats. Default 1 BTC
  *   DESK_TOTAL_CAP  total collateral cap in sats. Default 5 BTC
- *   DESK_VOL        optional vol override. Default is the tenor table.
+ *   DESK_VOL        optional vol override. Default is the Deribit mark.
  */
 
 function required(name: string): string {
@@ -187,15 +188,40 @@ async function onRequest(message: RfqRequest, from: string) {
     await refuse(from, message.rfq_id, "spot unavailable");
     return;
   }
-  const years = (message.profile.expiry - now) / (365 * 24 * 60 * 60);
-  const { sats } = premiumSats({
-    kind: message.profile.kind,
-    spotCents: Number(tick.cents),
-    strikeCents: message.profile.strike,
-    years,
-    collateralSats: BigInt(message.amount),
-    vol: volOverride ?? tenorVol(years),
-  });
+  let sats: bigint;
+  if (volOverride != null) {
+    const years = (message.profile.expiry - now) / (365 * 24 * 60 * 60);
+    sats = premiumSats({
+      kind: message.profile.kind,
+      spotCents: Number(tick.cents),
+      strikeCents: message.profile.strike,
+      years,
+      collateralSats: BigInt(message.amount),
+      vol: volOverride,
+    }).sats;
+  } else {
+    let points;
+    try {
+      points = await fetchSurface();
+    } catch {
+      await refuse(from, message.rfq_id, "deribit unavailable");
+      return;
+    }
+    const priced = deribitPremium({
+      kind: message.profile.kind,
+      strikeUsd: message.profile.strike / 100,
+      expiry: message.profile.expiry,
+      now,
+      collateralSats: BigInt(message.amount),
+      spotUsd: Number(tick.cents) / 100,
+      points,
+    });
+    if (!priced) {
+      await refuse(from, message.rfq_id, "deribit unavailable");
+      return;
+    }
+    sats = priced.sats;
+  }
   const dust = premiumRefusal(sats);
   if (dust) {
     await refuse(from, message.rfq_id, dust);
@@ -314,6 +340,9 @@ function statusBody() {
     balance: balance.toString(),
     spotCents: spot ? spot.cents.toString() : null,
     spotSources: spot?.sources ?? [],
+    pricing: volOverride != null
+      ? { source: "override", vol: volOverride }
+      : { source: "deribit", ...surfaceStatus() },
     quotes: book.list().map((row) => ({
       rfqId: row.rfqId,
       status: row.status,
