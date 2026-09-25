@@ -1,6 +1,6 @@
-# Quote and fill process. Build from the repo root:
+# Local image. Context is the repository root:
 #   docker build -f desk/Dockerfile -t arkade-options-desk .
-#   docker run --rm -p 8788:8788 -e DESK_KEY=<32-byte hex> -v desk-data:/data arkade-options-desk
+# Dokploy builds the repository Dockerfile instead, because its context was only this folder.
 FROM node:22-alpine
 WORKDIR /app
 RUN corepack enable
