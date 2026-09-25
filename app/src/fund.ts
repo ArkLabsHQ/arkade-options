@@ -1,6 +1,5 @@
 import {
   arkade,
-  DefaultVtxo,
   networks,
   RestArkProvider,
   RestEmulatorProvider,
@@ -8,12 +7,12 @@ import {
   SingleKey,
 } from "@arkade-os/sdk";
 
+import { ARK_URL, EMULATOR_URL, EXIT } from "../../protocol/constants.ts";
+import { bindContracts, payoutVtxo, type Terms } from "../../protocol/contracts.ts";
+import { bytesToHex, hexToBytes, xOnly } from "../../protocol/hex.ts";
 import { intentProgram, vaultProgram } from "./program.ts";
 
 export const NETWORK_NAME = "Mutinynet";
-const ARK_URL = "https://mutinynet.arkade.sh";
-const EMULATOR_URL = "https://emulator.mutinynet.arkade.sh";
-const EXIT = 512n;
 
 const HOLDER = SingleKey.fromHex("0000000000000000000000000000000000000000000000000000000000000021");
 const ORACLES = [0x31, 0x32, 0x33, 0x34, 0x35].map((n) =>
@@ -28,41 +27,48 @@ export type FundRequest = {
   expiry: bigint;
   deadline: bigint;
   writerHex: string;
+  holderPkHex?: string;
+  oraclePkHex?: string[];
+  exit?: bigint;
 };
 
 export type Deposit = {
   network: typeof NETWORK_NAME;
   address: string;
+  vaultAddress: string;
   amountSats: bigint;
   uri: string;
+  holderPkHex: string;
+  oraclePkHex: string[];
+  exit: number;
 };
 
 type Session = {
   client: Awaited<ReturnType<typeof arkade.Arkade.connect>>;
 };
 
-let session: Promise<Session> | null = null;
+const sessions = new Map<string, Promise<Session>>();
 
 function openSession(identity: SingleKey): Promise<Session> {
-  if (!session) {
-    session = (async () => {
-      const arkadeOperator = new RestArkProvider(ARK_URL);
-      const indexer = new RestIndexerProvider(ARK_URL);
-      const emulator = new RestEmulatorProvider(EMULATOR_URL);
+  const id = identity.toHex();
+  let pending = sessions.get(id);
+  if (!pending) {
+    pending = (async () => {
       const client = await arkade.Arkade.connect({
-        arkade: arkadeOperator,
-        indexer,
-        emulator,
+        arkade: new RestArkProvider(ARK_URL),
+        indexer: new RestIndexerProvider(ARK_URL),
+        emulator: new RestEmulatorProvider(EMULATOR_URL),
         identity,
         network: networks.mutinynet,
       });
       return { client };
     })();
-    session.catch(() => {
-      session = null;
+    pending.catch(() => {
+      sessions.delete(id);
     });
+    sessions.set(id, pending);
   }
-  return session;
+  return pending;
 }
 
 function btcAmount(sats: bigint) {
@@ -71,96 +77,100 @@ function btcAmount(sats: bigint) {
   return frac ? `${whole}.${frac}` : whole.toString();
 }
 
-/**
- * The sell-side intent. The writer sends `collateral` sats to its address.
- * The desk does not lock that coin.
- */
-async function buildIntent(req: FundRequest): Promise<Deposit & { intent: { address: string; getUtxos: () => Promise<unknown[]> } }> {
+async function build(req: FundRequest) {
   const writer = SingleKey.fromHex(req.writerHex);
   const { client } = await openSession(writer);
-  const serverPubKey = client.serverKey;
+  if (!client.emulatorKey) throw new Error("The emulator key is missing.");
   const writerPk = await writer.xOnlyPublicKey();
-  const holderPk = await HOLDER.xOnlyPublicKey();
-  const writerVtxo = new DefaultVtxo.Script({
-    pubKey: writerPk,
-    serverPubKey,
-    csvTimelock: { type: "seconds", value: EXIT },
-  });
-  const holderVtxo = new DefaultVtxo.Script({
-    pubKey: holderPk,
-    serverPubKey,
-    csvTimelock: { type: "seconds", value: EXIT },
-  });
-  const oracles = Object.fromEntries(
-    await Promise.all(
-      ORACLES.map(async (key, index) => [`oracles.${index}`, await key.xOnlyPublicKey()] as const),
-    ),
-  );
-
-  const vault = client.contract(vaultProgram(), {
-    kind: BigInt(req.kind),
-    writerPk,
-    holderPk,
-    writerScript: writerVtxo.tweakedPublicKey,
-    holderScript: holderVtxo.tweakedPublicKey,
+  const holderPk = req.holderPkHex ? hexToBytes(req.holderPkHex) : await HOLDER.xOnlyPublicKey();
+  const oraclePks = req.oraclePkHex
+    ? req.oraclePkHex.map((hex) => hexToBytes(hex))
+    : await Promise.all(ORACLES.map((key) => key.xOnlyPublicKey()));
+  const exit = req.exit ?? EXIT;
+  const terms: Terms = {
+    kind: req.kind,
     strike: req.strike,
     collateral: req.collateral,
-    expiry: req.expiry,
-    ...oracles,
-    exit: EXIT,
-  });
-
-  const intent = client.contract(intentProgram(), {
-    userPk: writerPk,
-    userScript: writerVtxo.tweakedPublicKey,
-    solverScript: holderVtxo.tweakedPublicKey,
-    optionScript: vault.vtxoScript.tweakedPublicKey,
-    side: 0n,
-    collateral: req.collateral,
     premium: req.premium,
+    expiry: req.expiry,
     deadline: req.deadline,
-    exit: EXIT,
-  });
-
-  const address = intent.address;
-  const amount = btcAmount(req.collateral);
-  return {
-    network: NETWORK_NAME,
-    address,
-    amountSats: req.collateral,
-    uri: `bitcoin:?ark=${address}&amount=${amount}`,
-    intent,
+    exit,
+    writerPk,
+    holderPk,
+    oraclePks,
+    serverKey: client.serverKey,
+    emulatorKey: client.emulatorKey,
   };
-}
-
-function xOnly(key: Uint8Array): Uint8Array {
-  if (key.length === 32) return key;
-  if (key.length === 33) return key.subarray(1);
-  throw new Error(`Expected a 32-byte key, got ${key.length} bytes.`);
+  const bound = bindContracts(terms);
+  const intent = client.contract(intentProgram(), bound.intent);
+  const vault = client.contract(vaultProgram(), bound.vault);
+  if (intent.address !== bound.intentAddress || vault.address !== bound.vaultAddress) {
+    throw new Error("The contract address does not match the local derivation.");
+  }
+  return { bound, intent, vault, holderPk, oraclePks, exit };
 }
 
 /** Address finalize pays the premium to, and cancel refunds the collateral to. */
 export async function writerPayoutAddress(writerHex: string): Promise<string> {
+  return (await writerProfile(writerHex)).address;
+}
+
+/** Writer key and the script the desk pays the premium to. */
+export async function writerProfile(writerHex: string): Promise<{ pubkey: string; pkScript: string; address: string }> {
   const writer = SingleKey.fromHex(writerHex);
   const { client } = await openSession(writer);
-  const script = new DefaultVtxo.Script({
-    pubKey: await writer.xOnlyPublicKey(),
-    serverPubKey: client.serverKey,
-    csvTimelock: { type: "seconds", value: EXIT },
-  });
-  return script.address(networks.mutinynet.hrp, xOnly(client.serverKey)).encode();
+  const pubkey = await writer.xOnlyPublicKey();
+  const script = payoutVtxo(pubkey, client.serverKey, EXIT);
+  return {
+    pubkey: bytesToHex(pubkey),
+    pkScript: bytesToHex(script.pkScript),
+    address: script.address(networks.mutinynet.hrp, xOnly(client.serverKey)).encode(),
+  };
+}
+
+export async function arkKeys(writerHex: string): Promise<{ serverKey: Uint8Array; emulatorKey: Uint8Array }> {
+  const { client } = await openSession(SingleKey.fromHex(writerHex));
+  if (!client.emulatorKey) throw new Error("The emulator key is missing.");
+  return { serverKey: client.serverKey, emulatorKey: client.emulatorKey };
 }
 
 /** Mutinynet address the seller funds. Collateral stays with the seller until finalize. */
 export async function depositAddress(req: FundRequest): Promise<Deposit> {
-  const { intent: _intent, ...deposit } = await buildIntent(req);
-  return deposit;
+  const { bound, holderPk, oraclePks, exit } = await build(req);
+  const amount = btcAmount(req.collateral);
+  return {
+    network: NETWORK_NAME,
+    address: bound.intentAddress,
+    vaultAddress: bound.vaultAddress,
+    amountSats: req.collateral,
+    uri: `bitcoin:?ark=${bound.intentAddress}&amount=${amount}`,
+    holderPkHex: bytesToHex(holderPk),
+    oraclePkHex: oraclePks.map((pk) => bytesToHex(pk)),
+    exit: Number(exit),
+  };
+}
+
+export async function fundingState(req: FundRequest): Promise<"open" | "funded" | "filled"> {
+  const { intent, vault } = await build(req);
+  const [vaultCoins, intentCoins] = await Promise.all([vault.getUtxos(), intent.getUtxos()]);
+  if (vaultCoins.length > 0) return "filled";
+  if (intentCoins.length > 0) return "funded";
+  return "open";
 }
 
 export async function hasDeposit(req: FundRequest): Promise<boolean> {
-  const { intent } = await buildIntent(req);
+  const state = await fundingState(req);
+  return state === "funded" || state === "filled";
+}
+
+/** After the deadline, cancel pays the whole coin back to the writer. */
+export async function cancelIntent(req: FundRequest): Promise<string> {
+  const { intent, bound } = await build(req);
   const coins = await intent.getUtxos();
-  return coins.length > 0;
+  const coin = coins[0];
+  if (!coin) throw new Error("No coin on this address.");
+  const sent = await intent.functions.cancel().from(coin).to(bound.writerPkScript, BigInt(coin.value)).send();
+  return sent.txid;
 }
 
 export async function writerHex(): Promise<string> {
