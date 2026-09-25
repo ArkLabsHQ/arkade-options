@@ -4,7 +4,7 @@ Cash-settled covered calls and limited puts on Mutinynet. The desk pays the prem
 
 ## Live
 
-- Page: <https://arklabshq.github.io/arkade-options/>
+- Page: <https://arkade.trade/>
 - Desk: <https://prod-mutinynet-optionsdesk-gk1vzy-1e84a5-138-199-218-130.traefik.me/>
 
 ## Fund the desk

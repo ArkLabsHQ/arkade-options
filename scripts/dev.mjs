@@ -7,27 +7,12 @@ import esbuild from "esbuild";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const dist = path.join(root, "dist");
-const legacy = path.join(dist, "app");
-mkdirSync(legacy, { recursive: true });
+mkdirSync(dist, { recursive: true });
 
 const publish = () => {
   cpSync(path.join(root, "app/index.html"), path.join(dist, "index.html"));
   cpSync(path.join(root, "app/desk.css"), path.join(dist, "desk.css"));
   writeFileSync(path.join(dist, ".nojekyll"), "");
-  writeFileSync(
-    path.join(legacy, "index.html"),
-    `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta http-equiv="refresh" content="0; url=../">
-  <title>Arkade Options</title>
-  <script>location.replace("../")</script>
-</head>
-<body><p><a href="../">Arkade Options</a></p></body>
-</html>
-`,
-  );
 };
 
 const ctx = await esbuild.context({
@@ -61,11 +46,6 @@ const types = {
 http
   .createServer((req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");
-    if (url.pathname === "/app" || url.pathname === "/app/") {
-      res.writeHead(302, { location: "/" });
-      res.end();
-      return;
-    }
     let rel = decodeURIComponent(url.pathname);
     if (rel.endsWith("/")) rel += "index.html";
     rel = rel.replace(/^\//, "");
