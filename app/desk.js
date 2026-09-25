@@ -185,10 +185,6 @@ function termsKey() {
   return `${state.kind}:${strike()}:${expiryUnix(state.days)}:${sats}`;
 }
 
-function productName() {
-  return state.kind === 0 ? "Covered call" : "Limited put";
-}
-
 function kindCopy() {
   if (state.kind === 0) return "You sell upside above the strike. You keep the rest of the collateral.";
   return "You sell downside below the strike, down to the collateral.";
