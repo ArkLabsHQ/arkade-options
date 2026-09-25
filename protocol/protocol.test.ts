@@ -4,7 +4,7 @@ import test from "node:test";
 import { SingleKey } from "@arkade-os/sdk";
 import { generateSecretKey } from "nostr-tools/pure";
 
-import { bindContracts, bindSwap } from "./contracts.ts";
+import { bindContracts, bindSwap, directPayoutKey } from "./contracts.ts";
 import { bytesToHex } from "./hex.ts";
 import { parseWire, premiumRefusal, requestRefusal, type RfqRequest } from "./messages.ts";
 import { nostrPubkey, openSealed, seal } from "./nostr.ts";
@@ -47,6 +47,20 @@ test("derived intent and vault addresses stay pinned", async () => {
   );
   assert.equal(bytesToHex(bound.writerPkScript), "51203d002da23716b1975b89b46563d89040a3c71d017593934bfb751b68a7cae991");
   assert.deepEqual(bindContracts(terms).intentPkScript, bound.intentPkScript);
+});
+
+test("a vtxo script is not treated as a pasted address", async () => {
+  const terms = await sampleTerms();
+  const bound = bindContracts(terms);
+  assert.equal(directPayoutKey(bytesToHex(terms.writerPk), bytesToHex(bound.writerPkScript)), undefined);
+});
+
+test("a pasted address is paid at its taproot key", async () => {
+  const terms = await sampleTerms();
+  const direct = bindContracts({ ...terms, payoutKey: terms.writerPk });
+  assert.equal(bytesToHex(direct.writerPkScript), `5120${bytesToHex(terms.writerPk)}`);
+  assert.equal(bytesToHex(direct.writerProgram), bytesToHex(terms.writerPk));
+  assert.notEqual(direct.intentAddress, bindContracts(terms).intentAddress);
 });
 
 test("the reference swap derives a pinned address", async () => {

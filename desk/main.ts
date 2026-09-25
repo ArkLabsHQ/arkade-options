@@ -23,8 +23,8 @@ import {
   PAIR,
   QUOTE_TTL_S,
 } from "../protocol/constants.ts";
-import { assertServerExit, bindContracts, payoutVtxo, type Terms } from "../protocol/contracts.ts";
-import { bytesToHex, hexToBytes } from "../protocol/hex.ts";
+import { assertServerExit, bindContracts, directPayoutKey, payoutVtxo, type Terms } from "../protocol/contracts.ts";
+import { bytesToHex, hexToBytes, xOnly } from "../protocol/hex.ts";
 import {
   premiumRefusal,
   requestRefusal,
@@ -137,6 +137,7 @@ function termsFor(row: QuoteRow): Terms {
     deadline: BigInt(row.deadline),
     exit: BigInt(row.exit),
     writerPk: hexToBytes(row.writerPubkey),
+    payoutKey: directPayoutKey(row.writerPubkey, row.writerPkScript),
     holderPk: hexToBytes(row.holderPubkey),
     oraclePks: row.oraclePubkeys.map((item) => hexToBytes(item)),
     serverKey: client.serverKey,

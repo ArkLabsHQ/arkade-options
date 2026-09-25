@@ -1,7 +1,7 @@
 import { arkade, DefaultVtxo, networks, RestArkProvider } from "@arkade-os/sdk";
 
 import { ARK_URL, EXIT } from "./constants.ts";
-import { xOnly } from "./hex.ts";
+import { bytesToHex, hexToBytes, xOnly } from "./hex.ts";
 import { intentProgram, swapProgram, vaultProgram } from "./programs.ts";
 
 export type Terms = {
@@ -13,6 +13,8 @@ export type Terms = {
   deadline: bigint;
   exit: bigint;
   writerPk: Uint8Array;
+  /** Taproot output key of the writer's Arkade address. Premium and settlement pay this key. */
+  payoutKey?: Uint8Array;
   holderPk: Uint8Array;
   oraclePks: readonly Uint8Array[];
   serverKey: Uint8Array;
@@ -47,6 +49,30 @@ export function payoutVtxo(pubKey: Uint8Array, serverKey: Uint8Array, exit: bigi
   });
 }
 
+/** Taproot key of a pasted Arkade address, when the script is exactly that key. */
+export function directPayoutKey(writerPubkey: string, writerPkScript: string): Uint8Array | undefined {
+  let key: Uint8Array;
+  let script: Uint8Array;
+  try {
+    key = xOnly(hexToBytes(writerPubkey));
+    script = hexToBytes(writerPkScript);
+  } catch {
+    return undefined;
+  }
+  if (script.length !== 34 || script[0] !== 0x51 || script[1] !== 0x20) return undefined;
+  if (bytesToHex(script.subarray(2)) !== bytesToHex(key)) return undefined;
+  return key;
+}
+
+function directPayout(key: Uint8Array): { tweakedPublicKey: Uint8Array; pkScript: Uint8Array } {
+  const tweakedPublicKey = xOnly(key);
+  const pkScript = new Uint8Array(34);
+  pkScript[0] = 0x51;
+  pkScript[1] = 0x20;
+  pkScript.set(tweakedPublicKey, 2);
+  return { tweakedPublicKey, pkScript };
+}
+
 function addressOf(script: { address: (hrp: string, server: Uint8Array) => { encode: () => string } }, serverKey: Uint8Array) {
   return script.address(networks.mutinynet.hrp, xOnly(serverKey)).encode();
 }
@@ -65,7 +91,7 @@ export function bindContracts(terms: Terms): Bound {
   if (terms.oraclePks.length !== 5) throw new Error("five oracle keys");
   const oraclePks = terms.oraclePks.map((pk) => xOnly(pk));
 
-  const writer = payoutVtxo(writerPk, serverKey, terms.exit);
+  const writer = terms.payoutKey ? directPayout(terms.payoutKey) : payoutVtxo(writerPk, serverKey, terms.exit);
   const holder = payoutVtxo(holderPk, serverKey, terms.exit);
   const keys = { serverKey, emulatorKey: terms.emulatorKey };
   const oracles = Object.fromEntries(oraclePks.map((pk, index) => [`oracles.${index}`, pk]));

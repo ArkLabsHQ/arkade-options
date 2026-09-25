@@ -1,4 +1,5 @@
 import {
+  ArkAddress,
   arkade,
   networks,
   RestArkProvider,
@@ -13,6 +14,7 @@ import { bytesToHex, hexToBytes, xOnly } from "../../protocol/hex.ts";
 import { intentProgram, vaultProgram } from "./program.ts";
 
 export const NETWORK_NAME = "Mutinynet";
+export const WALLET_URL = "https://mutinynet.arkade.money";
 
 const HOLDER = SingleKey.fromHex("0000000000000000000000000000000000000000000000000000000000000021");
 const ORACLES = [0x31, 0x32, 0x33, 0x34, 0x35].map((n) =>
@@ -26,7 +28,10 @@ export type FundRequest = {
   premium: bigint;
   expiry: bigint;
   deadline: bigint;
-  writerHex: string;
+  /** Pasted Mutinynet address. Premium and settlement pay its taproot key. */
+  writerAddress?: string;
+  /** Older positions that stored a private key. */
+  writerHex?: string;
   holderPkHex?: string;
   oraclePkHex?: string[];
   exit?: bigint;
@@ -43,11 +48,23 @@ export type Deposit = {
   exit: number;
 };
 
+export type WriterBinding = {
+  pubkey: string;
+  pkScript: string;
+  address: string;
+  payoutKey: Uint8Array;
+  serverKey: Uint8Array;
+  emulatorKey: Uint8Array;
+};
+
 type Session = {
   client: Awaited<ReturnType<typeof arkade.Arkade.connect>>;
 };
 
 const sessions = new Map<string, Promise<Session>>();
+const ADDRESS_KEY = "arkade-options-address-v1";
+const SESSION_KEY = "arkade-options-session-v1";
+const LEGACY_WRITER_KEY = "arkade-options-writer-v1";
 
 function openSession(identity: SingleKey): Promise<Session> {
   const id = identity.toHex();
@@ -77,12 +94,119 @@ function btcAmount(sats: bigint) {
   return frac ? `${whole}.${frac}` : whole.toString();
 }
 
-async function build(req: FundRequest) {
-  const writer = SingleKey.fromHex(req.writerHex);
-  const { client } = await openSession(writer);
+function storedHex(name: string): string | null {
+  const raw = globalThis.localStorage?.getItem(name)?.trim().toLowerCase() ?? "";
+  if (!/^[0-9a-f]{64}$/.test(raw) || raw === "0".repeat(64)) return null;
+  return raw;
+}
+
+/** Canonical Mutinynet address, or an error the page can show. */
+export function parseWriterAddress(raw: string): string {
+  const trimmed = raw.trim();
+  let decoded: ArkAddress;
+  try {
+    decoded = ArkAddress.decode(trimmed);
+  } catch {
+    throw new Error("Paste a Mutinynet Arkade address. It starts with tark.");
+  }
+  if (decoded.hrp !== networks.mutinynet.hrp) {
+    throw new Error("Paste a Mutinynet address. It starts with tark.");
+  }
+  return decoded.encode();
+}
+
+export function readAddress(): string | null {
+  const raw = globalThis.localStorage?.getItem(ADDRESS_KEY)?.trim() ?? "";
+  if (!raw) return null;
+  try {
+    return parseWriterAddress(raw);
+  } catch {
+    return null;
+  }
+}
+
+export function saveAddress(raw: string): string {
+  const address = parseWriterAddress(raw);
+  globalThis.localStorage?.setItem(ADDRESS_KEY, address);
+  return address;
+}
+
+export function clearAddress(): void {
+  globalThis.localStorage?.removeItem(ADDRESS_KEY);
+}
+
+/** Browser identity for talking to arkd. It is not the payout address. */
+export function sessionHex(): string {
+  const existing = storedHex(SESSION_KEY);
+  if (existing) return existing;
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  if (bytes.every((byte) => byte === 0)) bytes[0] = 1;
+  const hex = bytesToHex(bytes);
+  globalThis.localStorage?.setItem(SESSION_KEY, hex);
+  return hex;
+}
+
+/** Key an older page created without asking. Used only to finish those positions. */
+export function legacyWriterHex(): string | null {
+  return storedHex(LEGACY_WRITER_KEY);
+}
+
+/** Address finalize pays, and the script the desk must accept. */
+export async function writerBinding(address: string): Promise<WriterBinding> {
+  const decoded = ArkAddress.decode(parseWriterAddress(address));
+  const { client } = await openSession(SingleKey.fromHex(sessionHex()));
   if (!client.emulatorKey) throw new Error("The emulator key is missing.");
   await assertServerExit();
-  const writerPk = await writer.xOnlyPublicKey();
+  if (bytesToHex(xOnly(client.serverKey)) !== bytesToHex(xOnly(decoded.serverPubKey))) {
+    throw new Error("That address is for a different Arkade server.");
+  }
+  const payoutKey = xOnly(decoded.vtxoTaprootKey);
+  return {
+    pubkey: bytesToHex(payoutKey),
+    pkScript: bytesToHex(decoded.pkScript),
+    address: decoded.encode(),
+    payoutKey,
+    serverKey: client.serverKey,
+    emulatorKey: client.emulatorKey,
+  };
+}
+
+/** Address finalize pays the premium to, for an older stored key. */
+export async function writerPayoutAddress(writerHex: string): Promise<string> {
+  const writer = SingleKey.fromHex(writerHex);
+  const { client } = await openSession(writer);
+  await assertServerExit();
+  const pubkey = await writer.xOnlyPublicKey();
+  const script = payoutVtxo(pubkey, client.serverKey, EXIT);
+  return script.address(networks.mutinynet.hrp, xOnly(client.serverKey)).encode();
+}
+
+async function build(req: FundRequest) {
+  let writerPk: Uint8Array;
+  let payoutKey: Uint8Array | undefined;
+  let serverKey: Uint8Array;
+  let emulatorKey: Uint8Array;
+  let identity: SingleKey;
+  if (req.writerAddress) {
+    const binding = await writerBinding(req.writerAddress);
+    writerPk = binding.payoutKey;
+    payoutKey = binding.payoutKey;
+    serverKey = binding.serverKey;
+    emulatorKey = binding.emulatorKey;
+    identity = SingleKey.fromHex(sessionHex());
+  } else if (req.writerHex) {
+    identity = SingleKey.fromHex(req.writerHex);
+    const { client } = await openSession(identity);
+    if (!client.emulatorKey) throw new Error("The emulator key is missing.");
+    await assertServerExit();
+    writerPk = await identity.xOnlyPublicKey();
+    serverKey = client.serverKey;
+    emulatorKey = client.emulatorKey;
+  } else {
+    throw new Error("Paste your Arkade address first.");
+  }
+  const { client } = await openSession(identity);
   const holderPk = req.holderPkHex ? hexToBytes(req.holderPkHex) : await HOLDER.xOnlyPublicKey();
   const oraclePks = req.oraclePkHex
     ? req.oraclePkHex.map((hex) => hexToBytes(hex))
@@ -97,10 +221,11 @@ async function build(req: FundRequest) {
     deadline: req.deadline,
     exit,
     writerPk,
+    payoutKey,
     holderPk,
     oraclePks,
-    serverKey: client.serverKey,
-    emulatorKey: client.emulatorKey,
+    serverKey,
+    emulatorKey,
   };
   const bound = bindContracts(terms);
   const intent = client.contract(intentProgram(), bound.intent);
@@ -109,31 +234,6 @@ async function build(req: FundRequest) {
     throw new Error("The contract address does not match the local derivation.");
   }
   return { bound, intent, vault, holderPk, oraclePks, exit };
-}
-
-/** Address finalize pays the premium to, and cancel refunds the collateral to. */
-export async function writerPayoutAddress(writerHex: string): Promise<string> {
-  return (await writerProfile(writerHex)).address;
-}
-
-/** Writer key and the script the desk pays the premium to. */
-export async function writerProfile(writerHex: string): Promise<{ pubkey: string; pkScript: string; address: string }> {
-  const writer = SingleKey.fromHex(writerHex);
-  const { client } = await openSession(writer);
-  await assertServerExit();
-  const pubkey = await writer.xOnlyPublicKey();
-  const script = payoutVtxo(pubkey, client.serverKey, EXIT);
-  return {
-    pubkey: bytesToHex(pubkey),
-    pkScript: bytesToHex(script.pkScript),
-    address: script.address(networks.mutinynet.hrp, xOnly(client.serverKey)).encode(),
-  };
-}
-
-export async function arkKeys(writerHex: string): Promise<{ serverKey: Uint8Array; emulatorKey: Uint8Array }> {
-  const { client } = await openSession(SingleKey.fromHex(writerHex));
-  if (!client.emulatorKey) throw new Error("The emulator key is missing.");
-  return { serverKey: client.serverKey, emulatorKey: client.emulatorKey };
 }
 
 /** Mutinynet address the seller funds. Collateral stays with the seller until finalize. */
@@ -160,12 +260,7 @@ export async function fundingState(req: FundRequest): Promise<"open" | "funded" 
   return "open";
 }
 
-export async function hasDeposit(req: FundRequest): Promise<boolean> {
-  const state = await fundingState(req);
-  return state === "funded" || state === "filled";
-}
-
-/** After the deadline, cancel pays the whole coin back to the writer. */
+/** After the deadline, cancel pays the whole coin back to the writer address. */
 export async function cancelIntent(req: FundRequest): Promise<string> {
   const { intent, bound } = await build(req);
   const coins = await intent.getUtxos();
@@ -173,14 +268,4 @@ export async function cancelIntent(req: FundRequest): Promise<string> {
   if (!coin) throw new Error("No coin on this address.");
   const sent = await intent.functions.cancel().from(coin).to(bound.writerPkScript, BigInt(coin.value)).send();
   return sent.txid;
-}
-
-export async function writerHex(): Promise<string> {
-  const keyName = "arkade-options-writer-v1";
-  const store = globalThis.localStorage;
-  const existing = store?.getItem(keyName);
-  if (existing) return existing;
-  const hex = await SingleKey.fromRandomBytes().toHex();
-  store?.setItem(keyName, hex);
-  return hex;
 }

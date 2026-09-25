@@ -38,6 +38,7 @@ pnpm dev
 ```
 
 - Open <http://127.0.0.1:4173/app/>
+- Paste a Mutinynet address from <https://mutinynet.arkade.money>
 
 ```bash
 docker build -f site.Dockerfile -t arkade-options .
@@ -67,6 +68,7 @@ Dokploy:
 - Port `8788`.
 - Set `DESK_KEY` to a 32-byte hex key and keep it.
 - Mount a volume at `/data`.
+- Redeploy after a desk change. An older image refuses a pasted address.
 
 `GET /` and `GET /status` return the same JSON: `commit`, `pubkey`, `address`, `balance`.
 

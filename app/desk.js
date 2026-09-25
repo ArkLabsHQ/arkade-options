@@ -1,45 +1,44 @@
-import { cancelIntent, depositAddress, fundingState, writerHex, writerPayoutAddress } from "./src/fund.ts";
+import {
+  cancelIntent,
+  clearAddress,
+  depositAddress,
+  fundingState,
+  legacyWriterHex,
+  readAddress,
+  saveAddress,
+  writerPayoutAddress,
+} from "./src/fund.ts";
 import { artifactLine } from "./src/program.ts";
 import { requestQuotes } from "./src/rfq.ts";
 import { deribitPremium, fetchSurface } from "../protocol/deribit.ts";
 import { bestQuote } from "./quote.js";
 import { PINNED_DESKS, RELAYS } from "./rfq-config.js";
-import {
-  DUST,
-  PRICE_MAX,
-  Q_MAX,
-  Q_MIN,
-  settle,
-  windows,
-  writerPayoff,
-} from "./settle-math.js";
+import { DUST, Q_MAX, Q_MIN, writerPayoff } from "./settle-math.js";
 
-const ORACLES = ["Chainlink", "DIA", "Pyth", "Stork", "Band"];
 const STORE = "arkade-options-desk-v1";
+const REFRESH_MS = 18_000;
 
 const state = {
   spotCents: null,
   spotSource: "Loading",
-  side: 0,
+  address: "",
   kind: 0,
   days: 30,
-  strikeIndex: 2,
-  quotes: null,
-  deposit: null,
-  quoting: false,
+  strikeIndex: 0,
+  view: "connect",
+  market: null,
+  deskQuote: null,
   quoteNote: "",
-  quoteHold: 0,
-  quoteMeta: "",
-  payoutAddress: "",
-  view: "quote",
+  quoting: false,
+  confirming: false,
+  deposit: null,
   positions: loadPositions(),
   selected: null,
-  settleText: "",
-  spike: false,
 };
 
 let quoteGen = 0;
 let quoteTimer = 0;
+let lastPoll = 0;
 
 const $ = (id) => document.getElementById(id);
 
@@ -53,22 +52,14 @@ function loadPositions() {
 }
 
 function revive(row) {
-  const position = {
+  return {
     ...row,
     collateral: BigInt(row.collateral),
     premiumSats: BigInt(row.premiumSats),
     strike: BigInt(row.strike),
     expiry: BigInt(row.expiry),
+    marketSats: row.marketSats ? BigInt(row.marketSats) : null,
   };
-  if (position.settlement) {
-    position.settlement = {
-      twap: BigInt(position.settlement.twap),
-      holder: BigInt(position.settlement.holder),
-      writer: BigInt(position.settlement.writer),
-      mode: position.settlement.mode,
-    };
-  }
-  return position;
 }
 
 function persist() {
@@ -84,20 +75,20 @@ function persist() {
     solver: p.solver,
     status: p.status,
     address: p.address,
-    uri: p.uri,
     deadline: p.deadline,
-    commitment: p.commitment,
     holderPkHex: p.holderPkHex,
     oraclePkHex: p.oraclePkHex,
     exit: p.exit,
     vaultAddress: p.vaultAddress,
-    validUntil: p.validUntil,
-    settlement: p.settlement && {
-      twap: p.settlement.twap.toString(),
-      holder: p.settlement.holder.toString(),
-      writer: p.settlement.writer.toString(),
-      mode: p.settlement.mode,
-    },
+    writerHex: p.writerHex,
+    writerAddress: p.writerAddress,
+    payoutAddress: p.payoutAddress,
+    days: p.days,
+    createdAt: p.createdAt,
+    apy: p.apy,
+    apyFrozen: p.apyFrozen,
+    marketSats: p.marketSats ? p.marketSats.toString() : "",
+    marketApy: p.marketApy,
   }));
   localStorage.setItem(STORE, JSON.stringify(rows));
 }
@@ -128,18 +119,29 @@ function fmtWhen(unix) {
   })} UTC`;
 }
 
+function fmtApy(value) {
+  if (value == null || !Number.isFinite(value)) return "";
+  const digits = Math.abs(value) >= 100 ? 0 : 1;
+  return `${value.toFixed(digits)}% APY`;
+}
+
+function annualized(premiumSats, collateralSats, days) {
+  if (collateralSats <= 0n || !(days > 0)) return null;
+  return (Number(premiumSats) / Number(collateralSats)) * (365 / days) * 100;
+}
+
+function tenorDays(position) {
+  if (position.days > 0) return position.days;
+  const start = position.createdAt || Math.floor(Date.now() / 1000);
+  const span = Number(position.expiry) - start;
+  return Math.max(1, Math.round(span / 86400) || 30);
+}
+
 function btcToSats(text) {
   const s = text.trim();
   if (!/^\d+(\.\d{0,8})?$/.test(s)) return null;
   const [whole, frac = ""] = s.split(".");
   return BigInt(whole) * 100_000_000n + BigInt((frac + "00000000").slice(0, 8));
-}
-
-function usdToCents(text) {
-  const s = text.trim().replaceAll(",", "");
-  if (!/^\d+(\.\d{0,2})?$/.test(s)) return null;
-  const [whole, frac = ""] = s.split(".");
-  return BigInt(whole) * 100n + BigInt((frac + "00").slice(0, 2));
 }
 
 function expiryUnix(days) {
@@ -177,15 +179,82 @@ function sizeError(sats) {
   return "";
 }
 
-function copy() {
-  if (state.kind === 0) {
-    return "You sell the call and send the BTC collateral on Mutinynet. At expiry the holder is paid only the fraction of that collateral by which the TWAP finishes above the strike.";
-  }
-  return "You sell the put and send the BTC collateral on Mutinynet. The holder is paid the fraction the TWAP finishes below the strike, and the claim stops at the collateral.";
+function termsKey() {
+  const sats = sizeSats();
+  if (state.spotCents == null || sats == null) return "";
+  return `${state.kind}:${strike()}:${expiryUnix(state.days)}:${sats}`;
 }
 
 function productName() {
   return state.kind === 0 ? "Covered call" : "Limited put";
+}
+
+function kindCopy() {
+  if (state.kind === 0) return "You sell upside above the strike. You keep the rest of the collateral.";
+  return "You sell downside below the strike, down to the collateral.";
+}
+
+function shortAddress(address) {
+  if (!address || address.length < 20) return address || "";
+  return `${address.slice(0, 12)}…${address.slice(-6)}`;
+}
+
+function statusLabel(position) {
+  if (position.status === "locking") return "Waiting for deposit";
+  if (position.status === "deposited") return "Deposited";
+  if (position.status === "filled") return "Premium paid";
+  if (position.status === "expired") return "Window closed";
+  if (position.status === "refunded") return "Refunded";
+  if (position.status === "settled") return "Settled";
+  return "Open";
+}
+
+function statusLead(position) {
+  if (position.status === "locking") {
+    return "Waiting for your deposit. This address keeps the payout below. The market can move until the coins arrive.";
+  }
+  if (position.status === "deposited") return "Deposited. The payout is set, and the desk pays it to your address.";
+  if (position.status === "filled") return "Premium paid to your address.";
+  if (position.status === "expired") return "The fill window closed. Coins sent after that can be refunded to your address.";
+  if (position.status === "refunded") return "Refunded to your address.";
+  if (position.status === "settled") return "Settled.";
+  return "Open.";
+}
+
+function humanNote(note) {
+  if (!note) return "";
+  if (note.includes("writer script")) {
+    return "This desk needs a redeploy before it can pay a pasted address. The number above is the live market.";
+  }
+  if (note.includes("premium below dust")) {
+    return "This strike pays too little to deposit. Pick a closer one.";
+  }
+  return note;
+}
+
+function shownDeposit() {
+  if (!state.deposit || state.deposit.status !== "ready") return null;
+  if (!state.deposit.termsKey || state.deposit.termsKey !== termsKey()) return null;
+  return state.deposit;
+}
+
+function liveQuote() {
+  if (PINNED_DESKS.length === 0) return state.market;
+  return state.deskQuote;
+}
+
+function headlineQuote() {
+  return state.deskQuote || state.market;
+}
+
+function mine(position) {
+  if (position.writerAddress) return position.writerAddress === state.address;
+  if (position.payoutAddress) return position.payoutAddress === state.address;
+  return false;
+}
+
+function visiblePositions() {
+  return state.positions.filter(mine);
 }
 
 let strikeKey = "";
@@ -194,8 +263,8 @@ function renderStrikes() {
   const host = $("strikes");
   if (state.spotCents == null) return;
   const rows = ladder();
-  if (state.strikeIndex >= rows.length) state.strikeIndex = 2;
-  const key = rows.join(",");
+  if (state.strikeIndex >= rows.length) state.strikeIndex = 0;
+  const key = `${state.kind}:${rows.join(",")}`;
   if (key !== strikeKey) {
     strikeKey = key;
     host.replaceChildren();
@@ -227,12 +296,17 @@ function pctFromSpot(cents) {
 }
 
 function renderPayoff() {
-  const sats = sizeSats();
-  if (state.spotCents == null || sats == null || sizeError(sats)) {
-    $("payoff").replaceChildren();
+  const host = $("payoff");
+  if (!$("payoff-details").open) {
+    host.replaceChildren();
     return;
   }
-  drawPayoff($("payoff"), {
+  const sats = sizeSats();
+  if (state.spotCents == null || sats == null || sizeError(sats)) {
+    host.replaceChildren();
+    return;
+  }
+  drawPayoff(host, {
     kind: state.kind,
     strike: strike(),
     collateral: sats,
@@ -259,8 +333,8 @@ function drawPayoff(host, { kind, strike: k, collateral: q, spot }) {
   const h = 210;
   const left = 78;
   const right = 12;
-  const top = 28;
-  const bottom = 46;
+  const top = 16;
+  const bottom = 16;
   const plotW = w - left - right;
   const plotH = h - top - bottom;
   const sx = (px) => left + Number(px - lo) / Number(hi - lo) * plotW;
@@ -270,42 +344,29 @@ function drawPayoff(host, { kind, strike: k, collateral: q, spot }) {
     role: "img",
     "aria-label": `Writer payoff. Spot ${fmtUsdFromCents(spot)}, strike ${fmtUsdFromCents(k)} (${pctFromSpot(k)}). You keep between 0 and ${fmtBtc(q)} BTC of collateral.`,
   });
-  const levels = [0n, q / 4n, q / 2n, q];
+  const levels = [0n, q / 2n, q];
   for (const level of levels) {
     const y = sy(level);
     svg.append(svgEl("line", { x1: left, x2: w - right, y1: y, y2: y, class: "grid" }));
     svg.append(svgEl("text", { x: left - 8, y, class: "ylab" }, fmtBtc(level)));
   }
-  const spotX = sx(spot);
-  const strikeX = sx(k);
-  svg.append(svgEl("line", { x1: spotX, x2: spotX, y1: top, y2: top + plotH, class: "spot-line" }));
-  svg.append(svgEl("line", { x1: strikeX, x2: strikeX, y1: top, y2: top + plotH, class: "strike-line" }));
+  svg.append(svgEl("line", { x1: sx(spot), x2: sx(spot), y1: top, y2: top + plotH, class: "spot-line" }));
+  svg.append(svgEl("line", { x1: sx(k), x2: sx(k), y1: top, y2: top + plotH, class: "strike-line" }));
   const line = points.map(([px, y], i) => `${i ? "L" : "M"}${sx(px).toFixed(1)},${sy(y).toFixed(1)}`).join(" ");
   svg.append(svgEl("path", { d: line, class: "curve" }));
-  const crowded = Math.abs(spotX - strikeX) < 96;
-  svg.append(svgEl("text", {
-    x: clamp(spotX, left + 28, w - right - 28),
-    y: top + plotH + 16,
-    class: "xlab spot-label",
-  }, fmtUsdFromCents(spot)));
-  svg.append(svgEl("text", {
-    x: clamp(spotX, left + 28, w - right - 28),
-    y: top + plotH + 30,
-    class: "xlab spot-label sub",
-  }, "spot"));
-  const strikeAnchorX = crowded ? clamp(strikeX + (strikeX >= spotX ? 54 : -54), left + 36, w - right - 36) : clamp(strikeX, left + 36, w - right - 36);
-  const strikeY = crowded ? top - 6 : top + plotH + 16;
-  svg.append(svgEl("text", { x: strikeAnchorX, y: strikeY, class: "xlab strike-label" }, fmtUsdFromCents(k)));
-  svg.append(svgEl("text", {
-    x: strikeAnchorX,
-    y: crowded ? top + 10 : top + plotH + 30,
-    class: "xlab strike-label sub",
-  }, `strike ${pctFromSpot(k)}`));
-  host.append(svg);
+  const legend = document.createElement("div");
+  legend.className = "payoff-legend";
+  legend.append(
+    legendItem("Spot", fmtUsdFromCents(spot)),
+    legendItem("Strike", `${fmtUsdFromCents(k)} · ${pctFromSpot(k)}`),
+  );
+  host.append(svg, legend);
 }
 
-function clamp(value, min, max) {
-  return Math.max(min, Math.min(max, value));
+function legendItem(name, value) {
+  const span = document.createElement("span");
+  span.textContent = `${name} ${value}`;
+  return span;
 }
 
 function svgEl(name, attrs, text) {
@@ -315,315 +376,233 @@ function svgEl(name, attrs, text) {
   return node;
 }
 
-function renderTicket() {
-  $("kind-copy").textContent = copy();
+function renderSell() {
+  if (state.view !== "sell") return;
+  const now = Math.floor(Date.now() / 1000);
+  if (state.deskQuote?.deadline && state.deskQuote.deadline <= now) state.deskQuote = null;
+  $("sell-title").textContent = productName();
+  $("kind-copy").textContent = kindCopy();
   $("expiry-when").textContent = state.spotCents == null ? "" : fmtWhen(expiryUnix(state.days));
-  $("ticket-kicker").textContent = `${state.side === 0 ? "Sell" : "Buy"} · ${productName()}`;
   const sats = sizeSats();
   const err = state.spotCents == null ? "" : sizeError(sats);
   $("size-error").textContent = err;
-  const best = topQuote();
-  const host = $("quotes");
-  host.replaceChildren();
-  if (state.quoting) {
-    const p = document.createElement("p");
-    p.className = "lock-note";
-    const who = PINNED_DESKS.length
-      ? PINNED_DESKS.map((desk) => desk.name).join(", ")
-      : "Deribit";
-    p.textContent = `Asking ${who}.`;
-    host.append(p);
-  } else if (best) {
-    state.quotes.forEach((row, index) => {
-      const line = document.createElement("div");
-      line.className = `quote-row${row.name === best.name ? " best" : ""}`;
-      line.style.animationDelay = `${index * 40}ms`;
-      const name = document.createElement("span");
-      name.textContent = row.name;
-      const prem = document.createElement("span");
-      prem.textContent = `${fmtBtc(row.sats)} BTC`;
-      const flag = document.createElement("span");
-      if (row.name === best.name) {
-        flag.className = "mark";
-        flag.textContent = "Best";
-      }
-      line.append(name, prem, flag);
-      host.append(line);
-    });
-  } else if (state.quoteNote) {
-    const p = document.createElement("p");
-    p.className = "lock-note";
-    p.textContent = state.quoteNote;
-    host.append(p);
-  }
-  if (!best || err) {
-    state.quoteHold = 0;
-    state.quoteMeta = "";
-    $("premium").textContent = "—";
-    $("premium-meta").textContent = err ? "" : "Enter a size. The desks answer with a premium.";
-    $("lock-note").textContent = "";
+  renderStrikes();
+  renderPayoff();
+
+  const deposit = shownDeposit();
+  const position = deposit && state.positions.find((item) => item.address === deposit.address);
+  const frozen = position && position.status !== "locking";
+  const head = frozen
+    ? { sats: position.premiumSats, name: position.solver || "Desk" }
+    : headlineQuote();
+  const days = state.days;
+  if (!head || err) {
+    $("premium").textContent = state.quoting && !err ? "…" : "—";
+    $("premium-meta").textContent = err ? "" : (state.spotCents == null ? "Loading the price." : "");
   } else {
-    $("premium").textContent = `${fmtBtc(best.sats)} BTC`;
-    const notionalUsd = Number(sats) / 1e8 * Number(state.spotCents) / 100;
-    const ann = notionalUsd > 0 ? best.usd / notionalUsd * (365 / state.days) * 100 : 0;
-    const iv = typeof best.iv === "number" && best.iv > 0 ? ` · ${(best.iv * 100).toFixed(1)}% IV` : "";
-    state.quoteMeta = `$${best.usd.toLocaleString("en-US", { maximumFractionDigits: 2 })} · ${ann.toFixed(1)}% annualized · ${best.name}${iv}`;
-    state.quoteHold = best.validUntil || 0;
-    const left = state.quoteHold ? Math.max(0, state.quoteHold - Math.floor(Date.now() / 1000)) : 0;
-    $("premium-meta").textContent = left ? `${state.quoteMeta} · holds ${left}s` : state.quoteMeta;
-    $("lock-note").textContent = `You send ${fmtBtc(sats)} BTC of collateral. The ${fmtBtc(best.sats)} BTC premium is paid to your writer address when the intent finalizes, not when you deposit.`;
+    const apy = frozen
+      ? position.apy
+      : annualized(head.sats, sats, days);
+    $("premium").textContent = `${fmtBtc(head.sats)} BTC`;
+    const source = frozen ? statusLabel(position) : (state.deskQuote ? "now" : "market");
+    $("premium-meta").textContent = [fmtApy(apy), source].filter(Boolean).join(" · ");
   }
-  renderDeposit(best, err);
-  const locking = state.positions.some((p) => p.status === "locking");
-  const ready = state.deposit?.status === "ready";
-  $("lock").disabled = !ready || Boolean(err) || state.quoting || locking;
-  $("lock").textContent = "Track this deposit";
-}
 
-function renderPayout(show) {
-  const box = $("payout");
-  box.hidden = !show;
-  $("payout-address").textContent = state.payoutAddress || "Fetching your writer address…";
-}
+  const quote = liveQuote();
+  const moved = Boolean(quote && deposit && !frozen && quote.sats !== deposit.premium);
+  const confirm = $("confirm");
+  if (frozen) {
+    confirm.hidden = true;
+  } else if (!deposit || moved) {
+    confirm.hidden = false;
+    confirm.textContent = state.confirming ? "Confirming" : (moved ? "Confirm the new payout" : "Confirm");
+    const tooSmall = quote && quote.sats <= DUST;
+    confirm.disabled = state.confirming || Boolean(err) || !quote || tooSmall;
+  } else {
+    confirm.hidden = true;
+  }
 
-function renderDeposit(best, err) {
   const box = $("deposit");
-  const tooSmall = best && best.sats <= DUST;
-  if (!best || err || state.quoting) {
+  if (!deposit) {
     box.hidden = true;
-    renderPayout(false);
-    if (!state.positions.some((p) => p.status === "locking")) $("status").textContent = "";
-    return;
-  }
-  if (tooSmall) {
-    box.hidden = true;
-    renderPayout(false);
-    $("status").textContent = `Premium is ${best.sats} sats. Finalize only enforces a premium above ${DUST} sats, so this strike has no Mutinynet deposit. A closer strike does.`;
-    return;
-  }
-  renderPayout(true);
-  const deposit = state.deposit;
-  if (!deposit || deposit.status === "loading") {
+  } else {
     box.hidden = false;
-    $("deposit-amount").textContent = "Fetching the Mutinynet address…";
-    $("deposit-address").textContent = "";
-    $("copy-address").textContent = "Copy BIP21";
-    $("copy-address").disabled = true;
-    $("deposit-clock").textContent = "";
-    $("status").textContent = "";
-    return;
+    $("deposit-amount").textContent = `Send ${fmtBtc(deposit.amountSats)} BTC`;
+    const apy = deposit.apy ?? annualized(deposit.premium, deposit.amountSats, state.days);
+    $("deposit-fixed").textContent = frozen
+      ? `This deposit pays ${fmtBtc(deposit.premium)} BTC · ${fmtApy(position.apy ?? apy)}`
+      : `This deposit pays ${fmtBtc(deposit.premium)} BTC · ${fmtApy(apy)}`;
+    $("deposit-address").textContent = deposit.address;
+    $("copy-address").disabled = false;
   }
-  if (deposit.status === "error") {
-    box.hidden = true;
-    renderPayout(false);
-    $("status").textContent = deposit.message;
-    return;
+
+  let note = "";
+  if (!frozen) {
+    if (quote && quote.sats <= DUST) {
+      note = "This strike pays too little to deposit. Pick a closer one.";
+    } else if (!quote && state.quoting) {
+      note = state.market ? "Getting a quote." : "";
+    } else if (!quote) {
+      note = humanNote(state.quoteNote);
+    } else if (state.quoteNote && !state.deskQuote) {
+      note = humanNote(state.quoteNote);
+    }
+  } else {
+    note = statusLead(position);
   }
-  box.hidden = false;
-  $("deposit-amount").textContent = `${fmtBtc(deposit.amountSats)} BTC`;
-  $("deposit-address").textContent = deposit.address;
-  $("copy-address").textContent = copyLabel();
-  $("copy-address").disabled = false;
-  $("deposit-clock").dataset.deadline = String(deposit.deadline);
-  $("deposit-clock").textContent = `Send it on Mutinynet. ${countdown(deposit.deadline)}`;
-  if (!state.positions.some((p) => p.status === "locking")) $("status").textContent = "";
+  $("status").textContent = note;
+  $("ticket-kicker").textContent = frozen ? statusLabel(position) : "Payout now";
+}
+
+function renderHome() {
+  renderBlotter();
+}
+
+function show(view) {
+  state.view = view;
+  document.body.dataset.view = view;
+  $("connect").hidden = view !== "connect";
+  $("home").hidden = view !== "home";
+  $("sell").hidden = view !== "sell";
+  const known = Boolean(state.address);
+  $("who").hidden = !known || view === "connect";
+  $("who-address").textContent = known ? shortAddress(state.address) : "";
+  $("sub").textContent = view === "connect"
+    ? "Paste your Arkade address to start."
+    : view === "home"
+      ? "Your positions, and a new sale."
+      : state.kind === 0
+        ? "Sell a covered call."
+        : "Sell a limited put.";
+  if (view === "home") renderHome();
+  if (view === "sell") renderSell();
 }
 
 function renderBlotter() {
   const host = $("blotter");
+  if (!host) return;
   host.replaceChildren();
-  $("blotter-count").textContent = state.positions.length ? `${state.positions.length} on the desk` : "";
-  if (!state.positions.length) {
+  const rows = visiblePositions();
+  $("blotter-count").textContent = rows.length ? String(rows.length) : "";
+  if (!rows.length) {
     const p = document.createElement("p");
     p.className = "empty";
-    p.textContent = "Nothing locked. A quote you accept shows up here, then settles from three oracle slices.";
+    p.textContent = "No positions yet.";
     host.append(p);
     return;
   }
-  const columns = document.createElement("div");
-  columns.className = "position-head tag";
-  for (const label of ["Contract", "Strike", "Expiry", "Notional", "Status"]) {
-    columns.append(textCell(label));
-  }
-  host.append(columns);
-  for (const position of state.positions) {
+  for (const position of rows) {
     const wrap = document.createElement("article");
     wrap.className = "position";
     const head = document.createElement("button");
     head.type = "button";
     head.className = "position-head";
     head.addEventListener("click", () => {
-      if (state.selected === position.id) return;
-      state.selected = position.id;
-      state.settleText = fmtUsdFromCents(state.spotCents);
-      state.spike = false;
+      state.selected = state.selected === position.id ? null : position.id;
       renderBlotter();
     });
-    const kind = document.createElement("span");
-    kind.className = `tag ${position.kind === 0 ? "call" : "put"}`;
-    kind.textContent = `${position.side === 0 ? "Sell" : "Buy"} ${position.kind === 0 ? "covered call" : "limited put"}`;
-    const cells = [
-      kind,
-      textCell(fmtUsdFromCents(position.strike)),
-      textCell(fmtWhen(position.expiry)),
-      textCell(`${fmtBtc(position.collateral)} BTC`),
-      statusCell(position),
-    ];
-    head.append(...cells);
+    const main = document.createElement("span");
+    main.className = "position-main";
+    const title = document.createElement("strong");
+    title.textContent = position.kind === 0 ? "Covered call" : "Limited put";
+    const meta = document.createElement("span");
+    meta.className = "tag";
+    meta.textContent = `${fmtBtc(position.collateral)} BTC · $${fmtUsdFromCents(position.strike)}`;
+    main.append(title, meta);
+    const status = document.createElement("span");
+    status.className = "position-status";
+    status.textContent = statusLabel(position);
+    head.append(main, status);
     wrap.append(head);
     if (state.selected === position.id) wrap.append(detail(position));
     host.append(wrap);
   }
 }
 
-function textCell(value) {
-  const span = document.createElement("span");
-  span.textContent = value;
-  return span;
-}
-
-function statusCell(position) {
-  const span = document.createElement("span");
-  if (position.status === "locking") {
-    span.dataset.deadline = String(position.deadline);
-    span.textContent = countdown(position.deadline);
-    return span;
-  }
-  span.textContent = statusLabel(position);
-  return span;
-}
-
-function statusLabel(position) {
-  if (position.status === "locking") return countdown(position.deadline);
-  if (position.status === "deposited") return "Deposited";
-  if (position.status === "expired") return "Window closed";
-  if (position.status === "refunded") return "Refunded";
-  if (position.status === "filled") return "Filled";
-  if (position.status === "settled") return "Settled";
-  return "Open";
-}
-
-function countdown(deadline) {
-  const left = Math.max(0, deadline - Math.floor(Date.now() / 1000));
-  const m = Math.floor(left / 60);
-  const s = left % 60;
-  return `Closes in ${m}:${s.toString().padStart(2, "0")}`;
-}
-
-function positionChart(position) {
-  const chart = document.createElement("figure");
-  chart.className = "payoff";
-  const caption = document.createElement("figcaption");
-  caption.textContent = "Writer payoff in BTC for this position, at the current spot.";
-  const host = document.createElement("div");
-  drawPayoff(host, {
-    kind: position.kind,
-    strike: position.strike,
-    collateral: position.collateral,
-    spot: state.spotCents,
-  });
-  chart.append(caption, host);
-  return chart;
-}
-
 function detail(position) {
   const box = document.createElement("div");
   box.className = "lab";
-  box.append(positionChart(position));
-  if (position.status === "locking" || position.status === "deposited" || position.status === "expired") {
-    box.append(depositDetail(position));
-    return box;
+  const lead = document.createElement("p");
+  lead.className = "lock-note";
+  lead.textContent = statusLead(position);
+  const pay = document.createElement("p");
+  pay.className = "premium-meta";
+  const apy = position.apyFrozen ? position.apy : annualized(position.premiumSats, position.collateral, tenorDays(position));
+  pay.textContent = `Pays ${fmtBtc(position.premiumSats)} BTC · ${fmtApy(apy)}`;
+  box.append(lead, pay);
+  if (position.status === "locking" && position.marketSats && position.marketSats !== position.premiumSats) {
+    const now = document.createElement("p");
+    now.className = "market-now";
+    now.textContent = `Market now ${fmtBtc(position.marketSats)} BTC · ${fmtApy(position.marketApy)}`;
+    box.append(now);
   }
-  if (position.status === "filled") {
-    const note = document.createElement("p");
-    note.className = "lock-note";
-    note.textContent = "The desk paid the premium to your writer address. Collateral sits in the option vault.";
-    box.append(note);
-    if (position.vaultAddress) {
-      const addr = document.createElement("p");
-      addr.className = "deposit-address";
-      addr.textContent = position.vaultAddress;
-      box.append(addr);
-    }
-    box.append(settleLab(position));
-    return box;
+  if (position.address && !["filled", "refunded", "settled"].includes(position.status)) {
+    box.append(depositBlock(position));
   }
-  if (position.status === "refunded") {
-    const p = document.createElement("p");
-    p.textContent = "Cancel returned this coin to your writer address.";
-    box.append(p);
-    return box;
+  if (position.payoutAddress) {
+    const where = document.createElement("p");
+    where.className = "lock-note";
+    where.textContent = "Paid to your address";
+    const addr = document.createElement("p");
+    addr.className = "deposit-address";
+    addr.textContent = position.payoutAddress;
+    box.append(where, addr);
   }
-  if (position.status === "settled") {
-    box.append(resultLine(position.settlement));
-    return box;
-  }
-  box.append(settleLab(position));
-  return box;
-}
-
-function depositDetail(position) {
-  const frag = document.createDocumentFragment();
-  const net = document.createElement("p");
-  net.className = "lock-note";
-  const closed = Math.floor(Date.now() / 1000) >= position.deadline;
-  if (position.status === "deposited") {
-    net.textContent = closed
-      ? "The fill window has closed. Cancel returns this coin to your writer address."
-      : "Collateral is on this Mutinynet address. The desk pays the premium when it finalizes.";
-  } else if (position.status === "expired") {
-    net.textContent = "The deposit window closed. Cancel pays this coin to your writer address once this time has passed.";
-  } else {
-    net.textContent = `Send ${fmtBtc(position.collateral)} BTC of collateral here. The premium is paid to your writer address when this intent finalizes.`;
-  }
-  const addr = document.createElement("p");
-  addr.className = "deposit-address";
-  addr.textContent = position.address || "Address unavailable.";
-  const copy = document.createElement("button");
-  copy.type = "button";
-  copy.className = "copy-uri";
-  copy.textContent = "Copy BIP21";
-  copy.disabled = !position.address;
-  copy.addEventListener("click", () => {
-    void copyToClipboard(copy, paymentUri(position));
+  const chart = document.createElement("details");
+  chart.className = "more";
+  const summary = document.createElement("summary");
+  summary.textContent = "Payoff chart";
+  const host = document.createElement("div");
+  chart.append(summary);
+  chart.addEventListener("toggle", () => {
+    if (!chart.open) return;
+    drawPayoff(host, {
+      kind: position.kind,
+      strike: position.strike,
+      collateral: position.collateral,
+      spot: state.spotCents,
+    });
+    if (!host.parentElement) chart.append(host);
   });
-  frag.append(net, addr, copy);
+  box.append(chart);
+  const closed = Math.floor(Date.now() / 1000) >= Number(position.deadline);
   if (closed && (position.status === "deposited" || position.status === "expired")) {
     const cancel = document.createElement("button");
     cancel.type = "button";
     cancel.className = "copy-uri";
-    cancel.textContent = "Cancel and refund";
+    cancel.textContent = "Refund";
     cancel.addEventListener("click", () => {
       void refund(position, cancel);
     });
-    frag.append(cancel);
+    box.append(cancel);
   }
-  if (state.payoutAddress) {
-    const where = document.createElement("p");
-    where.className = "lock-note";
-    where.textContent = "Premium payout, and the collateral refund, go to your writer address.";
-    const payout = document.createElement("p");
-    payout.className = "deposit-address";
-    payout.textContent = state.payoutAddress;
-    frag.append(where, payout);
-  }
-  return frag;
+  return box;
 }
 
-function paymentUri(source) {
-  if (source.uri) return source.uri;
-  if (!source.address) return "";
-  return `bitcoin:?ark=${source.address}&amount=${fmtBtc(source.amountSats ?? source.collateral)}`;
+function depositBlock(position) {
+  const frag = document.createDocumentFragment();
+  const amount = document.createElement("p");
+  amount.className = "deposit-amount";
+  amount.textContent = `Send ${fmtBtc(position.collateral)} BTC`;
+  const addr = document.createElement("p");
+  addr.className = "deposit-address";
+  addr.textContent = position.address;
+  const copy = document.createElement("button");
+  copy.type = "button";
+  copy.className = "copy-uri";
+  copy.textContent = "Copy address";
+  copy.addEventListener("click", () => {
+    void copyToClipboard(copy, position.address);
+  });
+  frag.append(amount, addr, copy);
+  return frag;
 }
 
 let copiedUntil = 0;
 
-function copyLabel() {
-  return Date.now() < copiedUntil ? "Copied" : "Copy BIP21";
-}
-
 async function copyToClipboard(button, text) {
   if (!text) return;
+  const previous = button.textContent;
   copiedUntil = Date.now() + 1200;
   button.textContent = "Copied";
   try {
@@ -643,408 +622,272 @@ async function copyToClipboard(button, text) {
     }
   }
   setTimeout(() => {
-    if (button.isConnected && Date.now() >= copiedUntil) button.textContent = "Copy BIP21";
+    if (button.isConnected && Date.now() >= copiedUntil) button.textContent = previous;
   }, 1200);
 }
 
-function resultLine(settlement) {
-  const row = document.createElement("div");
-  row.className = "result";
-  row.append(stat("TWAP", `$${fmtUsdFromCents(settlement.twap)}`), stat("Holder", `${fmtBtc(settlement.holder)} BTC`), stat("Writer", `${fmtBtc(settlement.writer)} BTC`));
-  return row;
-}
-
-function stat(label, value) {
-  const wrap = document.createElement("div");
-  const name = document.createElement("span");
-  name.className = "tag";
-  name.textContent = label;
-  const strong = document.createElement("strong");
-  strong.textContent = value;
-  wrap.append(name, strong);
-  return wrap;
-}
-
-function settleLab(position) {
-  const box = document.createDocumentFragment();
-  const who = document.createElement("p");
-  who.className = "lock-note";
-  who.textContent = position.side === 0
-    ? `You are the writer. ${position.solver} paid ${fmtBtc(position.premiumSats)} BTC for the option.`
-    : `You are the holder. You paid ${fmtBtc(position.premiumSats)} BTC. ${position.solver} locked the collateral.`;
-  const controls = document.createElement("div");
-  controls.className = "lab-controls";
-  const label = document.createElement("label");
-  label.textContent = "Settlement spot";
-  const input = document.createElement("input");
-  input.type = "text";
-  input.inputMode = "decimal";
-  input.value = state.settleText || fmtUsdFromCents(state.spotCents);
-  input.addEventListener("input", () => {
-    state.settleText = input.value;
-    renderPreview(position, previewHost, button);
-  });
-  label.append(input);
-  const spike = document.createElement("label");
-  spike.className = "miss";
-  const check = document.createElement("input");
-  check.type = "checkbox";
-  check.checked = state.spike;
-  check.addEventListener("change", () => {
-    state.spike = check.checked;
-    renderPreview(position, previewHost, button);
-  });
-  spike.append(check, document.createTextNode("Pyth spikes the midpoint"));
-  controls.append(label, spike);
-  const previewHost = document.createElement("div");
-  const button = document.createElement("button");
-  button.type = "button";
-  button.className = "settle";
-  button.textContent = "Settle";
-  button.addEventListener("click", () => commitSettle(position));
-  const note = document.createElement("p");
-  note.className = "lock-note";
-  note.textContent = "ST = (900·open + 900·mid + 60·settle) / 1860. Each print is the median of three oracles inside a one-minute slice. A spiked print loses the median.";
-  box.append(who, controls, previewHost, button, note);
-  renderPreview(position, previewHost, button);
-  return box;
-}
-
-function slicesFor(expiry, settleCents, spike) {
-  const bounds = windows(expiry);
-  const bases = [settleCents * 995n / 1000n, settleCents, settleCents];
-  const who = [[0n, 1n, 2n], [1n, 2n, 3n], [2n, 3n, 4n]];
-  const time = [bounds.open, bounds.mid, bounds.close].map(([lo]) => [lo + 20n, lo + 30n, lo + 40n]);
-  return bases.map((base, i) => {
-    const price = [base > 5n ? base - 5n : base, base, base + 5n];
-    if (spike && i === 1) {
-      const pyth = who[i].findIndex((id) => id === 2n);
-      price[pyth] = base * 3n > PRICE_MAX ? PRICE_MAX : base * 3n;
-    }
-    return { price, time: time[i], who: who[i] };
-  });
-}
-
-function renderPreview(position, host, button) {
-  host.replaceChildren();
-  const cents = usdToCents(state.settleText || fmtUsdFromCents(state.spotCents));
-  if (cents == null || cents <= 0n) {
-    button.disabled = true;
-    const p = document.createElement("p");
-    p.className = "error";
-    p.textContent = "Enter a settlement spot in dollars.";
-    host.append(p);
-    return;
-  }
-  const slices = slicesFor(position.expiry, cents, state.spike);
-  const names = ["Open, 30m prior", "Mid, 15m prior", "Settle, at expiry"];
-  slices.forEach((slice, i) => {
-    const row = document.createElement("div");
-    row.className = "slice";
-    const title = document.createElement("span");
-    title.textContent = names[i];
-    const prints = document.createElement("span");
-    prints.textContent = slice.who.map((id, n) => `${ORACLES[Number(id)]} ${fmtUsdFromCents(slice.price[n])}`).join("  ·  ");
-    const med = document.createElement("b");
-    const ordered = [...slice.price].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
-    med.textContent = fmtUsdFromCents(ordered[1]);
-    row.append(title, prints, med);
-    host.append(row);
-  });
-  const result = settle(position, slices);
-  if (result.error) {
-    button.disabled = true;
-    const p = document.createElement("p");
-    p.className = "error";
-    p.textContent = result.error;
-    host.append(p);
-    return;
-  }
-  button.disabled = false;
-  host.append(resultLine({
-    twap: result.settlement,
-    holder: result.outputs.holder,
-    writer: result.outputs.writer,
-  }));
-  position.preview = result;
-}
-
-function commitSettle(position) {
-  if (!position.preview || position.preview.error) return;
-  position.status = "settled";
-  position.settlement = {
-    twap: position.preview.settlement,
-    holder: position.preview.outputs.holder,
-    writer: position.preview.outputs.writer,
-    mode: position.preview.outputs.mode,
-  };
-  delete position.preview;
-  persist();
-  renderBlotter();
-}
-
 function onTermsChanged() {
-  state.quotes = null;
-  state.deposit = null;
-  const sats = sizeSats();
-  const ready = state.spotCents != null && !sizeError(sats);
-  state.quoting = ready;
-  renderStrikes();
-  renderPayoff();
-  renderTicket();
+  state.market = null;
+  state.deskQuote = null;
+  state.quoteNote = "";
+  state.quoting = state.spotCents != null && !sizeError(sizeSats());
   clearTimeout(quoteTimer);
-  if (!ready) return;
   const gen = ++quoteGen;
-  quoteTimer = setTimeout(() => ask(gen), 900);
+  renderSell();
+  if (!state.quoting) return;
+  quoteTimer = setTimeout(() => {
+    void refreshLive(gen);
+  }, 200);
 }
 
-function topQuote() {
-  if (!state.quotes?.length) return null;
-  return bestQuote(state.quotes, state.side);
-}
-
-async function ask(gen) {
+async function refreshLive(gen) {
+  if (state.view !== "sell") return;
   const sats = sizeSats();
-  if (gen !== quoteGen || sats == null || state.spotCents == null) return;
+  const err = state.spotCents == null ? "spot" : sizeError(sats);
+  if (gen !== quoteGen || sats == null || err || state.spotCents == null || !state.address) {
+    state.quoting = false;
+    if (gen === quoteGen) renderSell();
+    return;
+  }
+  const expiry = expiryUnix(state.days);
+  const picked = strike();
+  try {
+    const points = await fetchSurface();
+    if (gen !== quoteGen) return;
+    const priced = deribitPremium({
+      kind: state.kind,
+      strikeUsd: Number(picked) / 100,
+      expiry: Number(expiry),
+      now: Math.floor(Date.now() / 1000),
+      collateralSats: sats,
+      spotUsd: Number(state.spotCents) / 100,
+      points,
+    });
+    state.market = priced
+      ? { sats: priced.sats, usd: priced.usd, iv: priced.iv, name: "Market" }
+      : null;
+    if (!priced && !state.deskQuote) state.quoteNote = "No market for this strike yet.";
+    else if (priced) state.quoteNote = "";
+  } catch {
+    if (gen !== quoteGen) return;
+    if (!state.deskQuote && !state.market) state.quoteNote = "The market did not answer.";
+  }
+  if (gen === quoteGen) renderSell();
   if (PINNED_DESKS.length === 0) {
-    try {
-      const points = await fetchSurface();
-      if (gen !== quoteGen) return;
-      const priced = deribitPremium({
-        kind: state.kind,
-        strikeUsd: Number(strike()) / 100,
-        expiry: Number(expiryUnix(state.days)),
-        now: Math.floor(Date.now() / 1000),
-        collateralSats: sats,
-        spotUsd: Number(state.spotCents) / 100,
-        points,
-      });
-      if (!priced) {
-        state.quotes = [];
-        state.quoteNote = "Deribit has no mark for this strike.";
-      } else {
-        const quotedAt = Math.floor(Date.now() / 1000);
-        state.quotes = [{
-          name: "Deribit",
-          sats: priced.sats,
-          usd: priced.usd,
-          iv: priced.iv,
-          validUntil: quotedAt + 30,
-        }];
-        state.quoteNote = "";
-      }
-    } catch {
-      if (gen !== quoteGen) return;
-      state.quotes = [];
-      state.quoteNote = "Deribit did not answer.";
+    state.quoting = false;
+    if (gen === quoteGen) renderSell();
+    return;
+  }
+  try {
+    const live = await requestQuotes({
+      relays: RELAYS,
+      desks: PINNED_DESKS,
+      kind: state.kind,
+      strike: picked,
+      collateral: sats,
+      expiry,
+      spotCents: state.spotCents,
+      writerAddress: state.address,
+    });
+    if (gen !== quoteGen) return;
+    const best = live.quotes.length ? bestQuote(live.quotes, 0) : null;
+    if (best) {
+      state.deskQuote = best;
+      state.quoteNote = "";
+    } else if (!state.deskQuote) {
+      state.quoteNote = live.note || "The desk did not answer.";
     }
-  } else {
-    try {
-      const live = await requestQuotes({
-        relays: RELAYS,
-        desks: PINNED_DESKS,
-        kind: state.kind,
-        strike: strike(),
-        collateral: sats,
-        expiry: expiryUnix(state.days),
-        spotCents: state.spotCents,
-        writerHex: await writerHex(),
-      });
-      if (gen !== quoteGen) return;
-      state.quotes = live.quotes;
-      state.quoteNote = live.note;
-    } catch (err) {
-      if (gen !== quoteGen) return;
-      state.quotes = [];
+  } catch (err) {
+    if (gen !== quoteGen) return;
+    if (!state.deskQuote) {
       state.quoteNote = err instanceof Error ? err.message : "The desk did not answer.";
     }
   }
   state.quoting = false;
-  if (gen === quoteGen) {
-    renderTicket();
-    void loadDeposit(gen);
-  }
+  if (gen === quoteGen) renderSell();
 }
 
-async function loadDeposit(gen) {
+async function confirm() {
+  const quote = liveQuote();
   const sats = sizeSats();
-  const best = topQuote();
-  if (gen !== quoteGen || !best || sats == null || best.sats <= DUST) return;
-  const deadline = best.deadline ?? Math.floor(Date.now() / 1000) + 180;
-  state.deposit = { status: "loading" };
-  renderTicket();
+  if (!state.address || !quote || sats == null || sizeError(sats) || quote.sats <= DUST || state.confirming) return;
+  if (PINNED_DESKS.length > 0 && !quote.intentAddress) return;
+  state.confirming = true;
+  $("status").textContent = "";
+  renderSell();
+  const deadline = quote.deadline ?? Math.floor(Date.now() / 1000) + 180;
   try {
     const deposit = await depositAddress({
       kind: state.kind,
       strike: strike(),
       collateral: sats,
-      premium: best.sats,
+      premium: quote.sats,
       expiry: expiryUnix(state.days),
       deadline: BigInt(deadline),
-      writerHex: await writerHex(),
-      holderPkHex: best.holderPkHex,
-      oraclePkHex: best.oraclePkHex,
-      exit: best.exit != null ? BigInt(best.exit) : undefined,
+      writerAddress: state.address,
+      holderPkHex: quote.holderPkHex,
+      oraclePkHex: quote.oraclePkHex,
+      exit: quote.exit != null ? BigInt(quote.exit) : undefined,
     });
-    if (best.intentAddress && (deposit.address !== best.intentAddress || deposit.vaultAddress !== best.vaultAddress)) {
-      throw new Error("The desk address does not match this page's contract.");
+    if (quote.intentAddress && (deposit.address !== quote.intentAddress || deposit.vaultAddress !== quote.vaultAddress)) {
+      throw new Error("The desk address does not match this page.");
     }
-    if (gen !== quoteGen) return;
-    state.deposit = { status: "ready", ...deposit, deadline, premium: best.sats };
+    const apy = annualized(quote.sats, sats, state.days);
+    let position = state.positions.find((item) => item.address === deposit.address && item.status === "locking");
+    if (!position) {
+      position = {
+        id: crypto.randomUUID(),
+        side: 0,
+        kind: state.kind,
+        strike: strike(),
+        expiry: expiryUnix(state.days),
+        collateral: sats,
+        premiumSats: quote.sats,
+        premiumUsd: quote.usd,
+        solver: quote.name,
+        status: "locking",
+        deadline,
+        address: deposit.address,
+        holderPkHex: deposit.holderPkHex,
+        oraclePkHex: deposit.oraclePkHex,
+        exit: deposit.exit,
+        vaultAddress: deposit.vaultAddress,
+        writerAddress: state.address,
+        payoutAddress: state.address,
+        days: state.days,
+        createdAt: Math.floor(Date.now() / 1000),
+        apy,
+        apyFrozen: false,
+        marketSats: null,
+        marketApy: null,
+      };
+      state.positions.unshift(position);
+    }
+    state.selected = position.id;
+    state.deposit = {
+      status: "ready",
+      termsKey: termsKey(),
+      address: deposit.address,
+      amountSats: deposit.amountSats,
+      premium: quote.sats,
+      apy,
+      deadline,
+    };
+    persist();
   } catch (err) {
-    if (gen !== quoteGen) return;
-    state.deposit = { status: "error", message: err instanceof Error ? err.message : "Could not build the Mutinynet address." };
+    $("status").textContent = err instanceof Error ? err.message : "Could not build the deposit.";
   }
-  renderTicket();
-}
-
-async function lock() {
-  const deposit = state.deposit;
-  const sats = sizeSats();
-  const best = topQuote();
-  if (!deposit || deposit.status !== "ready" || sats == null || !best) return;
-  if (state.positions.some((p) => p.status === "locking" && p.address === deposit.address)) return;
-  const position = {
-    id: crypto.randomUUID(),
-    side: 0,
-    kind: state.kind,
-    strike: strike(),
-    expiry: expiryUnix(state.days),
-    collateral: sats,
-    premiumSats: best.sats,
-    premiumUsd: best.usd,
-    solver: best.name,
-    status: "locking",
-    deadline: deposit.deadline,
-    address: deposit.address,
-    uri: deposit.uri,
-    commitment: deposit.address,
-    holderPkHex: deposit.holderPkHex,
-    oraclePkHex: deposit.oraclePkHex,
-    exit: deposit.exit,
-    vaultAddress: deposit.vaultAddress,
-    validUntil: best.validUntil,
-  };
-  state.positions.unshift(position);
-  state.selected = position.id;
-  state.settleText = fmtUsdFromCents(state.spotCents);
-  persist();
-  setView("positions");
-  renderTicket();
+  state.confirming = false;
+  renderSell();
   renderBlotter();
 }
 
-function setView(view) {
-  state.view = view;
-  document.body.dataset.view = view;
-  $("view-quote").setAttribute("aria-pressed", String(view === "quote"));
-  $("view-positions").setAttribute("aria-pressed", String(view === "positions"));
-  const n = state.positions.length;
-  $("view-positions").textContent = n ? `Positions (${n})` : "Positions";
-  if (view === "positions" && n && !state.positions.some((p) => p.id === state.selected)) {
-    state.selected = state.positions[0].id;
-    renderBlotter();
+function openSell(kind) {
+  state.kind = kind;
+  state.strikeIndex = 0;
+  strikeKey = "";
+  show("sell");
+  onTermsChanged();
+}
+
+function connectAddress() {
+  try {
+    state.address = saveAddress($("account-key").value);
+    $("account-error").textContent = "";
+    $("account-key").value = "";
+    show("home");
+  } catch (err) {
+    $("account-error").textContent = err instanceof Error ? err.message : "That address was not saved.";
   }
 }
 
-function tick() {
-  const now = Math.floor(Date.now() / 1000);
-  let changed = false;
-  for (const position of state.positions) {
-    if (position.status === "locking" && now >= position.deadline) {
-      position.status = "expired";
-      changed = true;
-    }
-  }
-  if (state.quoteHold && now >= state.quoteHold && !state.quoting) {
-    state.quoteHold = 0;
-    onTermsChanged();
-    return;
-  }
-  if (state.deposit?.status === "ready" && now >= state.deposit.deadline) {
-    onTermsChanged();
-    return;
-  }
-  if (state.quoteHold && state.quoteMeta) {
-    const meta = $("premium-meta");
-    if (meta) meta.textContent = `${state.quoteMeta} · holds ${state.quoteHold - now}s`;
-  }
-  if (changed) {
-    persist();
-    renderTicket();
-    renderBlotter();
-  }
-  const clock = $("deposit-clock");
-  if (clock && state.deposit?.status === "ready") {
-    clock.textContent = `Send it on Mutinynet. ${countdown(state.deposit.deadline)}`;
-  }
-  for (const node of document.querySelectorAll("[data-deadline]")) {
-    if (node === clock) continue;
-    node.textContent = countdown(Number(node.dataset.deadline));
-  }
-  if (now - lastPoll >= 4) {
-    lastPoll = now;
-    void pollDeposits();
-  }
+function disconnect() {
+  clearAddress();
+  state.address = "";
+  state.deposit = null;
+  state.market = null;
+  state.deskQuote = null;
+  show("connect");
+  $("account-key").focus();
 }
 
-let lastPoll = 0;
-
-function reconcileLocks() {
-  const now = Math.floor(Date.now() / 1000);
+async function hydrateMissing() {
   let changed = false;
   for (const position of state.positions) {
-    if (position.status !== "locking") continue;
-    if (now >= position.deadline) {
-      position.status = "expired";
+    if (position.payoutAddress || position.writerAddress) continue;
+    const hex = position.writerHex || legacyWriterHex();
+    if (!hex) continue;
+    try {
+      position.writerHex = position.writerHex || hex;
+      position.payoutAddress = await writerPayoutAddress(hex);
       changed = true;
+    } catch {
+      // A position we cannot price stays out of the list.
     }
   }
-  if (changed) persist();
+  if (!changed) return;
+  persist();
+  renderBlotter();
 }
 
 async function fundRequest(position) {
-  return {
+  const base = {
     kind: position.kind,
     strike: position.strike,
     collateral: position.collateral,
     premium: position.premiumSats,
     expiry: position.expiry,
     deadline: BigInt(position.deadline),
-    writerHex: await writerHex(),
     holderPkHex: position.holderPkHex,
     oraclePkHex: position.oraclePkHex,
     exit: position.exit != null ? BigInt(position.exit) : undefined,
   };
+  if (position.writerAddress) return { ...base, writerAddress: position.writerAddress };
+  const hex = position.writerHex || legacyWriterHex();
+  if (!hex) throw new Error("This position has no address in this browser.");
+  return { ...base, writerHex: hex };
 }
 
 async function refund(position, button) {
   button.disabled = true;
-  button.textContent = "Cancelling";
+  button.textContent = "Refunding";
   try {
     await cancelIntent(await fundRequest(position));
     position.status = "refunded";
     persist();
     renderBlotter();
+    renderSell();
   } catch (err) {
     button.disabled = false;
-    button.textContent = err instanceof Error ? err.message : "Cancel failed";
+    button.textContent = err instanceof Error ? err.message : "Refund failed";
   }
+}
+
+function freeze(position) {
+  position.apyFrozen = true;
+  position.apy = annualized(position.premiumSats, position.collateral, tenorDays(position));
+  position.marketSats = null;
+  position.marketApy = null;
 }
 
 async function pollDeposits() {
   for (const position of state.positions) {
-    if ((position.status !== "locking" && position.status !== "deposited") || !position.address) continue;
+    if (!["locking", "deposited", "expired"].includes(position.status) || !position.address) continue;
+    if (!position.writerAddress && !position.writerHex && !legacyWriterHex()) continue;
     try {
       const seen = await fundingState(await fundRequest(position));
       if (seen === "filled" && position.status !== "filled") {
+        freeze(position);
         position.status = "filled";
         persist();
         renderBlotter();
-      } else if (seen === "funded" && position.status === "locking") {
+        renderSell();
+      } else if (seen === "funded" && position.status !== "deposited" && position.status !== "filled") {
+        freeze(position);
         position.status = "deposited";
         persist();
         renderBlotter();
+        renderSell();
       }
     } catch {
       // The address stays on screen. The next poll tries again.
@@ -1052,29 +895,67 @@ async function pollDeposits() {
   }
 }
 
-function press(id, pressed) {
-  $(id).setAttribute("aria-pressed", String(pressed));
+async function refreshPositionMarkets() {
+  if (state.spotCents == null) return;
+  const open = state.positions.filter((position) => position.status === "locking" && !position.apyFrozen);
+  if (!open.length) return;
+  let points;
+  try {
+    points = await fetchSurface();
+  } catch {
+    return;
+  }
+  const now = Math.floor(Date.now() / 1000);
+  let changed = false;
+  for (const position of open) {
+    const priced = deribitPremium({
+      kind: position.kind,
+      strikeUsd: Number(position.strike) / 100,
+      expiry: Number(position.expiry),
+      now,
+      collateralSats: position.collateral,
+      spotUsd: Number(state.spotCents) / 100,
+      points,
+    });
+    if (!priced) continue;
+    position.marketSats = priced.sats;
+    position.marketApy = annualized(priced.sats, position.collateral, tenorDays(position));
+    changed = true;
+  }
+  if (!changed) return;
+  persist();
+  if (state.view === "home") renderBlotter();
+}
+
+function tick() {
+  const now = Math.floor(Date.now() / 1000);
+  let changed = false;
+  for (const position of state.positions) {
+    if (position.status === "locking" && position.deadline && now >= Number(position.deadline)) {
+      position.status = "expired";
+      changed = true;
+    }
+  }
+  if (changed) {
+    persist();
+    renderBlotter();
+    renderSell();
+  }
+  if (now - lastPoll >= 4) {
+    lastPoll = now;
+    void pollDeposits();
+  }
 }
 
 function bind() {
-  $("side-sell").addEventListener("click", () => {
-    state.side = 0;
-    press("side-sell", true);
+  $("account-save").addEventListener("click", connectAddress);
+  $("account-key").addEventListener("keydown", (event) => {
+    if (event.key === "Enter") connectAddress();
   });
-  $("kind-call").addEventListener("click", () => {
-    if (state.kind === 0) return;
-    state.kind = 0;
-    press("kind-call", true);
-    press("kind-put", false);
-    onTermsChanged();
-  });
-  $("kind-put").addEventListener("click", () => {
-    if (state.kind === 1) return;
-    state.kind = 1;
-    press("kind-call", false);
-    press("kind-put", true);
-    onTermsChanged();
-  });
+  $("account-change").addEventListener("click", disconnect);
+  $("sell-call").addEventListener("click", () => openSell(0));
+  $("sell-put").addEventListener("click", () => openSell(1));
+  $("back").addEventListener("click", () => show("home"));
   document.querySelectorAll("[data-days]").forEach((btn) => {
     btn.addEventListener("click", () => {
       const days = Number(btn.dataset.days);
@@ -1095,14 +976,15 @@ function bind() {
     onTermsChanged();
   });
   $("size").addEventListener("input", onTermsChanged);
-  $("lock").addEventListener("click", lock);
-  $("view-quote").addEventListener("click", () => setView("quote"));
-  $("view-positions").addEventListener("click", () => setView("positions"));
-  $("copy-address").addEventListener("click", () => {
-    const deposit = state.deposit;
-    if (!deposit || deposit.status !== "ready") return;
-    void copyToClipboard($("copy-address"), paymentUri(deposit));
+  $("confirm").addEventListener("click", () => {
+    void confirm();
   });
+  $("copy-address").addEventListener("click", () => {
+    const deposit = shownDeposit();
+    if (!deposit) return;
+    void copyToClipboard($("copy-address"), deposit.address);
+  });
+  $("payoff-details").addEventListener("toggle", renderPayoff);
 }
 
 async function loadSpot() {
@@ -1138,26 +1020,21 @@ function loadArtifact() {
 }
 
 bind();
-setView("quote");
-writerHex()
-  .then((hex) => writerPayoutAddress(hex))
-  .then((address) => {
-    state.payoutAddress = address;
-    renderTicket();
-    renderBlotter();
-  })
-  .catch(() => {
-    state.payoutAddress = "";
-  });
-reconcileLocks();
-renderTicket();
-renderBlotter();
+state.address = readAddress() || "";
+show(state.address ? "home" : "connect");
+if (!state.address) $("account-key").focus();
 loadSpot().then(() => {
   $("spot-source").textContent = state.spotSource;
   $("spot-px").textContent = fmtUsdFromCents(state.spotCents);
-  state.settleText = fmtUsdFromCents(state.spotCents);
-  onTermsChanged();
+  if (state.view === "sell") onTermsChanged();
   renderBlotter();
 });
 loadArtifact();
-setInterval(tick, 250);
+setInterval(tick, 1000);
+setInterval(() => {
+  if (state.view === "sell" && state.spotCents != null && state.address) {
+    void refreshLive(++quoteGen);
+  }
+  void refreshPositionMarkets();
+}, REFRESH_MS);
+void hydrateMissing();

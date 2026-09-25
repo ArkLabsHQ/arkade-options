@@ -10,7 +10,7 @@
     "dev": "node scripts/dev.mjs",
     "build": "node scripts/build.mjs",
     "check": "node scripts/check.mjs",
-    "test": "node --experimental-strip-types --test app/settle-math.test.mjs protocol/protocol.test.ts protocol/deribit.test.ts desk/book.test.ts && pnpm check",
+    "test": "node --experimental-strip-types --test app/settle-math.test.mjs app/account.test.mjs protocol/protocol.test.ts protocol/deribit.test.ts desk/book.test.ts && pnpm check",
     "desk": "node --experimental-strip-types desk/main.ts",
     "e2e": "node --experimental-strip-types scripts/e2e-mutinynet.ts"
   },

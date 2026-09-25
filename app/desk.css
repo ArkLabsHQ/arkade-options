@@ -53,7 +53,91 @@ h1, h2 {
   color: var(--muted);
 }
 
-.sub { margin: 4px 0 0; max-width: 46rem; }
+.sub { margin: 4px 0 0; max-width: 40rem; }
+
+.who {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.who button,
+.back,
+.copy-uri,
+#copy-address {
+  background: transparent;
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  padding: 6px 10px;
+}
+
+.back {
+  display: inline-flex;
+  margin: 0 0 16px;
+  color: var(--muted);
+}
+
+a { color: var(--accent); }
+
+.connect, .home { padding: 28px 32px 36px; }
+
+.connect { max-width: 36rem; }
+
+#account-key {
+  width: 100%;
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  padding: 12px;
+  font-family: var(--mono);
+  font-size: 14px;
+}
+
+#account-key:focus { outline: none; border-color: var(--accent); }
+
+.actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.action {
+  display: grid;
+  gap: 4px;
+  text-align: left;
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  padding: 18px 16px;
+}
+
+.action:hover { border-color: var(--accent); }
+
+.action:active { transform: scale(0.98); }
+
+.action-kicker {
+  color: var(--faint);
+  font-size: 12px;
+}
+
+.action-title { font-size: 18px; font-weight: 600; }
+
+.home .blotter { padding-left: 0; padding-right: 0; border-top: 0; }
+
+.more { margin-top: 22px; }
+
+.more summary {
+  cursor: pointer;
+  color: var(--muted);
+}
+
+.market-now { margin: 8px 0 0; color: var(--muted); }
 
 .spot {
   margin: 0;
@@ -211,6 +295,16 @@ h1, h2 {
   fill: var(--muted);
 }
 
+.payoff-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+  margin-top: 8px;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
 .payoff .ylab { text-anchor: end; dominant-baseline: middle; }
 
 .payoff .xlab { text-anchor: middle; }
@@ -227,12 +321,6 @@ h1, h2 {
 
 .payoff .curve { fill: none; stroke: var(--accent); stroke-width: 1.75; }
 
-body[data-view="quote"] .blotter { display: none; }
-
-body[data-view="positions"] .desk { display: none; }
-
-body[data-view="positions"] .blotter { border-top: 0; }
-
 .ticket-kicker { margin: 0; color: var(--faint); font-size: 13px; }
 
 .premium {
@@ -245,7 +333,7 @@ body[data-view="positions"] .blotter { border-top: 0; }
 
 .premium-meta { margin: 8px 0 0; color: var(--muted); }
 
-.quotes { margin-top: 18px; min-height: 92px; }
+.quotes { margin-top: 18px; }
 
 .quote-row {
   display: grid;
@@ -269,12 +357,46 @@ body[data-view="positions"] .blotter { border-top: 0; }
 
 .lock-note { margin: 16px 0 0; font-size: 14px; }
 
-.payout,
+.account,
 .deposit {
   margin-top: 16px;
   padding-top: 12px;
   border-top: 1px solid var(--line);
 }
+
+.account-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.account button {
+  background: transparent;
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  padding: 6px 10px;
+}
+
+#account-create {
+  background: var(--accent);
+  color: var(--accent-ink);
+  border: 0;
+  font-weight: 600;
+}
+
+#account-key {
+  width: 100%;
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  padding: 10px 12px;
+  font-family: var(--mono);
+  font-size: 13px;
+}
+
+#account-key:focus { outline: none; border-color: var(--accent); }
 
 .deposit-amount {
   margin: 8px 0 0;
@@ -330,7 +452,12 @@ body[data-view="positions"] .blotter { border-top: 0; }
 
 .lock:active:not(:disabled) { transform: scale(0.98); }
 
-.lock:disabled { opacity: 0.38; cursor: not-allowed; }
+.lock:disabled {
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  cursor: not-allowed;
+}
 
 .status { margin: 12px 0 0; min-height: 1.4em; }
 
@@ -348,9 +475,10 @@ body[data-view="positions"] .blotter { border-top: 0; }
 }
 
 .position-head {
-  display: grid;
-  grid-template-columns: 1.5fr 1fr 1.3fr 1fr auto;
-  gap: 12px;
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 16px;
   width: 100%;
   background: transparent;
   border: 0;
@@ -358,7 +486,14 @@ body[data-view="positions"] .blotter { border-top: 0; }
   padding: 0;
 }
 
-.position-head span:last-child { text-align: right; }
+.position-main {
+  display: grid;
+  gap: 2px;
+}
+
+.position-main strong { font-weight: 500; }
+
+.position-status { color: var(--muted); font-size: 13px; }
 
 .tag {
   color: var(--faint);
@@ -444,10 +579,16 @@ body[data-view="positions"] .blotter { border-top: 0; }
 }
 
 @media (max-width: 860px) {
-  .top, .book, .ticket, .blotter { padding-left: 16px; padding-right: 16px; }
+  .top, .book, .ticket, .blotter, .connect, .home { padding-left: 16px; padding-right: 16px; }
   .desk { grid-template-columns: 1fr; }
-  .ticket { border-left: 0; border-top: 1px solid var(--line); position: static; }
-  .position-head, .slice { grid-template-columns: 1fr 1fr; }
+  .ticket {
+    border-left: 0;
+    border-top: 1px solid var(--line);
+    position: sticky;
+    bottom: 0;
+  }
+  .actions { grid-template-columns: 1fr; }
+  .slice { grid-template-columns: 1fr; }
   .spot { text-align: left; }
   .top { flex-direction: column; align-items: flex-start; }
 }

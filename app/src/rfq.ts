@@ -5,7 +5,7 @@ import { bindContracts } from "../../protocol/contracts.ts";
 import { bytesToHex, hexToBytes } from "../../protocol/hex.ts";
 import type { RfqQuote, RfqRefusal, RfqRequest } from "../../protocol/messages.ts";
 import { collectReplies } from "../../protocol/nostr.ts";
-import { arkKeys, writerProfile } from "./fund.ts";
+import { writerBinding } from "./fund.ts";
 
 export type LiveQuote = {
   name: string;
@@ -47,13 +47,10 @@ export async function requestQuotes(input: {
   collateral: bigint;
   expiry: bigint;
   spotCents: bigint;
-  writerHex: string;
+  writerAddress: string;
 }): Promise<{ quotes: LiveQuote[]; note: string }> {
   const names = new Map(input.desks.map((desk) => [desk.pubkey, desk.name]));
-  const [profile, keys] = await Promise.all([
-    writerProfile(input.writerHex),
-    arkKeys(input.writerHex),
-  ]);
+  const profile = await writerBinding(input.writerAddress);
   const request: RfqRequest = {
     v: 1,
     type: "rfq_request",
@@ -117,10 +114,11 @@ export async function requestQuotes(input: {
         deadline: BigInt(quote.profile.deadline),
         exit: EXIT,
         writerPk: hexToBytes(profile.pubkey),
+        payoutKey: profile.payoutKey,
         holderPk: hexToBytes(quote.profile.holder_pubkey),
         oraclePks: quote.profile.oracle_pubkeys.map((pk) => hexToBytes(pk)),
-        serverKey: keys.serverKey,
-        emulatorKey: keys.emulatorKey,
+        serverKey: profile.serverKey,
+        emulatorKey: profile.emulatorKey,
       });
     } catch {
       continue;
