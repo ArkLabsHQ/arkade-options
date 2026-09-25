@@ -114,6 +114,10 @@ const client = await arkade.Arkade.connect({
   network: networks.mutinynet,
 });
 if (!client.emulatorKey) throw new Error("emulator key missing");
+const serverInfo = await new RestArkProvider(arkUrl).getInfo();
+if (BigInt(serverInfo.unilateralExitDelay) !== EXIT) {
+  throw new Error(`server unilateralExitDelay is ${serverInfo.unilateralExitDelay}; contracts use ${EXIT}`);
+}
 
 const holderPk = await identity.xOnlyPublicKey();
 const deskScript: DefaultVtxo.Script = payoutVtxo(holderPk, client.serverKey, EXIT);

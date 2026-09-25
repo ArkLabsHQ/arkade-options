@@ -63,6 +63,7 @@ test("the reference swap derives a pinned address", async () => {
     wantAssetIdGidx: 0n,
     wantAmount: 1n,
     expirationTime: terms.expiry,
+    exit: terms.exit,
     makerProgram: bound.writerProgram,
   });
   assert.equal(

@@ -71,6 +71,13 @@ function openSession(identity: SingleKey): Promise<Session> {
   return pending;
 }
 
+async function assertServerExit() {
+  const info = await new RestArkProvider(ARK_URL).getInfo();
+  if (BigInt(info.unilateralExitDelay) !== EXIT) {
+    throw new Error(`server unilateralExitDelay is ${info.unilateralExitDelay}; contracts use ${EXIT}`);
+  }
+}
+
 function btcAmount(sats: bigint) {
   const whole = sats / 100_000_000n;
   const frac = (sats % 100_000_000n).toString().padStart(8, "0").replace(/0+$/, "");
@@ -81,6 +88,7 @@ async function build(req: FundRequest) {
   const writer = SingleKey.fromHex(req.writerHex);
   const { client } = await openSession(writer);
   if (!client.emulatorKey) throw new Error("The emulator key is missing.");
+  await assertServerExit();
   const writerPk = await writer.xOnlyPublicKey();
   const holderPk = req.holderPkHex ? hexToBytes(req.holderPkHex) : await HOLDER.xOnlyPublicKey();
   const oraclePks = req.oraclePkHex
@@ -119,6 +127,7 @@ export async function writerPayoutAddress(writerHex: string): Promise<string> {
 export async function writerProfile(writerHex: string): Promise<{ pubkey: string; pkScript: string; address: string }> {
   const writer = SingleKey.fromHex(writerHex);
   const { client } = await openSession(writer);
+  await assertServerExit();
   const pubkey = await writer.xOnlyPublicKey();
   const script = payoutVtxo(pubkey, client.serverKey, EXIT);
   return {

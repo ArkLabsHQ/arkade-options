@@ -1,6 +1,17 @@
 import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
 
-import { arkade, networks, RestArkProvider, RestEmulatorProvider, RestIndexerProvider, SingleKey } from "@arkade-os/sdk";
+import {
+  arkade,
+  InMemoryContractRepository,
+  InMemoryWalletRepository,
+  networks,
+  RestArkProvider,
+  RestEmulatorProvider,
+  RestIndexerProvider,
+  SingleKey,
+  Wallet,
+} from "@arkade-os/sdk";
 
 import { holderPayoff, oraclePreimage, settlementOutputs, twap, windows } from "../app/settle-math.js";
 import { fillQuote } from "../desk/fill.ts";
@@ -20,12 +31,21 @@ import { intentProgram, vaultProgram } from "../protocol/programs.ts";
  *     finalizes an intent that already holds collateral, cancels the second
  *     intent once its deadline has passed, and settles the vault.
  *
+ *   pnpm e2e -- --live
+ *     spends the writer and desk keys in data/e2e-keys.json. The writer wallet
+ *     funds both intents, the desk finalizes one, the writer cancels the other,
+ *     and the desk settles the vault.
+ *
  * WRITER_KEY and DESK_KEY default to public test keys 1 and 2. Oracle keys are 3..7.
  */
 
-const writerHex = process.env.WRITER_KEY ?? "1".padStart(64, "0");
-const deskHex = process.env.DESK_KEY ?? "2".padStart(64, "0");
-const spend = process.argv.includes("--spend");
+const live = process.argv.includes("--live");
+const spend = live || process.argv.includes("--spend");
+const saved = live
+  ? JSON.parse(await readFile(process.env.E2E_KEYS ?? "data/e2e-keys.json", "utf8")) as { writer: string; desk: string }
+  : null;
+const writerHex = saved?.writer ?? process.env.WRITER_KEY ?? "1".padStart(64, "0");
+const deskHex = saved?.desk ?? process.env.DESK_KEY ?? "2".padStart(64, "0");
 const collateral = 50_000n;
 const premium = 1_000n;
 const strike = 9_700_000n;
@@ -83,6 +103,10 @@ const shared = {
 
 const fill = bindContracts({ ...shared, deadline: fillDeadline });
 const cancel = bindContracts({ ...shared, deadline: cancelDeadline });
+const serverInfo = await new RestArkProvider(ARK_URL).getInfo();
+if (BigInt(serverInfo.unilateralExitDelay) !== EXIT) {
+  throw new Error(`server unilateralExitDelay is ${serverInfo.unilateralExitDelay}; contracts use ${EXIT}`);
+}
 const deskScript = payoutVtxo(holderPk, deskClient.serverKey, EXIT);
 const deskAddress = deskScript.address(networks.mutinynet.hrp, xOnly(deskClient.serverKey)).encode();
 const swap = bindSwap({
@@ -135,6 +159,43 @@ function row(bound: typeof fill, deadline: bigint): QuoteRow {
   };
 }
 
+if (live) {
+  const writerWallet = await Wallet.create({
+    identity: writer,
+    arkServerUrl: ARK_URL,
+    indexerUrl: ARK_URL,
+    settlementConfig: false,
+    storage: {
+      walletRepository: new InMemoryWalletRepository(),
+      contractRepository: new InMemoryContractRepository(),
+    },
+  });
+  const funded = await writerWallet.send({
+    recipients: [
+      { address: fill.intentAddress, amount: Number(collateral) },
+      { address: cancel.intentAddress, amount: Number(collateral) },
+    ],
+  });
+  console.log("funded", funded);
+}
+
+async function waitForCoin(label: string, read: () => Promise<{ value: number }[]>, min: bigint) {
+  for (let attempt = 1; attempt <= 20; attempt += 1) {
+    const coins = await read();
+    if (coins.some((coin) => BigInt(coin.value) >= min)) return;
+    console.log(label, `not indexed yet (${attempt})`);
+    await new Promise((resolve) => setTimeout(resolve, 2_000));
+  }
+  throw new Error(`${label} was not indexed`);
+}
+
+if (spend) {
+  const fillIntent = deskClient.contract(intentProgram(), fill.intent);
+  const cancelIntent = writerClient.contract(intentProgram(), cancel.intent);
+  await waitForCoin("fill intent", () => fillIntent.getUtxos(), collateral);
+  await waitForCoin("cancel intent", () => cancelIntent.getUtxos(), collateral);
+}
+
 const filled = await fillQuote({
   client: deskClient,
   deskScript,
@@ -156,6 +217,7 @@ const filled = await fillQuote({
   }),
 });
 console.log("finalize", filled.result, filled.txid ?? "");
+if (filled.result !== "filled") throw new Error(`finalize ${filled.result}`);
 
 const cancelContract = writerClient.contract(intentProgram(), cancel.intent);
 const cancelCoins = await cancelContract.getUtxos();
@@ -208,15 +270,17 @@ if (!vaultCoin) {
   const builder = settle(...args).from(vaultCoin);
   const sent = outputs.mode === "split"
     ? await builder.to([
-      { script: payoutVtxo(holderPk, deskClient.serverKey).pkScript, amount: outputs.holder },
-      { script: payoutVtxo(writerPk, deskClient.serverKey).pkScript, amount: outputs.writer },
+      { script: payoutVtxo(holderPk, deskClient.serverKey, EXIT).pkScript, amount: outputs.holder },
+      { script: payoutVtxo(writerPk, deskClient.serverKey, EXIT).pkScript, amount: outputs.writer },
     ]).send()
     : await builder.to(
-      payoutVtxo(outputs.mode === "holder" ? holderPk : writerPk, deskClient.serverKey).pkScript,
+      payoutVtxo(outputs.mode === "holder" ? holderPk : writerPk, deskClient.serverKey, EXIT).pkScript,
       outputs.mode === "holder" ? outputs.holder : outputs.writer,
     ).send();
   console.log("settle", sent.txid, outputs.mode);
 }
+
+process.exit(0);
 
 async function signOracle(oracle: SingleKey, px: bigint, time: bigint) {
   const hash = createHash("sha256").update(oraclePreimage(px, time)).digest();

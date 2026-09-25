@@ -1,6 +1,8 @@
 export const PAIR = "arkade:BTC->arkade:BTC-OPTION";
 export const RFQ_KIND = 24859;
-export const EXIT = 512n;
+// Mutinynet's unilateralExitDelay. Arkd refuses to cosign a vtxo whose shortest
+// exit leaf is below this, and BIP68 seconds must be a multiple of 512.
+export const EXIT = 2048n;
 export const DUST_SATS = 330n;
 export const QUOTE_TTL_S = 30;
 export const LOCK_S = 180;

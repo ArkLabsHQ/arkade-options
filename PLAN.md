@@ -54,7 +54,7 @@ Quote, desk to client:
   "profile": {
     "holder_pubkey": "<desk x-only>", "holder_pk_script": "5120…",
     "oracle_pubkeys": ["…", "…", "…", "…", "…"],
-    "deadline": 1790000210, "exit": 512,
+    "deadline": 1790000210, "exit": 2048,
     "intent_address": "tark1…", "vault_address": "tark1…"
   }
 }
