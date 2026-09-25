@@ -1,5 +1,7 @@
-import http from "node:http";
+import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
+import http from "node:http";
 import path from "node:path";
 
 import {
@@ -334,8 +336,28 @@ async function poll() {
   }
 }
 
+function revision(): string {
+  const baked = process.env.GIT_COMMIT?.trim();
+  if (baked) return baked;
+  try {
+    const file = readFileSync("/etc/git-commit", "utf8").trim();
+    if (file) return file;
+  } catch {
+    // Local `pnpm desk` has no image revision.
+  }
+  try {
+    return execFileSync("git", ["rev-parse", "HEAD"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+  } catch {
+    return "unknown";
+  }
+}
+
 function statusBody() {
   return JSON.stringify({
+    commit: revision(),
     pubkey,
     address,
     balance: balance.toString(),
@@ -371,6 +393,7 @@ const server = http.createServer((req, res) => {
 });
 
 server.listen(port, () => {
+  console.log(`commit ${revision()}`);
   console.log(`desk ${pubkey}`);
   console.log(`address ${address}`);
   console.log(`status http://127.0.0.1:${port}/status`);

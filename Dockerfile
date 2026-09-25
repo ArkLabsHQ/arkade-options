@@ -4,6 +4,7 @@ FROM node:22-alpine
 WORKDIR /src
 RUN apk add --no-cache git \
  && git clone --depth 1 https://github.com/ArkLabsHQ/arkade-options.git . \
+ && git rev-parse HEAD > /etc/git-commit \
  && rm -rf .git \
  && corepack enable \
  && CI=1 COREPACK_ENABLE_DOWNLOAD_PROMPT=0 pnpm install --frozen-lockfile --prod

@@ -45,13 +45,13 @@ The desk quotes over Nostr and pays the premium from its own Mutinynet coins. `D
 
 ```bash
 export DESK_KEY=$(openssl rand -hex 32)
-docker build -f desk/Dockerfile -t arkade-options-desk .
+docker build -f desk/Dockerfile --build-arg GIT_COMMIT=$(git rev-parse HEAD) -t arkade-options-desk .
 docker run --rm -p 8788:8788 -e DESK_KEY -v desk-data:/data arkade-options-desk
 ```
 
-Dokploy builds the repository `Dockerfile`. That file clones this repo during the build, so a context path of `desk` still produces the desk. Set the container port to `8788` and set `DESK_KEY`. The page image is `site.Dockerfile`.
+Dokploy builds the repository `Dockerfile`. That file clones this repo during the build and records `HEAD` in the image, so a context path of `desk` still produces the desk and `GET /` shows that commit. Set the container port to `8788` and set `DESK_KEY`. The page image is `site.Dockerfile`.
 
-Send sats to the printed address. `GET http://127.0.0.1:8788/status` returns the float, the spot, and the quote book. The volume stores that book and `oracles.json` (five keys, written on first start). The process exits when the server's unilateral exit delay is not 2048 seconds.
+Send sats to the printed address. `GET /` and `GET /status` return `commit`, the git hash baked into the image, plus the float, the spot, and the quote book. The volume stores that book and `oracles.json` (five keys, written on first start). The process exits when the server's unilateral exit delay is not 2048 seconds.
 
 Without Docker, from this repo: `DESK_KEY=<32-byte hex> pnpm desk`.
 

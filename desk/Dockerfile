@@ -1,5 +1,5 @@
 # Local image. Context is the repository root:
-#   docker build -f desk/Dockerfile -t arkade-options-desk .
+#   docker build -f desk/Dockerfile --build-arg GIT_COMMIT=$(git rev-parse HEAD) -t arkade-options-desk .
 # Dokploy builds the repository Dockerfile instead, because its context was only this folder.
 FROM node:22-alpine
 WORKDIR /app
@@ -10,6 +10,8 @@ RUN pnpm install --frozen-lockfile --prod
 COPY protocol protocol
 COPY desk desk
 COPY contracts contracts
+ARG GIT_COMMIT=unknown
+RUN printf '%s\n' "$GIT_COMMIT" > /etc/git-commit
 ENV DATA_DIR=/data
 VOLUME /data
 EXPOSE 8788
