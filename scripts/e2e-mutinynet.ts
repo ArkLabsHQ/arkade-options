@@ -17,7 +17,7 @@ import { holderPayoff, oraclePreimage, settlementOutputs, twap, windows } from "
 import { fillQuote } from "../desk/fill.ts";
 import type { QuoteRow } from "../desk/book.ts";
 import { ARK_URL, EMULATOR_URL, EXIT } from "../protocol/constants.ts";
-import { bindContracts, bindSwap, payoutVtxo } from "../protocol/contracts.ts";
+import { assertServerExit, bindContracts, bindSwap, payoutVtxo } from "../protocol/contracts.ts";
 import { bytesToHex, xOnly } from "../protocol/hex.ts";
 import { intentProgram, vaultProgram } from "../protocol/programs.ts";
 
@@ -103,10 +103,7 @@ const shared = {
 
 const fill = bindContracts({ ...shared, deadline: fillDeadline });
 const cancel = bindContracts({ ...shared, deadline: cancelDeadline });
-const serverInfo = await new RestArkProvider(ARK_URL).getInfo();
-if (BigInt(serverInfo.unilateralExitDelay) !== EXIT) {
-  throw new Error(`server unilateralExitDelay is ${serverInfo.unilateralExitDelay}; contracts use ${EXIT}`);
-}
+await assertServerExit();
 const deskScript = payoutVtxo(holderPk, deskClient.serverKey, EXIT);
 const deskAddress = deskScript.address(networks.mutinynet.hrp, xOnly(deskClient.serverKey)).encode();
 const swap = bindSwap({

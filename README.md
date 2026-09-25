@@ -39,6 +39,30 @@ docker run --rm -p 8080:80 arkade-options
 
 Open `http://127.0.0.1:8080/app/`. The image serves the built page.
 
+### Desk
+
+The desk quotes over Nostr and pays the premium from its own Mutinynet coins. `DESK_KEY` is a 32-byte hex private key. Keep it. The process prints the matching Nostr pubkey and the `tark1…` address to fund.
+
+```bash
+export DESK_KEY=$(openssl rand -hex 32)
+docker build -f desk/Dockerfile -t arkade-options-desk .
+docker run --rm -p 8788:8788 -e DESK_KEY -v desk-data:/data arkade-options-desk
+```
+
+Send sats to the printed address. `GET http://127.0.0.1:8788/status` returns the float, the spot, and the quote book. The volume stores that book and `oracles.json` (five keys, written on first start). The process exits when the server's unilateral exit delay is not 2048 seconds.
+
+Without Docker, from this repo: `DESK_KEY=<32-byte hex> pnpm desk`.
+
+Optional environment, with the defaults in parentheses: `RELAYS` (Arkade plus the public relays), `ARK_URL` (`https://mutinynet.arkade.sh`), `EMULATOR_URL` (`https://emulator.mutinynet.arkade.sh`), `DATA_DIR` (`/data` in the image, `./data` under `pnpm desk`), `PORT` (`8788`), `DESK_STRIKE_CAP` (`100000000`), `DESK_TOTAL_CAP` (`500000000`), `DESK_VOL` (unset, so quotes use the Deribit mark).
+
+The page asks this process for quotes after the pubkey is listed in `app/rfq-config.js` and the page is published again:
+
+```js
+export const PINNED_DESKS = [{ name: "Desk", pubkey: "<x-only printed at startup>" }];
+```
+
+With `PINNED_DESKS` empty, the page prices from the Deribit mark on its own.
+
 ## Artifacts
 
 `contracts/*.artifact.json` are the compiler output `programFromArtifact` loads. `contracts/non_interactive_swap.ark` and the `contracts/single_sig.ark` it imports are the compiler's `examples/non_interactive_swap` and `examples/single_sig`, with the import path pointing at this directory. From a checkout of [arkade-os/compiler](https://github.com/arkade-os/compiler):

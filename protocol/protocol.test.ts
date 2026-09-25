@@ -4,7 +4,7 @@ import test from "node:test";
 import { SingleKey } from "@arkade-os/sdk";
 import { generateSecretKey } from "nostr-tools/pure";
 
-import { bindContracts, bindSwap, scriptHex } from "./contracts.ts";
+import { bindContracts, bindSwap } from "./contracts.ts";
 import { bytesToHex } from "./hex.ts";
 import { parseWire, premiumRefusal, requestRefusal, type RfqRequest } from "./messages.ts";
 import { nostrPubkey, openSealed, seal } from "./nostr.ts";
@@ -45,7 +45,7 @@ test("derived intent and vault addresses stay pinned", async () => {
     bound.vaultAddress,
     "tark1qqhsre0ptn9r28d07wzrldc08shs5x7aqhj6lzy2vauyaulppg4qrw4swtnv64x0kzl0r4vxp4swnpwjdst2jgax5l8nkffvs59nlskcv7z7yj",
   );
-  assert.equal(scriptHex(bound.writerPkScript), "51203d002da23716b1975b89b46563d89040a3c71d017593934bfb751b68a7cae991");
+  assert.equal(bytesToHex(bound.writerPkScript), "51203d002da23716b1975b89b46563d89040a3c71d017593934bfb751b68a7cae991");
   assert.deepEqual(bindContracts(terms).intentPkScript, bound.intentPkScript);
 });
 

@@ -1,7 +1,7 @@
-import { arkade, DefaultVtxo, networks } from "@arkade-os/sdk";
+import { arkade, DefaultVtxo, networks, RestArkProvider } from "@arkade-os/sdk";
 
-import { EXIT } from "./constants.ts";
-import { bytesToHex, xOnly } from "./hex.ts";
+import { ARK_URL, EXIT } from "./constants.ts";
+import { xOnly } from "./hex.ts";
 import { intentProgram, swapProgram, vaultProgram } from "./programs.ts";
 
 export type Terms = {
@@ -32,6 +32,12 @@ export type Bound = {
   intent: Record<string, bigint | Uint8Array>;
   vault: Record<string, bigint | Uint8Array>;
 };
+
+/** Arkd refuses a vtxo whose shortest exit leaf is under this delay. */
+export async function assertServerExit(url = ARK_URL) {
+  const delay = BigInt((await new RestArkProvider(url).getInfo()).unilateralExitDelay);
+  if (delay !== EXIT) throw new Error(`server unilateralExitDelay is ${delay}; contracts use ${EXIT}`);
+}
 
 export function payoutVtxo(pubKey: Uint8Array, serverKey: Uint8Array, exit: bigint = EXIT) {
   return new DefaultVtxo.Script({
@@ -151,8 +157,4 @@ export function bindSwap(input: {
     pkScript: script.pkScript,
     args,
   };
-}
-
-export function scriptHex(script: Uint8Array): string {
-  return bytesToHex(script);
 }

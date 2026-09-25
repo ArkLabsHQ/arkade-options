@@ -21,7 +21,7 @@ import {
   PAIR,
   QUOTE_TTL_S,
 } from "../protocol/constants.ts";
-import { bindContracts, payoutVtxo, scriptHex, type Terms } from "../protocol/contracts.ts";
+import { assertServerExit, bindContracts, payoutVtxo, type Terms } from "../protocol/contracts.ts";
 import { bytesToHex, hexToBytes } from "../protocol/hex.ts";
 import {
   premiumRefusal,
@@ -114,10 +114,7 @@ const client = await arkade.Arkade.connect({
   network: networks.mutinynet,
 });
 if (!client.emulatorKey) throw new Error("emulator key missing");
-const serverInfo = await new RestArkProvider(arkUrl).getInfo();
-if (BigInt(serverInfo.unilateralExitDelay) !== EXIT) {
-  throw new Error(`server unilateralExitDelay is ${serverInfo.unilateralExitDelay}; contracts use ${EXIT}`);
-}
+await assertServerExit(arkUrl);
 
 const holderPk = await identity.xOnlyPublicKey();
 const deskScript: DefaultVtxo.Script = payoutVtxo(holderPk, client.serverKey, EXIT);
@@ -158,7 +155,7 @@ function quoteMessage(row: QuoteRow): RfqQuote {
     valid_until: row.validUntil,
     profile: {
       holder_pubkey: row.holderPubkey,
-      holder_pk_script: scriptHex(bound.holderPkScript),
+      holder_pk_script: bytesToHex(bound.holderPkScript),
       oracle_pubkeys: row.oraclePubkeys,
       deadline: row.deadline,
       exit: row.exit,
@@ -253,7 +250,7 @@ async function onRequest(message: RfqRequest, from: string) {
     clientPubkey: from,
   };
   const bound = bindContracts(termsFor(row));
-  if (scriptHex(bound.writerPkScript) !== message.profile.writer_pk_script) {
+  if (bytesToHex(bound.writerPkScript) !== message.profile.writer_pk_script) {
     await refuse(from, message.rfq_id, "writer script");
     return;
   }

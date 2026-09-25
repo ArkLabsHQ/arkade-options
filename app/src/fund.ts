@@ -8,7 +8,7 @@ import {
 } from "@arkade-os/sdk";
 
 import { ARK_URL, EMULATOR_URL, EXIT } from "../../protocol/constants.ts";
-import { bindContracts, payoutVtxo, type Terms } from "../../protocol/contracts.ts";
+import { assertServerExit, bindContracts, payoutVtxo, type Terms } from "../../protocol/contracts.ts";
 import { bytesToHex, hexToBytes, xOnly } from "../../protocol/hex.ts";
 import { intentProgram, vaultProgram } from "./program.ts";
 
@@ -69,13 +69,6 @@ function openSession(identity: SingleKey): Promise<Session> {
     sessions.set(id, pending);
   }
   return pending;
-}
-
-async function assertServerExit() {
-  const info = await new RestArkProvider(ARK_URL).getInfo();
-  if (BigInt(info.unilateralExitDelay) !== EXIT) {
-    throw new Error(`server unilateralExitDelay is ${info.unilateralExitDelay}; contracts use ${EXIT}`);
-  }
 }
 
 function btcAmount(sats: bigint) {
