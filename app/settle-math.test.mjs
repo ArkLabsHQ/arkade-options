@@ -89,6 +89,24 @@ test("black-scholes call is near the known one-year value", () => {
   assert.ok(Math.abs(px - 7.9656) < 0.02, px);
 });
 
+test("a 7-day covered call only refuses a premium at or below dust", () => {
+  const spot = 8_461_728n;
+  const grid = 100_000n;
+  const steps = [105n, 110n, 115n, 125n, 140n];
+  const strikes = steps.map((step) => ((spot * step) / 100n + grid / 2n) / grid * grid);
+  const rows = strikes.map((strike) =>
+    deskQuotes({
+      kind: 0,
+      spotCents: Number(spot),
+      strikeCents: Number(strike),
+      years: 7 / 365,
+      collateralSats: 100_000_000n,
+    }),
+  );
+  assert.ok(rows.slice(0, 4).every((row) => row[2].sats > 330n));
+  assert.ok(rows[4][2].sats <= 330n);
+});
+
 test("the highest vol desk wins a covered-call auction", () => {
   const rows = deskQuotes({
     kind: 0,

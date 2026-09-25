@@ -1,3 +1,5 @@
+import { depositAddress, hasDeposit, writerHex } from "./src/fund.ts";
+import { artifactLine } from "./src/program.ts";
 import { bestQuote, deskQuotes } from "./quote.js";
 import {
   DUST,
@@ -19,8 +21,8 @@ const state = {
   kind: 0,
   days: 30,
   strikeIndex: 2,
-  miss: false,
   quotes: null,
+  deposit: null,
   quoting: false,
   positions: loadPositions(),
   selected: null,
@@ -72,8 +74,9 @@ function persist() {
     premiumSats: p.premiumSats.toString(),
     premiumUsd: p.premiumUsd,
     solver: p.solver,
-    miss: p.miss,
     status: p.status,
+    address: p.address,
+    uri: p.uri,
     deadline: p.deadline,
     commitment: p.commitment,
     settlement: p.settlement && {
@@ -162,16 +165,10 @@ function sizeError(sats) {
 }
 
 function copy() {
-  if (state.side === 0 && state.kind === 0) {
-    return "You lock BTC. At expiry the holder is paid only the fraction of that collateral by which the TWAP finishes above the strike.";
-  }
-  if (state.side === 0) {
-    return "You lock BTC. The holder is paid the fraction the TWAP finishes below the strike, and the claim stops at the collateral.";
-  }
   if (state.kind === 0) {
-    return "You lock the premium. A desk locks the BTC, and you are paid the fraction that finishes above the strike.";
+    return "You sell the call and send the BTC collateral on Mutinynet. At expiry the holder is paid only the fraction of that collateral by which the TWAP finishes above the strike.";
   }
-  return "You lock the premium. A desk locks the BTC, and you are paid if the TWAP finishes below the strike, up to that collateral.";
+  return "You sell the put and send the BTC collateral on Mutinynet. The holder is paid the fraction the TWAP finishes below the strike, and the claim stops at the collateral.";
 }
 
 function productName() {
@@ -287,18 +284,50 @@ function renderTicket() {
     const notionalUsd = Number(sats) / 1e8 * Number(state.spotCents) / 100;
     const ann = notionalUsd > 0 ? best.usd / notionalUsd * (365 / state.days) * 100 : 0;
     $("premium-meta").textContent = `$${best.usd.toLocaleString("en-US", { maximumFractionDigits: 2 })} · ${ann.toFixed(1)}% annualized · ${best.name}`;
-    if (state.side === 0) {
-      $("lock-note").textContent = `You lock ${fmtBtc(sats)} BTC. ${best.name} pays the premium if it funds within 30 seconds.`;
-    } else {
-      $("lock-note").textContent = `You lock ${fmtBtc(best.sats)} BTC of premium. ${best.name} locks ${fmtBtc(sats)} BTC of collateral.`;
-    }
+    $("lock-note").textContent = `You send ${fmtBtc(sats)} BTC on Mutinynet. ${best.name} pays ${fmtBtc(best.sats)} BTC if the intent finalizes.`;
   }
+  renderDeposit(best, err);
   const locking = state.positions.some((p) => p.status === "locking");
+  const ready = state.deposit?.status === "ready";
+  $("lock").disabled = !ready || Boolean(err) || state.quoting || locking;
+  $("lock").textContent = "Track this deposit";
+}
+
+function renderDeposit(best, err) {
+  const box = $("deposit");
   const tooSmall = best && best.sats <= DUST;
-  $("lock").disabled = !best || Boolean(err) || state.quoting || locking || tooSmall;
-  $("lock").textContent = state.side === 0 ? "Lock collateral" : "Lock premium";
-  if (tooSmall) $("status").textContent = "Premium is at or below dust. The intent cannot enforce it.";
-  else if (!locking) $("status").textContent = "";
+  if (!best || err || state.quoting) {
+    box.hidden = true;
+    if (!state.positions.some((p) => p.status === "locking")) $("status").textContent = "";
+    return;
+  }
+  if (tooSmall) {
+    box.hidden = true;
+    $("status").textContent = `Premium is ${best.sats} sats. Finalize only enforces a premium above ${DUST} sats, so this strike has no Mutinynet deposit. A closer strike does.`;
+    return;
+  }
+  const deposit = state.deposit;
+  if (!deposit || deposit.status === "loading") {
+    box.hidden = false;
+    $("deposit-amount").textContent = "Fetching the Mutinynet address…";
+    $("deposit-address").textContent = "";
+    $("copy-address").disabled = true;
+    $("deposit-clock").textContent = "";
+    $("status").textContent = "";
+    return;
+  }
+  if (deposit.status === "error") {
+    box.hidden = true;
+    $("status").textContent = deposit.message;
+    return;
+  }
+  box.hidden = false;
+  $("deposit-amount").textContent = `${fmtBtc(deposit.amountSats)} BTC`;
+  $("deposit-address").textContent = deposit.address;
+  $("copy-address").disabled = false;
+  $("deposit-clock").dataset.deadline = String(deposit.deadline);
+  $("deposit-clock").textContent = `Send it on Mutinynet. ${countdown(deposit.deadline)}`;
+  if (!state.positions.some((p) => p.status === "locking")) $("status").textContent = "";
 }
 
 function renderBlotter() {
@@ -367,6 +396,8 @@ function statusCell(position) {
 
 function statusLabel(position) {
   if (position.status === "locking") return countdown(position.deadline);
+  if (position.status === "deposited") return "Deposited";
+  if (position.status === "expired") return "Window closed";
   if (position.status === "refunded") return "Refunded";
   if (position.status === "settled") return "Settled";
   return "Open";
@@ -376,24 +407,19 @@ function countdown(deadline) {
   const left = Math.max(0, deadline - Math.floor(Date.now() / 1000));
   const m = Math.floor(left / 60);
   const s = left % 60;
-  return `Fills in ${m}:${s.toString().padStart(2, "0")}`;
+  return `Closes in ${m}:${s.toString().padStart(2, "0")}`;
 }
 
 function detail(position) {
   const box = document.createElement("div");
   box.className = "lab";
-  if (position.status === "locking") {
-    const p = document.createElement("p");
-    p.className = "lock-note";
-    p.textContent = position.miss
-      ? "The desk has not funded the option. Cancel is locked until the 30-second clock passes, then the collateral returns."
-      : `${position.solver} is funding the option script committed at ${position.commitment.slice(0, 16)}.`;
-    box.append(p);
+  if (position.status === "locking" || position.status === "deposited" || position.status === "expired") {
+    box.append(depositDetail(position));
     return box;
   }
   if (position.status === "refunded") {
     const p = document.createElement("p");
-    p.textContent = "Deadline passed before finalize. The intent refunded the locked coins to you.";
+    p.textContent = "The deposit window closed before a coin arrived.";
     box.append(p);
     return box;
   }
@@ -403,6 +429,24 @@ function detail(position) {
   }
   box.append(settleLab(position));
   return box;
+}
+
+function depositDetail(position) {
+  const frag = document.createDocumentFragment();
+  const net = document.createElement("p");
+  net.className = "lock-note";
+  if (position.status === "deposited") {
+    net.textContent = "Collateral is on this Mutinynet address.";
+  } else if (position.status === "expired") {
+    net.textContent = "The deposit window closed. A coin sent here refunds with cancel once this time has passed.";
+  } else {
+    net.textContent = `Send ${fmtBtc(position.collateral)} BTC to this address on Mutinynet. You lock the collateral. The desk does not.`;
+  }
+  const addr = document.createElement("p");
+  addr.className = "deposit-address";
+  addr.textContent = position.address || "Address unavailable.";
+  frag.append(net, addr);
+  return frag;
 }
 
 function resultLine(settlement) {
@@ -543,6 +587,7 @@ function commitSettle(position) {
 
 function onTermsChanged() {
   state.quotes = null;
+  state.deposit = null;
   const sats = sizeSats();
   const ready = state.spotCents != null && !sizeError(sats);
   state.quoting = ready;
@@ -567,28 +612,47 @@ async function ask(gen) {
     collateralSats: sats,
   });
   state.quoting = false;
-  if (gen === quoteGen) renderTicket();
+  if (gen === quoteGen) {
+    renderTicket();
+    void loadDeposit(gen);
+  }
+}
+
+async function loadDeposit(gen) {
+  const sats = sizeSats();
+  const best = state.quotes && bestQuote(state.quotes, 0);
+  if (gen !== quoteGen || !best || sats == null || best.sats <= DUST) return;
+  const deadline = BigInt(Math.floor(Date.now() / 1000) + 60);
+  state.deposit = { status: "loading" };
+  renderTicket();
+  try {
+    const deposit = await depositAddress({
+      kind: state.kind,
+      strike: strike(),
+      collateral: sats,
+      premium: best.sats,
+      expiry: expiryUnix(state.days),
+      deadline,
+      writerHex: await writerHex(),
+    });
+    if (gen !== quoteGen) return;
+    state.deposit = { status: "ready", ...deposit, deadline: Number(deadline), premium: best.sats };
+  } catch (err) {
+    if (gen !== quoteGen) return;
+    state.deposit = { status: "error", message: err instanceof Error ? err.message : "Could not build the Mutinynet address." };
+  }
+  renderTicket();
 }
 
 async function lock() {
+  const deposit = state.deposit;
   const sats = sizeSats();
-  const err = sizeError(sats);
-  const best = state.quotes && bestQuote(state.quotes, state.side);
-  if (err || !best || best.sats <= DUST) return;
-  const terms = {
-    kind: state.kind,
-    side: state.side,
-    strike: strike().toString(),
-    collateral: sats.toString(),
-    premium: best.sats.toString(),
-    expiry: expiryUnix(state.days).toString(),
-    solver: best.name,
-  };
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(terms)));
-  const commitment = [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+  const best = state.quotes && bestQuote(state.quotes, 0);
+  if (!deposit || deposit.status !== "ready" || sats == null || !best) return;
+  if (state.positions.some((p) => p.status === "locking" && p.address === deposit.address)) return;
   const position = {
     id: crypto.randomUUID(),
-    side: state.side,
+    side: 0,
     kind: state.kind,
     strike: strike(),
     expiry: expiryUnix(state.days),
@@ -597,9 +661,10 @@ async function lock() {
     premiumUsd: best.usd,
     solver: best.name,
     status: "locking",
-    miss: state.miss,
-    deadline: Math.floor(Date.now() / 1000) + 30,
-    commitment,
+    deadline: deposit.deadline,
+    address: deposit.address,
+    uri: deposit.uri,
+    commitment: deposit.address,
   };
   state.positions.unshift(position);
   state.selected = position.id;
@@ -607,15 +672,6 @@ async function lock() {
   persist();
   renderTicket();
   renderBlotter();
-  if (!position.miss) {
-    setTimeout(() => {
-      if (position.status !== "locking") return;
-      position.status = "open";
-      persist();
-      renderTicket();
-      renderBlotter();
-    }, 1600);
-  }
 }
 
 function tick() {
@@ -623,37 +679,70 @@ function tick() {
   let changed = false;
   for (const position of state.positions) {
     if (position.status === "locking" && now >= position.deadline) {
-      position.status = "refunded";
+      position.status = "expired";
       changed = true;
     }
+  }
+  if (state.deposit?.status === "ready" && now >= state.deposit.deadline) {
+    onTermsChanged();
+    return;
   }
   if (changed) {
     persist();
     renderTicket();
     renderBlotter();
-    return;
+  }
+  const clock = $("deposit-clock");
+  if (clock && state.deposit?.status === "ready") {
+    clock.textContent = `Send it on Mutinynet. ${countdown(state.deposit.deadline)}`;
   }
   for (const node of document.querySelectorAll("[data-deadline]")) {
+    if (node === clock) continue;
     node.textContent = countdown(Number(node.dataset.deadline));
   }
-  const locking = state.positions.find((p) => p.status === "locking");
-  if (!locking) return;
-  const left = countdown(locking.deadline).replace("Fills in ", "");
-  $("status").textContent = locking.miss
-    ? `Refund unlocks in ${left}. The intent cannot cancel before then.`
-    : "Desk is funding the vault.";
+  if (now - lastPoll >= 4) {
+    lastPoll = now;
+    void pollDeposits();
+  }
 }
+
+let lastPoll = 0;
 
 function reconcileLocks() {
   const now = Math.floor(Date.now() / 1000);
   let changed = false;
   for (const position of state.positions) {
     if (position.status !== "locking") continue;
-    if (now >= position.deadline) position.status = "refunded";
-    else if (!position.miss) position.status = "open";
-    changed = true;
+    if (now >= position.deadline) {
+      position.status = "expired";
+      changed = true;
+    }
   }
   if (changed) persist();
+}
+
+async function pollDeposits() {
+  for (const position of state.positions) {
+    if (position.status !== "locking" || !position.address) continue;
+    try {
+      const seen = await hasDeposit({
+        kind: position.kind,
+        strike: position.strike,
+        collateral: position.collateral,
+        premium: position.premiumSats,
+        expiry: position.expiry,
+        deadline: BigInt(position.deadline),
+        writerHex: await writerHex(),
+      });
+      if (seen && position.status === "locking") {
+        position.status = "deposited";
+        persist();
+        renderBlotter();
+      }
+    } catch {
+      // The address stays on screen. The next poll tries again.
+    }
+  }
 }
 
 function press(id, pressed) {
@@ -664,14 +753,6 @@ function bind() {
   $("side-sell").addEventListener("click", () => {
     state.side = 0;
     press("side-sell", true);
-    press("side-buy", false);
-    onTermsChanged();
-  });
-  $("side-buy").addEventListener("click", () => {
-    state.side = 1;
-    press("side-sell", false);
-    press("side-buy", true);
-    onTermsChanged();
   });
   $("kind-call").addEventListener("click", () => {
     state.kind = 0;
@@ -701,10 +782,17 @@ function bind() {
     onTermsChanged();
   });
   $("size").addEventListener("input", onTermsChanged);
-  $("miss").addEventListener("change", () => {
-    state.miss = $("miss").checked;
-  });
   $("lock").addEventListener("click", lock);
+  $("copy-address").addEventListener("click", async () => {
+    const address = state.deposit?.address;
+    if (!address) return;
+    try {
+      await navigator.clipboard.writeText(address);
+      $("copy-address").textContent = "Copied";
+    } catch {
+      $("copy-address").textContent = "Copy failed";
+    }
+  });
 }
 
 async function loadSpot() {
@@ -730,22 +818,12 @@ async function loadSpot() {
   state.spotSource = "Simulated spot";
 }
 
-async function loadArtifact() {
+function loadArtifact() {
   const node = $("artifact");
   try {
-    const [vaultRes, intentRes] = await Promise.all([
-      fetch(new URL("../artifacts/option_vault.json", import.meta.url)),
-      fetch(new URL("../artifacts/option_intent.json", import.meta.url)),
-    ]);
-    if (!vaultRes.ok || !intentRes.ok) throw new Error("missing artifact");
-    const vault = await vaultRes.json();
-    const intent = await intentRes.json();
-    const asm = vault.functions.find((fn) => fn.name === "settle").arkade.asm;
-    const count = (op) => asm.filter((tok) => tok === op).length;
-    const finalize = intent.functions.find((fn) => fn.name === "finalize").arkade.asm.join(" ");
-    node.textContent = `OptionVault settle · ${count("OP_CHECKSIGFROMSTACK")} oracle signatures · ${count("OP_MUL")} multiplies · ${count("OP_DIV")} divides · ${count("OP_SHA256")} hashes. OptionIntent ${finalize.includes("OP_CHECKTIME") ? "gates the fill on the 30-second clock." : "is loaded."}`;
-  } catch {
-    node.textContent = "Compile the two contracts into artifacts/ to show the covenant opcodes.";
+    node.textContent = artifactLine();
+  } catch (err) {
+    node.textContent = err instanceof Error ? err.message : "The option programs did not load.";
   }
 }
 

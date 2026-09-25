@@ -110,7 +110,12 @@ main {
   color: var(--accent-ink);
 }
 
-.seg button:active { transform: scale(0.98); }
+.seg button:active:not(:disabled) { transform: scale(0.98); }
+
+.seg button:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
 
 .copy { margin: 14px 0 0; max-width: 42rem; }
 
@@ -213,6 +218,41 @@ main {
 }
 
 .lock-note { margin: 16px 0 0; font-size: 14px; }
+
+.deposit {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.deposit-amount {
+  margin: 8px 0 0;
+  font-family: var(--mono);
+  font-size: 22px;
+}
+
+.deposit-address {
+  margin: 8px 0;
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.45;
+  word-break: break-all;
+}
+
+.deposit button {
+  background: transparent;
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  padding: 6px 10px;
+}
+
+.spot .network {
+  color: var(--accent);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
 
 .miss {
   display: flex;

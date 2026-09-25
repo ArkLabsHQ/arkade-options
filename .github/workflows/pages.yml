@@ -1,11 +1,8 @@
-# Publishes the repository root to GitHub Pages.
-# desk.js loads ../artifacts/, so the site root is this repository, not app/ alone.
-name: Deploy to GitHub Pages
+name: Deploy GitHub Pages
 
 on:
   push:
     branches: [master]
-  pull_request:
   workflow_dispatch:
 
 permissions:
@@ -18,34 +15,41 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  check:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Check settlement math
-        run: node --test app/settle-math.test.mjs
-
   deploy:
-    needs: check
-    if: github.ref == 'refs/heads/master'
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
-      - name: Setup Pages
-        uses: actions/configure-pages@v5
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Test
+        run: pnpm test
+
+      - name: Build
+        run: pnpm build
 
       - name: Upload site
         uses: actions/upload-pages-artifact@v3
         with:
-          path: .
+          path: dist
 
-      - name: Deploy to GitHub Pages
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Deploy
         id: deployment
-        uses: actions/deploy-pages@v5
+        uses: actions/deploy-pages@v4

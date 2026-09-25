@@ -1,8 +1,8 @@
 # Decisions
 
-## Desk repo, contracts in the compiler
+## Contracts live here
 
-The spec pays the holder out of locked BTC. `examples/options/` in the compiler is a physical covered call and cash-secured put with no oracle, and its tests pin that. The cash-settled sources stay there as `examples/arkade_options/`. This repository is only the desk and the compiled artifacts the page loads.
+`contracts/option_vault.ark` and `contracts/option_intent.ark` are the sources. The page loads `contracts/*.artifact.json` with `arkade.programFromArtifact`. `older(exit)` is switched from a block CSV to seconds, which is the only edit. Selling is the only side: the writer sends collateral to the intent address on Mutinynet. The desk does not lock that coin. Buying, and the simulated "desk does not fill" switch, are off.
 
 ## Three slices, fixed weights
 

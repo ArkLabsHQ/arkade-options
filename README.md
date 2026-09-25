@@ -2,27 +2,33 @@
 
 Cash-settled covered calls and limited puts. The writer locks BTC notional. At expiry the covenant reads three oracle slices, takes the median of each, and computes the settlement price with multiplies and a divide.
 
-The covenants are `option_vault.ark` and `option_intent.ark` in the compiler at [`examples/arkade_options`](https://github.com/arkade-os/compiler/tree/cursor/arkade-options-contracts-9f6e/examples/arkade_options). This repo is the desk: the page, the simulated quotes, and the image that serves them.
+The covenants are `contracts/option_vault.ark` and `contracts/option_intent.ark`. The page loads the committed artifacts with `arkade.programFromArtifact`. It does not compile the sources, and it does not rebuild them inside the compiler.
 
 ## Run
 
 ```bash
-python3 -m http.server 8765
+pnpm install
+pnpm test
+pnpm dev
 ```
 
-Open `http://127.0.0.1:8765/`. The root page redirects to `app/`.
+Open http://127.0.0.1:4173. The network is Mutinynet. Buying is off. You sell a covered call or a limited put, and the ticket shows the `tark1…` address that receives your collateral. The desk does not lock that coin.
 
-Sell or buy, pick a covered call or a limited put, choose one of five strikes and an expiry, enter a BTC notional, and take the best of three simulated desk quotes. Locking starts a 30-second intent. If the desk funds, the position opens. If it does not, the lock refunds when the clock passes. An open position settles from three oracle slices. "Pyth spikes the midpoint" shows the median dropping the bad print.
+A premium of 330 sats or less cannot be enforced by `option_intent.ark`, so that strike has no deposit address. A 7-day covered call at the farthest strike is the case that hits it. A closer strike is above the line.
 
-The page keeps positions in `localStorage`. It does not broadcast to an operator. The numbers it shows are the same integer arithmetic as `option_vault.ark`. The script commitment is a SHA-256 of the terms, standing in for the vault's 32-byte witness program until an SDK session builds the real output script.
+`scripts/options-example.ts` prints one address:
+
+```bash
+node --experimental-strip-types scripts/options-example.ts
+```
+
+The page keeps positions in `localStorage`. The deposit address is the OptionIntent output, built with `programFromArtifact` against the Mutinynet operator. Settlement numbers on an open position use the same integer arithmetic as `option_vault.ark`.
 
 Quotes are Black-Scholes with zero rates. A covered call is priced as a call. A limited put is priced as a put spread struck at K and K/2. The spot comes from Coinbase, then Binance, and otherwise a labeled simulated price.
 
 ## Deploy
 
-The page, the quotes, and the settlement math are static. There is no oracle service to run.
-
-[`.github/workflows/pages.yml`](.github/workflows/pages.yml) publishes this repository to GitHub Pages on every push to `master`, and when the workflow is run from the Actions tab. It runs `node --test app/settle-math.test.mjs`, then uploads the repository root. `desk.js` loads `../artifacts/`, so the publish root is this repository, not `app/` alone. The root page redirects to `app/`.
+[`.github/workflows/pages.yml`](.github/workflows/pages.yml) runs `pnpm test`, builds `dist/`, and publishes that directory to GitHub Pages on every push to `master`.
 
 A repository admin turns the site on once: Settings → Pages → Build and deployment → Source: GitHub Actions. The site is [https://arklabshq.github.io/arkade-options/](https://arklabshq.github.io/arkade-options/).
 
@@ -31,15 +37,15 @@ docker build -t arkade-options .
 docker run --rm -p 8080:80 arkade-options
 ```
 
-Open `http://127.0.0.1:8080/`. `/` redirects to `/app/`. The image is nginx plus this repository, including the committed artifacts.
+Open `http://127.0.0.1:8080/`. The image serves the built page.
 
 ## Artifacts
 
-`artifacts/*.json` are compiler output the page loads. From a checkout of the compiler:
+`contracts/*.artifact.json` are the compiler output `programFromArtifact` loads. From a checkout of the compiler:
 
 ```bash
-cargo run -- examples/arkade_options/option_vault.ark -o /path/to/arkade-options/artifacts/option_vault.json
-cargo run -- examples/arkade_options/option_intent.ark -o /path/to/arkade-options/artifacts/option_intent.json
+cargo run -- examples/arkade_options/option_vault.ark -o /path/to/arkade-options/contracts/option_vault.artifact.json
+cargo run -- examples/arkade_options/option_intent.ark -o /path/to/arkade-options/contracts/option_intent.artifact.json
 ```
 
 ## Check

@@ -1,0 +1,77 @@
+import { arkade } from "@arkade-os/sdk";
+
+import intentArtifact from "../../contracts/option_intent.artifact.json" with { type: "json" };
+import vaultArtifact from "../../contracts/option_vault.artifact.json" with { type: "json" };
+
+// The median returns compile to OP_PUT (replace a stack item). The emulator
+// assigns it 0xbb. This SDK build's table stops before that opcode.
+if (!Object.hasOwn(arkade.ARKADE_OPS, "PUT")) {
+  arkade.ARKADE_OPS.PUT = 0xbb;
+  arkade.ARKADE_OP.PUT = 0xbb;
+}
+
+/**
+ * The programs the desk spends.
+ *
+ * `contracts/*.artifact.json` are the arkadec output. The page loads them with
+ * `arkade.programFromArtifact`. It does not compile the `.ark` sources.
+ *
+ * `older(exit)` is emitted as a block CSV. Public arkd rejects that on an exit
+ * leaf, so the spent program sets the BIP68 seconds bit on the same `$exit`
+ * integer. Nothing else in the artifact is edited.
+ */
+function secondsExit(artifact: arkade.ContractArtifact): ReturnType<typeof arkade.programFromArtifact> {
+  const program = arkade.programFromArtifact(artifact);
+  const unilateral = program.functions.unilateral;
+  const csv = unilateral?.tapscript?.csv;
+  if (!unilateral?.tapscript || csv?.type !== "blocks" || csv.value !== "$exit") {
+    throw new Error(`${program.name} unilateral leaf is not the block CSV arkadec emits for older(exit)`);
+  }
+  return {
+    ...program,
+    functions: {
+      ...program.functions,
+      unilateral: {
+        ...unilateral,
+        tapscript: {
+          ...unilateral.tapscript,
+          csv: { type: "seconds", value: csv.value },
+        },
+      },
+    },
+  };
+}
+
+export function vaultProgram() {
+  return secondsExit(vaultArtifact as arkade.ContractArtifact);
+}
+
+export function intentProgram() {
+  return secondsExit(intentArtifact as arkade.ContractArtifact);
+}
+
+export function rawVaultProgram() {
+  return arkade.programFromArtifact(vaultArtifact as arkade.ContractArtifact);
+}
+
+export function rawIntentProgram() {
+  return arkade.programFromArtifact(intentArtifact as arkade.ContractArtifact);
+}
+
+function count(asm: readonly unknown[] | undefined, name: string) {
+  return (asm ?? []).filter((token) => token === name).length;
+}
+
+/** One line for the page, taken from the loaded programs rather than the raw JSON. */
+export function artifactLine() {
+  const vault = vaultProgram();
+  const intent = intentProgram();
+  const settle = vault.functions.settle?.arkadeScript?.asm;
+  const finalize = intent.functions.finalize?.arkadeScript?.asm ?? [];
+  const sigs = count(settle, "CHECKSIGFROMSTACK");
+  const hashes = count(settle, "SHA256");
+  const muls = count(settle, "MUL");
+  const divs = count(settle, "DIV");
+  const clock = finalize.includes("CHECKTIME") ? "gates the fill on the 30-second clock." : "is loaded.";
+  return `OptionVault settle · ${sigs} oracle signatures · ${muls} multiplies · ${divs} divides · ${hashes} hashes. OptionIntent ${clock}`;
+}

@@ -14,9 +14,9 @@
   <header class="top">
     <div>
       <h1>Arkade Options</h1>
-      <p class="sub">Cash-settled covered calls and limited puts. Settlement price is a three-median TWAP.</p>
+      <p class="sub">Sell a covered call or a limited put on Mutinynet. You send the collateral. Settlement price is a three-median TWAP.</p>
     </div>
-    <p class="spot"><span id="spot-source">BTC/USD</span> <strong id="spot-px">Loading</strong></p>
+    <p class="spot"><span id="network" class="network">Mutinynet</span><span id="spot-source">BTC/USD</span> <strong id="spot-px">Loading</strong></p>
   </header>
 
   <main>
@@ -24,7 +24,7 @@
       <div class="control-row">
         <div class="seg" role="group" aria-label="Your side">
           <button type="button" id="side-sell" aria-pressed="true">Sell</button>
-          <button type="button" id="side-buy" aria-pressed="false">Buy</button>
+          <button type="button" id="side-buy" disabled title="Buying is off. You sell, and you send the collateral.">Buy</button>
         </div>
         <div class="seg" role="group" aria-label="Contract">
           <button type="button" id="kind-call" aria-pressed="true">Covered call</button>
@@ -74,11 +74,17 @@
       <p class="premium-meta" id="premium-meta"></p>
       <div id="quotes" class="quotes"></div>
       <p class="lock-note" id="lock-note"></p>
-      <label class="miss">
-        <input id="miss" type="checkbox">
-        Desk does not fill
-      </label>
-      <button type="button" class="lock" id="lock" disabled>Lock collateral</button>
+      <div id="deposit" class="deposit" hidden>
+        <div class="field-label">
+          <span>Send collateral</span>
+          <span>Mutinynet</span>
+        </div>
+        <p id="deposit-amount" class="deposit-amount"></p>
+        <p id="deposit-address" class="deposit-address"></p>
+        <button type="button" id="copy-address">Copy address</button>
+        <p id="deposit-clock" class="lock-note"></p>
+      </div>
+      <button type="button" class="lock" id="lock" disabled>Track this deposit</button>
       <p class="status" id="status"></p>
     </aside>
 
@@ -91,6 +97,6 @@
       <p id="artifact" class="artifact"></p>
     </section>
   </main>
-  <script type="module" src="desk.js"></script>
+  <script type="module" src="./app.js"></script>
 </body>
 </html>
