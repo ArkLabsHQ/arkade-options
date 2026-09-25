@@ -60,7 +60,10 @@
     <div id="sell" class="desk" hidden>
       <section class="book" aria-label="Choose the option">
         <button type="button" class="back" id="back">Positions</button>
-        <h2 id="sell-title">Covered call</h2>
+        <div class="seg" role="group" aria-label="Contract">
+          <button type="button" data-kind="0" aria-pressed="true">Covered call</button>
+          <button type="button" data-kind="1">Limited put</button>
+        </div>
         <p id="kind-copy" class="copy"></p>
 
         <div class="field">
@@ -114,7 +117,7 @@
           <p id="deposit-amount" class="deposit-amount"></p>
           <p id="deposit-fixed" class="lock-note"></p>
           <p id="deposit-address" class="deposit-address"></p>
-          <button type="button" id="copy-address">Copy address</button>
+          <button type="button" id="copy-address">Copy payment link</button>
         </div>
         <p class="status" id="status" role="status"></p>
       </aside>

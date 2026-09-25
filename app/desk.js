@@ -221,13 +221,25 @@ function statusLead(position) {
   return "Open.";
 }
 
+function paymentUri(address, sats) {
+  const whole = sats / 100_000_000n;
+  const frac = (sats % 100_000_000n).toString().padStart(8, "0").replace(/0+$/, "");
+  const amount = frac ? `${whole}.${frac}` : whole.toString();
+  return `bitcoin:?ark=${address}&amount=${amount}`;
+}
+
+function dustNote(sats) {
+  const paid = sats == null ? "This premium" : `${fmtBtc(sats)} BTC (${sats} sats)`;
+  return `${paid} is at or below ${DUST} sats. That is the smallest premium Arkade can pay, so this strike cannot be deposited. A closer strike, or a larger size, pays more.`;
+}
+
 function humanNote(note) {
   if (!note) return "";
   if (note.includes("writer script")) {
     return "This desk needs a redeploy before it can pay a pasted address. The number above is the live market.";
   }
   if (note.includes("premium below dust")) {
-    return "This strike pays too little to deposit. Pick a closer one.";
+    return dustNote();
   }
   return note;
 }
@@ -380,7 +392,9 @@ function renderSell() {
   if (state.view !== "sell") return;
   const now = Math.floor(Date.now() / 1000);
   if (state.deskQuote?.deadline && state.deskQuote.deadline <= now) state.deskQuote = null;
-  $("sell-title").textContent = productName();
+  document.querySelectorAll("[data-kind]").forEach((btn) => {
+    btn.setAttribute("aria-pressed", String(Number(btn.dataset.kind) === state.kind));
+  });
   $("kind-copy").textContent = kindCopy();
   $("expiry-when").textContent = state.spotCents == null ? "" : fmtWhen(expiryUnix(state.days));
   const sats = sizeSats();
@@ -439,7 +453,7 @@ function renderSell() {
   let note = "";
   if (!frozen) {
     if (quote && quote.sats <= DUST) {
-      note = "This strike pays too little to deposit. Pick a closer one.";
+      note = dustNote(quote.sats);
     } else if (!quote && state.quoting) {
       note = state.market ? "Getting a quote." : "";
     } else if (!quote) {
@@ -611,9 +625,9 @@ function depositBlock(position) {
   const copy = document.createElement("button");
   copy.type = "button";
   copy.className = "copy-uri";
-  copy.textContent = "Copy address";
+  copy.textContent = "Copy payment link";
   copy.addEventListener("click", () => {
-    void copyToClipboard(copy, position.address);
+    void copyToClipboard(copy, position.uri || paymentUri(position.address, position.collateral));
   });
   frag.append(amount, addr, copy);
   return frag;
@@ -778,6 +792,7 @@ async function confirm() {
         days: state.days,
         createdAt: Math.floor(Date.now() / 1000),
         apy,
+        uri: deposit.uri,
         apyFrozen: false,
         marketSats: null,
         marketApy: null,
@@ -789,6 +804,7 @@ async function confirm() {
       status: "ready",
       termsKey: termsKey(),
       address: deposit.address,
+      uri: deposit.uri,
       amountSats: deposit.amountSats,
       premium: quote.sats,
       apy,
@@ -804,13 +820,14 @@ async function confirm() {
 }
 
 function openSell(kind) {
-  const changed = !(state.view === "sell" && state.kind === kind);
+  const onSell = state.view === "sell";
+  const changed = state.kind !== kind;
   state.kind = kind;
   if (changed) {
     state.strikeIndex = 0;
     strikeKey = "";
   }
-  show("sell");
+  show("sell", onSell ? "replace" : "push");
   if (changed) onTermsChanged();
 }
 
@@ -1006,7 +1023,10 @@ function bind() {
   $("copy-address").addEventListener("click", () => {
     const deposit = shownDeposit();
     if (!deposit) return;
-    void copyToClipboard($("copy-address"), deposit.address);
+    void copyToClipboard($("copy-address"), deposit.uri || paymentUri(deposit.address, deposit.amountSats));
+  });
+  document.querySelectorAll("[data-kind]").forEach((btn) => {
+    btn.addEventListener("click", () => openSell(Number(btn.dataset.kind)));
   });
   $("payoff-details").addEventListener("toggle", renderPayoff);
 }
