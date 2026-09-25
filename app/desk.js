@@ -470,16 +470,17 @@ function renderHome() {
 
 function pageHash(view) {
   if (view === "connect") return "#/connect";
-  if (view === "sell") return state.kind === 1 ? "#/sell/put" : "#/sell/call";
-  return "#/positions";
+  if (view === "home") return "#/positions";
+  return state.kind === 1 ? "#/quote/put" : "#/quote/call";
 }
 
 function routeFromHash() {
   const path = (location.hash || "#/").replace(/^#/, "");
-  if (path.startsWith("/sell/put")) return { view: "sell", kind: 1 };
-  if (path.startsWith("/sell/call")) return { view: "sell", kind: 0 };
+  if (path.startsWith("/sell/put") || path.startsWith("/quote/put")) return { view: "sell", kind: 1 };
+  if (path.startsWith("/sell/call") || path.startsWith("/quote/call")) return { view: "sell", kind: 0 };
+  if (path.startsWith("/positions")) return { view: "home", kind: state.kind };
   if (path.startsWith("/connect")) return { view: "connect", kind: state.kind };
-  return { view: "home", kind: state.kind };
+  return { view: "sell", kind: state.kind };
 }
 
 function show(view, mode = "push") {
@@ -492,13 +493,10 @@ function show(view, mode = "push") {
   const known = Boolean(state.address);
   $("who").hidden = !known || view === "connect";
   $("who-address").textContent = known ? shortAddress(state.address) : "";
-  $("sub").textContent = view === "connect"
-    ? "Paste your Arkade address to start."
-    : view === "home"
-      ? "Positions"
-      : state.kind === 0
-        ? "Sell a covered call."
-        : "Sell a limited put.";
+  $("sub").hidden = view !== "connect";
+  document.querySelectorAll("[data-tab]").forEach((btn) => {
+    btn.setAttribute("aria-pressed", String(btn.dataset.tab === view));
+  });
   const next = pageHash(view);
   if (mode !== "quiet" && location.hash !== next) {
     if (mode === "replace") history.replaceState(null, "", next);
@@ -832,7 +830,7 @@ function connectAddress() {
     state.address = saveAddress($("account-key").value);
     $("account-error").textContent = "";
     $("account-key").value = "";
-    show("home");
+    show("sell");
   } catch (err) {
     $("account-error").textContent = err instanceof Error ? err.message : "That address was not saved.";
   }
@@ -990,9 +988,13 @@ function bind() {
     if (event.key === "Enter") connectAddress();
   });
   $("account-change").addEventListener("click", disconnect);
-  $("sell-call").addEventListener("click", () => openSell(0));
-  $("sell-put").addEventListener("click", () => openSell(1));
-  $("back").addEventListener("click", () => show("home"));
+  document.querySelectorAll("[data-tab]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const view = btn.dataset.tab;
+      if (view === state.view) return;
+      show(view);
+    });
+  });
   document.querySelectorAll("[data-days]").forEach((btn) => {
     btn.addEventListener("click", () => {
       const days = Number(btn.dataset.days);
@@ -1066,7 +1068,7 @@ function showFromHash() {
     return;
   }
   if (route.view === "connect") {
-    show("home", "replace");
+    show("sell", "replace");
     return;
   }
   if (route.view === "sell") {
@@ -1091,7 +1093,8 @@ state.address = readAddress() || "";
   else if (route.view === "sell") {
     state.kind = route.kind;
     show("sell", "replace");
-  } else show("home", "replace");
+  } else if (route.view === "home") show("home", "replace");
+  else show("sell", "replace");
 }
 window.addEventListener("hashchange", showFromHash);
 loadSpot().then(() => {

@@ -11,17 +11,23 @@
   <link rel="stylesheet" href="desk.css">
 </head>
 <body data-view="connect">
-  <header class="top">
-    <div>
-      <h1>Arkade Options</h1>
-      <p class="sub" id="sub">Paste your Arkade address to start.</p>
-      <p class="who" id="who" hidden>
-        <span id="who-address"></span>
-        <button type="button" id="account-change">Change</button>
-      </p>
-    </div>
-    <p class="spot"><span id="network" class="network">Mutinynet</span><span id="spot-source">BTC/USD</span> <strong id="spot-px">Loading</strong></p>
-  </header>
+  <div class="chrome">
+    <header class="top">
+      <div>
+        <h1>Arkade Options</h1>
+        <p class="sub" id="sub">Paste your Arkade address to start.</p>
+        <p class="who" id="who" hidden>
+          <span id="who-address"></span>
+          <button type="button" id="account-change">Change</button>
+        </p>
+      </div>
+      <p class="spot"><span id="network" class="network">Mutinynet</span><span id="spot-source">BTC/USD</span> <strong id="spot-px">Loading</strong></p>
+    </header>
+    <nav class="tabs" id="tabs" aria-label="Sections">
+      <button type="button" data-tab="sell" aria-pressed="true">Quote</button>
+      <button type="button" data-tab="home">Positions</button>
+    </nav>
+  </div>
 
   <main>
     <section id="connect" class="connect" aria-labelledby="connect-title">
@@ -37,16 +43,6 @@
     </section>
 
     <section id="home" class="home" hidden>
-      <div class="actions" role="group" aria-label="Sell">
-        <button type="button" class="action" id="sell-call">
-          <span class="action-kicker">Sell</span>
-          <span class="action-title">Covered call</span>
-        </button>
-        <button type="button" class="action" id="sell-put">
-          <span class="action-kicker">Sell</span>
-          <span class="action-title">Limited put</span>
-        </button>
-      </div>
       <section class="blotter" aria-label="Positions">
         <div class="field-label">
           <h2>Positions</h2>
@@ -59,7 +55,6 @@
 
     <div id="sell" class="desk" hidden>
       <section class="book" aria-label="Choose the option">
-        <button type="button" class="back" id="back">Positions</button>
         <div class="seg" role="group" aria-label="Contract">
           <button type="button" data-kind="0" aria-pressed="true">Covered call</button>
           <button type="button" data-kind="1">Limited put</button>
@@ -87,7 +82,7 @@
         </div>
 
         <div class="field">
-          <label class="field-label" for="size">Size</label>
+          <label class="field-label" for="size">Notional</label>
           <div class="size-row">
             <input id="size" inputmode="decimal" autocomplete="off" spellcheck="false" value="0.001" aria-describedby="size-error">
             <span>BTC</span>

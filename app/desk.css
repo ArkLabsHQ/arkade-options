@@ -20,12 +20,44 @@
 
 body[data-view="connect"] #home,
 body[data-view="connect"] #sell,
+body[data-view="connect"] #tabs,
 body[data-view="home"] #connect,
 body[data-view="home"] #sell,
 body[data-view="sell"] #connect,
 body[data-view="sell"] #home {
   display: none !important;
 }
+
+.chrome {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  background: color-mix(in srgb, var(--bg) 78%, transparent);
+  backdrop-filter: blur(18px) saturate(160%);
+}
+
+.tabs {
+  display: flex;
+  gap: 4px;
+  padding: 0 32px;
+  border-bottom: 1px solid var(--line);
+}
+
+.tabs button {
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  padding: 10px 12px;
+  color: var(--muted);
+}
+
+.tabs button[aria-pressed="true"] {
+  color: var(--ink);
+  border-bottom-color: var(--accent);
+}
+
+.tabs button:active { transform: scale(0.98); }
 
 body {
   margin: 0;
@@ -49,8 +81,7 @@ button { cursor: pointer; }
   justify-content: space-between;
   gap: 24px;
   align-items: flex-end;
-  padding: 22px 32px 18px;
-  border-bottom: 1px solid var(--line);
+  padding: 22px 32px 14px;
 }
 
 h1, h2 {
@@ -593,7 +624,7 @@ a { color: var(--accent); }
 }
 
 @media (max-width: 860px) {
-  .top, .book, .ticket, .blotter, .connect, .home { padding-left: 16px; padding-right: 16px; }
+  .top, .tabs, .book, .ticket, .blotter, .connect, .home { padding-left: 16px; padding-right: 16px; }
   .desk { grid-template-columns: 1fr; }
   .ticket {
     border-left: 0;
