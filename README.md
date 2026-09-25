@@ -41,12 +41,15 @@ Open `http://127.0.0.1:8080/app/`. The image serves the built page.
 
 ## Artifacts
 
-`contracts/*.artifact.json` are the compiler output `programFromArtifact` loads. From a checkout of the compiler:
+`contracts/*.artifact.json` are the compiler output `programFromArtifact` loads. `contracts/non_interactive_swap.ark` and the `contracts/single_sig.ark` it imports are the compiler's `examples/non_interactive_swap` and `examples/single_sig`, with the import path pointing at this directory. From a checkout of [arkade-os/compiler](https://github.com/arkade-os/compiler):
 
 ```bash
-cargo run -- examples/arkade_options/option_vault.ark -o /path/to/arkade-options/contracts/option_vault.artifact.json
-cargo run -- examples/arkade_options/option_intent.ark -o /path/to/arkade-options/contracts/option_intent.artifact.json
+cargo run --release -- examples/arkade_options/option_vault.ark -o /path/to/arkade-options/contracts/option_vault.artifact.json
+cargo run --release -- examples/arkade_options/option_intent.ark -o /path/to/arkade-options/contracts/option_intent.artifact.json
+cargo run --release -- /path/to/arkade-options/contracts/non_interactive_swap.ark -o /path/to/arkade-options/contracts/non_interactive_swap.artifact.json
 ```
+
+`pnpm check` loads every artifact and fails if anything but the `older(exit)` CSV type differs from what the compiler emitted. [PLAN.md](PLAN.md) is the path to live fills.
 
 ## Check
 

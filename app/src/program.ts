@@ -1,5 +1,6 @@
 import { arkade } from "@arkade-os/sdk";
 
+import swapArtifact from "../../contracts/non_interactive_swap.artifact.json" with { type: "json" };
 import intentArtifact from "../../contracts/option_intent.artifact.json" with { type: "json" };
 import vaultArtifact from "../../contracts/option_vault.artifact.json" with { type: "json" };
 
@@ -50,12 +51,26 @@ export function intentProgram() {
   return secondsExit(intentArtifact as arkade.ContractArtifact);
 }
 
+/**
+ * The compiler's NonInteractiveSwap, the pattern OptionIntent copies. Its
+ * `swap` path compares output 0 against `new SingleSig(makerPk, exit)`, which
+ * arkadec emits as the `vtxo_SingleSig_makerPk_exit` parameter: the 32-byte
+ * witness program of that SingleSig, built by the caller.
+ */
+export function swapProgram() {
+  return secondsExit(swapArtifact as arkade.ContractArtifact);
+}
+
 export function rawVaultProgram() {
   return arkade.programFromArtifact(vaultArtifact as arkade.ContractArtifact);
 }
 
 export function rawIntentProgram() {
   return arkade.programFromArtifact(intentArtifact as arkade.ContractArtifact);
+}
+
+export function rawSwapProgram() {
+  return arkade.programFromArtifact(swapArtifact as arkade.ContractArtifact);
 }
 
 function count(asm: readonly unknown[] | undefined, name: string) {

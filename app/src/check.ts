@@ -2,7 +2,15 @@ import assert from "node:assert/strict";
 
 import { arkade } from "@arkade-os/sdk";
 
-import { artifactLine, intentProgram, rawIntentProgram, rawVaultProgram, vaultProgram } from "./program.ts";
+import {
+  artifactLine,
+  intentProgram,
+  rawIntentProgram,
+  rawSwapProgram,
+  rawVaultProgram,
+  swapProgram,
+  vaultProgram,
+} from "./program.ts";
 
 function onlySecondsDiffers(raw: ReturnType<typeof rawVaultProgram>, spent: ReturnType<typeof vaultProgram>) {
   const csv = raw.functions.unilateral?.tapscript?.csv;
@@ -31,6 +39,7 @@ function onlySecondsDiffers(raw: ReturnType<typeof rawVaultProgram>, spent: Retu
 
 onlySecondsDiffers(rawVaultProgram(), vaultProgram());
 onlySecondsDiffers(rawIntentProgram(), intentProgram());
+onlySecondsDiffers(rawSwapProgram(), swapProgram());
 
 const key = (fill: number) => new Uint8Array(32).fill(fill);
 const emulatorKey = new Uint8Array(33);
@@ -101,9 +110,42 @@ const finalizeAsm = intent.functions.finalize?.arkadeScript?.asm ?? [];
 if (!cancelAsm.includes("CHECKTIME")) throw new Error("cancel is missing CHECKTIME");
 if (!finalizeAsm.includes("CHECKTIME")) throw new Error("finalize is missing CHECKTIME");
 
+const swap = swapProgram();
+const compiledSwap = new arkade.ArkadeProgramScript(
+  swap,
+  {
+    makerPk: key(1),
+    offerAssetIdTxid: key(2),
+    offerAssetIdGidx: 0n,
+    offerAmount: 1_000n,
+    wantAssetIdTxid: key(3),
+    wantAssetIdGidx: 0n,
+    wantAmount: 2_000n,
+    expirationTime: 1_800_000_000n,
+    exit: 512n,
+    server: key(7),
+    vtxo_SingleSig_makerPk_exit: key(6),
+  },
+  { serverKey: key(7), emulatorKey },
+);
+const swapNames = compiledSwap.compiled.map((fn) => fn.name);
+if (swapNames.join() !== "swap,cancel,unilateral") {
+  throw new Error(`unexpected swap functions ${swapNames.join()}`);
+}
+const swapAsm = swap.functions.swap?.arkadeScript?.asm ?? [];
+if (swapAsm.filter((token) => token === "INSPECTOUTASSETLOOKUP").length !== 2) {
+  throw new Error("swap does not read both asset outputs");
+}
+if (!swapAsm.includes("$vtxo_SingleSig_makerPk_exit")) {
+  throw new Error("swap does not compare output 0 against the maker SingleSig");
+}
+if (!(swap.functions.cancel?.arkadeScript?.asm ?? []).includes("INSPECTLOCKTIME")) {
+  throw new Error("swap cancel is missing INSPECTLOCKTIME");
+}
+
 const line = artifactLine();
 if (!line.includes("9 oracle signatures") || !line.includes("30-second clock")) {
   throw new Error(line);
 }
 
-console.log("option programs load through programFromArtifact");
+console.log("option and swap programs load through programFromArtifact");
