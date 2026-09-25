@@ -16,6 +16,17 @@
 
 * { box-sizing: border-box; }
 
+[hidden] { display: none !important; }
+
+body[data-view="connect"] #home,
+body[data-view="connect"] #sell,
+body[data-view="home"] #connect,
+body[data-view="home"] #sell,
+body[data-view="sell"] #connect,
+body[data-view="sell"] #home {
+  display: none !important;
+}
+
 body {
   margin: 0;
   background: var(--bg);
@@ -85,9 +96,12 @@ h1, h2 {
 
 a { color: var(--accent); }
 
-.connect, .home { padding: 28px 32px 36px; }
+.connect, .home { padding: 28px 32px 48px; }
 
-.connect { max-width: 36rem; }
+.connect {
+  max-width: 36rem;
+  margin: 8vh auto 0;
+}
 
 #account-key {
   width: 100%;

@@ -458,7 +458,22 @@ function renderHome() {
   renderBlotter();
 }
 
-function show(view) {
+function pageHash(view) {
+  if (view === "connect") return "#/connect";
+  if (view === "sell") return state.kind === 1 ? "#/sell/put" : "#/sell/call";
+  return "#/positions";
+}
+
+function routeFromHash() {
+  const path = (location.hash || "#/").replace(/^#/, "");
+  if (path.startsWith("/sell/put")) return { view: "sell", kind: 1 };
+  if (path.startsWith("/sell/call")) return { view: "sell", kind: 0 };
+  if (path.startsWith("/connect")) return { view: "connect", kind: state.kind };
+  return { view: "home", kind: state.kind };
+}
+
+function show(view, mode = "push") {
+  if (!state.address && view !== "connect") view = "connect";
   state.view = view;
   document.body.dataset.view = view;
   $("connect").hidden = view !== "connect";
@@ -470,12 +485,18 @@ function show(view) {
   $("sub").textContent = view === "connect"
     ? "Paste your Arkade address to start."
     : view === "home"
-      ? "Your positions, and a new sale."
+      ? "Positions"
       : state.kind === 0
         ? "Sell a covered call."
         : "Sell a limited put.";
+  const next = pageHash(view);
+  if (mode !== "quiet" && location.hash !== next) {
+    if (mode === "replace") history.replaceState(null, "", next);
+    else history.pushState(null, "", next);
+  }
   if (view === "home") renderHome();
   if (view === "sell") renderSell();
+  if (view === "connect") $("account-key").focus();
 }
 
 function renderBlotter() {
@@ -783,11 +804,14 @@ async function confirm() {
 }
 
 function openSell(kind) {
+  const changed = !(state.view === "sell" && state.kind === kind);
   state.kind = kind;
-  state.strikeIndex = 0;
-  strikeKey = "";
+  if (changed) {
+    state.strikeIndex = 0;
+    strikeKey = "";
+  }
   show("sell");
-  onTermsChanged();
+  if (changed) onTermsChanged();
 }
 
 function connectAddress() {
@@ -1019,10 +1043,41 @@ function loadArtifact() {
   }
 }
 
+function showFromHash() {
+  const route = routeFromHash();
+  if (!state.address) {
+    show("connect", location.hash === "#/connect" ? "quiet" : "replace");
+    return;
+  }
+  if (route.view === "connect") {
+    show("home", "replace");
+    return;
+  }
+  if (route.view === "sell") {
+    const changed = !(state.view === "sell" && state.kind === route.kind);
+    state.kind = route.kind;
+    if (changed && state.view === "sell") {
+      state.strikeIndex = 0;
+      strikeKey = "";
+    }
+    show("sell", "quiet");
+    if (changed) onTermsChanged();
+    return;
+  }
+  show("home", "quiet");
+}
+
 bind();
 state.address = readAddress() || "";
-show(state.address ? "home" : "connect");
-if (!state.address) $("account-key").focus();
+{
+  const route = routeFromHash();
+  if (!state.address) show("connect", "replace");
+  else if (route.view === "sell") {
+    state.kind = route.kind;
+    show("sell", "replace");
+  } else show("home", "replace");
+}
+window.addEventListener("hashchange", showFromHash);
 loadSpot().then(() => {
   $("spot-source").textContent = state.spotSource;
   $("spot-px").textContent = fmtUsdFromCents(state.spotCents);
