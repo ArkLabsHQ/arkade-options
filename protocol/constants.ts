@@ -11,6 +11,7 @@ export const Q_MAX = 1_000_000_000n;
 export const PRICE_MAX = 1_000_000_000n;
 
 export const DEFAULT_RELAYS = [
+  "wss://nostr.arkade.sh",
   "wss://relay.damus.io",
   "wss://nos.lol",
   "wss://relay.primal.net",

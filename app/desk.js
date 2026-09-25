@@ -1,7 +1,8 @@
 import { cancelIntent, depositAddress, fundingState, writerHex, writerPayoutAddress } from "./src/fund.ts";
 import { artifactLine } from "./src/program.ts";
 import { requestQuotes } from "./src/rfq.ts";
-import { bestQuote, deskQuotes } from "./quote.js";
+import { deribitPremium, fetchSurface } from "../protocol/deribit.ts";
+import { bestQuote } from "./quote.js";
 import { PINNED_DESKS, RELAYS } from "./rfq-config.js";
 import {
   DUST,
@@ -329,7 +330,7 @@ function renderTicket() {
     p.className = "lock-note";
     const who = PINNED_DESKS.length
       ? PINNED_DESKS.map((desk) => desk.name).join(", ")
-      : "Northbridge, Harbor, and Kestrel";
+      : "Deribit";
     p.textContent = `Asking ${who}.`;
     host.append(p);
   } else if (best) {
@@ -365,7 +366,8 @@ function renderTicket() {
     $("premium").textContent = `${fmtBtc(best.sats)} BTC`;
     const notionalUsd = Number(sats) / 1e8 * Number(state.spotCents) / 100;
     const ann = notionalUsd > 0 ? best.usd / notionalUsd * (365 / state.days) * 100 : 0;
-    state.quoteMeta = `$${best.usd.toLocaleString("en-US", { maximumFractionDigits: 2 })} · ${ann.toFixed(1)}% annualized · ${best.name}`;
+    const iv = typeof best.iv === "number" && best.iv > 0 ? ` · ${(best.iv * 100).toFixed(1)}% IV` : "";
+    state.quoteMeta = `$${best.usd.toLocaleString("en-US", { maximumFractionDigits: 2 })} · ${ann.toFixed(1)}% annualized · ${best.name}${iv}`;
     state.quoteHold = best.validUntil || 0;
     const left = state.quoteHold ? Math.max(0, state.quoteHold - Math.floor(Date.now() / 1000)) : 0;
     $("premium-meta").textContent = left ? `${state.quoteMeta} · holds ${left}s` : state.quoteMeta;
@@ -804,16 +806,38 @@ function topQuote() {
 async function ask(gen) {
   const sats = sizeSats();
   if (gen !== quoteGen || sats == null || state.spotCents == null) return;
-  const years = state.days / 365;
   if (PINNED_DESKS.length === 0) {
-    state.quotes = deskQuotes({
-      kind: state.kind,
-      spotCents: Number(state.spotCents),
-      strikeCents: Number(strike()),
-      years,
-      collateralSats: sats,
-    });
-    state.quoteNote = "";
+    try {
+      const points = await fetchSurface();
+      if (gen !== quoteGen) return;
+      const priced = deribitPremium({
+        kind: state.kind,
+        strikeUsd: Number(strike()) / 100,
+        expiry: Number(expiryUnix(state.days)),
+        now: Math.floor(Date.now() / 1000),
+        collateralSats: sats,
+        spotUsd: Number(state.spotCents) / 100,
+        points,
+      });
+      if (!priced) {
+        state.quotes = [];
+        state.quoteNote = "Deribit has no mark for this strike.";
+      } else {
+        const quotedAt = Math.floor(Date.now() / 1000);
+        state.quotes = [{
+          name: "Deribit",
+          sats: priced.sats,
+          usd: priced.usd,
+          iv: priced.iv,
+          validUntil: quotedAt + 30,
+        }];
+        state.quoteNote = "";
+      }
+    } catch {
+      if (gen !== quoteGen) return;
+      state.quotes = [];
+      state.quoteNote = "Deribit did not answer.";
+    }
   } else {
     try {
       const live = await requestQuotes({

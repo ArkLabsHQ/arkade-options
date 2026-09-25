@@ -8,7 +8,7 @@ import { bindContracts, bindSwap, scriptHex } from "./contracts.ts";
 import { bytesToHex } from "./hex.ts";
 import { parseWire, premiumRefusal, requestRefusal, type RfqRequest } from "./messages.ts";
 import { nostrPubkey, openSealed, seal } from "./nostr.ts";
-import { premiumSats, tenorVol } from "./pricing.ts";
+import { premiumSats } from "./pricing.ts";
 
 const key = (n: number) => SingleKey.fromHex(n.toString(16).padStart(64, "0"));
 
@@ -80,7 +80,7 @@ test("a premium at or below 330 sats is a refusal", () => {
     strikeCents: 11_000_000,
     years: 30 / 365,
     collateralSats: 10_000_000n,
-    vol: tenorVol(30 / 365),
+    vol: 0.55,
   });
   assert.equal(priced.sats > 330n, true);
 });

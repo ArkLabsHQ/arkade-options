@@ -24,15 +24,6 @@ export function bsPut(spot: number, strike: number, years: number, vol: number) 
   return bsCall(spot, strike, years, vol) - spot + strike;
 }
 
-/** Per-tenor implied vol the desk quotes with. Shorter options use a higher vol. */
-export function tenorVol(years: number) {
-  const days = years * 365;
-  if (days <= 7) return 0.62;
-  if (days <= 30) return 0.55;
-  if (days <= 90) return 0.48;
-  return 0.45;
-}
-
 export function premiumSats(input: {
   kind: 0 | 1;
   spotCents: number;

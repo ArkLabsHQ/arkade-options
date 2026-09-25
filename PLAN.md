@@ -87,7 +87,7 @@ No fill by `deadline`: the seller submits `cancel`. The whole coin returns to th
 `desk/`, TypeScript on Node 22 or Bun, one container:
 
 - connects to the relays with `nostr-tools`, subscribes to kind `24859` tagged to the desk pubkey, decrypts, validates
-- prices from a median of Coinbase, Kraken, and Binance, per-tenor vol, per-strike and total exposure caps, answers `rfq_quote` or `rfq_refusal`
+- prices from the Deribit BTC option mark, interpolated in strike and expiry, with spot from a median of Coinbase, Kraken, and Binance, per-strike and total exposure caps, answers `rfq_quote` or `rfq_refusal`
 - keeps the quote book in memory and in a JSON file under `/data`; every 2 s it polls `intent.getUtxos()` for open quotes; when the collateral is there, it builds the fill and submits
 - answers `rfq_status_request`; a small HTTP route on the container shows the desk address, float balance, open quotes, and fills
 - configuration: `DESK_KEY`, `RELAYS`, `ARK_URL`, `EMULATOR_URL`, `DATA_DIR`. No key reaches the page.
