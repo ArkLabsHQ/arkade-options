@@ -70,6 +70,7 @@ Dokploy:
 - Set `DESK_KEY` to a 32-byte hex key and keep it.
 - Mount a volume at `/data`.
 - Redeploy after a desk change. An older image refuses a pasted address.
+- `commit` in `GET /` must change. A cached image can stay on `16d579f`.
 
 `GET /` and `GET /status` return the same JSON: `commit`, `pubkey`, `address`, `balance`.
 
