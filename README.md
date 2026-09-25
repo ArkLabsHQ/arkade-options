@@ -39,6 +39,7 @@ pnpm dev
 
 - Open <http://127.0.0.1:4173/app/>
 - Paste a Mutinynet address from <https://mutinynet.arkade.money>
+- Quotes use `wss://nostr.arkade.sh`
 
 ```bash
 docker build -f site.Dockerfile -t arkade-options .

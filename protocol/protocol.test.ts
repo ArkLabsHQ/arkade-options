@@ -7,7 +7,7 @@ import { generateSecretKey } from "nostr-tools/pure";
 import { bindContracts, bindSwap, directPayoutKey } from "./contracts.ts";
 import { bytesToHex } from "./hex.ts";
 import { parseWire, premiumRefusal, requestRefusal, type RfqRequest } from "./messages.ts";
-import { nostrPubkey, openSealed, seal } from "./nostr.ts";
+import { nostrPubkey, openSealed, quoteRelay, seal } from "./nostr.ts";
 import { premiumSats } from "./pricing.ts";
 
 const key = (n: number) => SingleKey.fromHex(n.toString(16).padStart(64, "0"));
@@ -98,6 +98,11 @@ test("a premium at or below 330 sats is a refusal", () => {
     vol: 0.55,
   });
   assert.equal(priced.sats > 330n, true);
+});
+
+test("quotes use nostr.arkade.sh", () => {
+  assert.equal(quoteRelay(["wss://relay.damus.io", "wss://nostr.arkade.sh/"]), "wss://nostr.arkade.sh");
+  assert.equal(quoteRelay(["wss://nostr.arkade.sh"]), "wss://nostr.arkade.sh");
 });
 
 test("the desk nostr key is the arkade x-only key", async () => {

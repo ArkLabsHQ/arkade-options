@@ -1,10 +1,5 @@
-/** Relays the page uses when a desk is pinned. */
-export const RELAYS = [
-  "wss://nostr.arkade.sh",
-  "wss://relay.damus.io",
-  "wss://nos.lol",
-  "wss://relay.primal.net",
-];
+/** The page asks for quotes on this relay only. */
+export const RELAYS = ["wss://nostr.arkade.sh"];
 
 /**
  * Nostr pubkeys of desks that quote arkade:BTC->arkade:BTC-OPTION.
