@@ -5,6 +5,7 @@ import http from "node:http";
 import path from "node:path";
 
 import {
+  ArkAddress,
   arkade,
   DefaultVtxo,
   networks,
@@ -266,6 +267,7 @@ async function onRequest(message: RfqRequest, from: string) {
   await book.save();
   await transport.publish(from, quoteMessage(row));
   console.log("quote", row.rfqId, row.premium, row.intentAddress);
+  void followIntent(row.intentAddress);
 }
 
 async function onStatus(rfqId: string, from: string) {
@@ -315,13 +317,14 @@ async function poll() {
       }
     }
     for (const row of book.list()) {
-      if (row.status !== "open") continue;
+      const unsettled = row.status === "open" || (row.status === "filled" && !row.fillTxid);
+      if (!unsettled) continue;
       try {
         const outcome = await fillQuote({ client, termsFor, deskScript, row, now });
         if (outcome.result === "filled") {
           book.mark(row.rfqId, "filled", outcome.txid);
           await book.save();
-          console.log("filled", row.rfqId, outcome.txid ?? "vault");
+          console.log("filled", row.rfqId, outcome.txid ?? "");
         } else if (outcome.result === "expired") {
           book.mark(row.rfqId, "expired");
           await book.save();
@@ -393,6 +396,40 @@ const server = http.createServer((req, res) => {
   res.end(statusBody());
 });
 
+const watched = new Set<string>();
+let intentSub = "";
+let listening = false;
+const intentAbort = new AbortController();
+
+async function followIntent(address: string) {
+  if (!client.indexer || !address) return;
+  let script = "";
+  try {
+    script = bytesToHex(ArkAddress.decode(address).pkScript);
+  } catch {
+    return;
+  }
+  if (watched.has(script)) return;
+  watched.add(script);
+  intentSub = await client.indexer.subscribeForScripts([script], intentSub || undefined);
+  if (listening) return;
+  listening = true;
+  const indexer = client.indexer;
+  void (async () => {
+    try {
+      for await (const event of indexer.getSubscription(intentSub, intentAbort.signal)) {
+        if (event.newVtxos.length || event.spentVtxos.length) void poll();
+      }
+    } catch (err) {
+      if (!intentAbort.signal.aborted) console.error("intent", err instanceof Error ? err.message : err);
+    }
+  })();
+}
+
+for (const row of book.list()) {
+  if (row.status === "open" || (row.status === "filled" && !row.fillTxid)) void followIntent(row.intentAddress);
+}
+
 server.listen(port, () => {
   console.log(`commit ${revision()}`);
   console.log(`desk ${pubkey}`);
@@ -407,6 +444,7 @@ void poll();
 
 function shutdown() {
   clearInterval(timer);
+  intentAbort.abort();
   transport.close();
   server.close();
   process.exit(0);

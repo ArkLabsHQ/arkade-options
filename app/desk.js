@@ -2,7 +2,6 @@ import {
   cancelIntent,
   clearAddress,
   depositAddress,
-  fundingState,
   legacyWriterHex,
   readAddress,
   saveAddress,
@@ -14,6 +13,7 @@ import { deribitPremium, fetchSurface } from "../protocol/deribit.ts";
 import { bestQuote } from "./quote.js";
 import { PINNED_DESKS, RELAYS } from "./rfq-config.js";
 import { DUST, Q_MAX, Q_MIN, writerPayoff } from "./settle-math.js";
+import { readIntent, watchIntents } from "./src/watch.ts";
 
 const STORE = "arkade-options-desk-v1";
 const REFRESH_MS = 18_000;
@@ -204,23 +204,38 @@ function progressIndex(status) {
   return -1;
 }
 
+function markStep(item, kind, busy = false) {
+  item.className = kind;
+  if (!busy) return;
+  const spin = document.createElement("span");
+  spin.className = "spin";
+  spin.setAttribute("aria-hidden", "true");
+  item.append(spin);
+}
+
 function progressSteps(status) {
-  const index = progressIndex(status);
-  if (index < 0) return null;
   const list = document.createElement("ol");
   list.className = "steps";
   list.setAttribute("aria-label", "Progress");
+  if (status === "expired" || status === "refunded") {
+    const labels = status === "refunded"
+      ? ["Waiting for deposit", "Deposited", "Refunded"]
+      : ["Waiting for deposit", "Deposited", "Window closed"];
+    labels.forEach((label, step) => {
+      const item = document.createElement("li");
+      item.textContent = label;
+      markStep(item, step === labels.length - 1 ? "now" : "done", false);
+      list.append(item);
+    });
+    return list;
+  }
+  const index = progressIndex(status);
+  if (index < 0) return null;
   STEPS.forEach((label, step) => {
     const item = document.createElement("li");
     item.textContent = label;
-    if (step < index || (index === STEPS.length - 1 && step === index)) item.className = "done";
-    else if (step === index) {
-      item.className = "now";
-      const spin = document.createElement("span");
-      spin.className = "spin";
-      spin.setAttribute("aria-hidden", "true");
-      item.append(spin);
-    }
+    if (step < index || (index === STEPS.length - 1 && step === index)) markStep(item, "done");
+    else if (step === index) markStep(item, "now", true);
     list.append(item);
   });
   return list;
@@ -241,8 +256,12 @@ function statusLead(position) {
     return "Waiting for your deposit. This address keeps the payout below. The market can move until the coins arrive.";
   }
   if (position.status === "deposited") return "Deposit received. Waiting for the desk to pay your address.";
-  if (position.status === "filled") return "Paid out to your address.";
-  if (position.status === "expired") return "The fill window closed. Coins sent after that can be refunded to your address.";
+  if (position.status === "filled") return "The premium reached your address.";
+  if (position.status === "expired") {
+    return position.refundable
+      ? "The fill window closed. Your deposit is still on this address."
+      : "The fill window closed before the deposit arrived.";
+  }
   if (position.status === "refunded") return "Refunded to your address.";
   if (position.status === "settled") return "Settled.";
   return "Open.";
@@ -464,11 +483,15 @@ function renderSell() {
   }
 
   const box = $("deposit");
-  if (!deposit) {
+  const settled = position && (position.status === "filled" || position.status === "refunded");
+  if (!deposit || settled) {
     box.hidden = true;
   } else {
     box.hidden = false;
-    $("deposit-amount").textContent = `Send ${fmtBtc(deposit.amountSats)} BTC`;
+    const sent = position && position.status !== "locking";
+    $("deposit-amount").textContent = sent
+      ? `${fmtBtc(deposit.amountSats)} BTC is on this address`
+      : `Send ${fmtBtc(deposit.amountSats)} BTC`;
     const apy = deposit.apy ?? annualized(deposit.premium, deposit.amountSats, state.days);
     $("deposit-fixed").textContent = frozen
       ? `This deposit pays ${fmtBtc(deposit.premium)} BTC · ${fmtApy(position.apy ?? apy)}`
@@ -493,10 +516,12 @@ function renderSell() {
   }
   $("status").textContent = note;
   $("ticket-kicker").textContent = frozen ? statusLabel(position) : "Payout now";
+  const refund = $("refund");
+  if (refund) refund.hidden = !(position && position.refundable && position.status === "expired");
   const track = $("steps");
   if (track) {
     track.replaceChildren();
-    const steps = frozen ? progressSteps(position.status) : null;
+    const steps = position ? progressSteps(position.status) : null;
     track.hidden = !steps;
     if (steps) track.append(steps);
   }
@@ -613,7 +638,7 @@ function detail(position) {
   if (position.payoutAddress) {
     const where = document.createElement("p");
     where.className = "lock-note";
-    where.textContent = "Paid to your address";
+    where.textContent = position.status === "filled" ? "Premium paid to" : "Your address";
     const addr = document.createElement("p");
     addr.className = "deposit-address";
     addr.textContent = position.payoutAddress;
@@ -636,8 +661,7 @@ function detail(position) {
     if (!host.parentElement) chart.append(host);
   });
   box.append(chart);
-  const closed = Math.floor(Date.now() / 1000) >= Number(position.deadline);
-  if (closed && (position.status === "deposited" || position.status === "expired")) {
+  if (position.refundable && position.status === "expired") {
     const cancel = document.createElement("button");
     cancel.type = "button";
     cancel.className = "copy-uri";
@@ -654,7 +678,9 @@ function depositBlock(position) {
   const frag = document.createDocumentFragment();
   const amount = document.createElement("p");
   amount.className = "deposit-amount";
-  amount.textContent = `Send ${fmtBtc(position.collateral)} BTC`;
+  amount.textContent = position.status === "locking"
+    ? `Send ${fmtBtc(position.collateral)} BTC`
+    : `${fmtBtc(position.collateral)} BTC is on this address`;
   const addr = document.createElement("p");
   addr.className = "deposit-address";
   addr.textContent = position.address;
@@ -947,29 +973,68 @@ function freeze(position) {
   position.marketApy = null;
 }
 
+const CHAIN_STATUS = {
+  open: "locking",
+  funded: "deposited",
+  expired: "expired",
+  filled: "filled",
+  refunded: "refunded",
+};
+
+function applyChain(position, update) {
+  const next = CHAIN_STATUS[update.phase];
+  if (!next) return;
+  const same = position.status === next && Boolean(position.refundable) === update.refundable;
+  if (same) return;
+  if (next === "deposited" || next === "filled" || next === "expired") freeze(position);
+  position.status = next;
+  position.refundable = update.refundable;
+  persist();
+  renderBlotter();
+  renderSell();
+}
+
+function watchRow(position) {
+  return {
+    address: position.address,
+    writerAddress: position.writerAddress || position.payoutAddress || "",
+    collateral: BigInt(position.collateral),
+    premium: BigInt(position.premiumSats),
+    deadline: Number(position.deadline),
+  };
+}
+
 async function pollDeposits() {
   for (const position of state.positions) {
-    if (!["locking", "deposited", "expired"].includes(position.status) || !position.address) continue;
-    if (!position.writerAddress && !position.writerHex && !legacyWriterHex()) continue;
+    if (!position.address || !position.writerAddress) continue;
+    if (["refunded", "settled"].includes(position.status)) continue;
     try {
-      const seen = await fundingState(await fundRequest(position));
-      if (seen === "filled" && position.status !== "filled") {
-        freeze(position);
-        position.status = "filled";
-        persist();
-        renderBlotter();
-        renderSell();
-      } else if (seen === "funded" && position.status !== "deposited" && position.status !== "filled") {
-        freeze(position);
-        position.status = "deposited";
-        persist();
-        renderBlotter();
-        renderSell();
-      }
+      const phase = await readIntent(watchRow(position));
+      applyChain(position, { phase: phase.phase, refundable: phase.refundable });
     } catch {
-      // The address stays on screen. The next poll tries again.
+      // The subscription retries. This address stays as it was.
     }
   }
+}
+
+let watchAbort = null;
+let watchKey = "";
+
+function startWatch() {
+  const rows = state.positions.filter((position) => position.address && position.writerAddress && !["refunded", "settled"].includes(position.status));
+  const key = rows.map((position) => position.address).sort().join("|");
+  if (key === watchKey) return;
+  watchAbort?.abort();
+  watchKey = key;
+  if (!rows.length) return;
+  const ctrl = new AbortController();
+  watchAbort = ctrl;
+  void watchIntents(rows.map(watchRow), (update) => {
+    const position = state.positions.find((item) => item.address === update.address);
+    if (position) applyChain(position, update);
+  }, ctrl.signal).catch(() => {
+    if (!ctrl.signal.aborted) watchKey = "";
+  });
 }
 
 async function refreshPositionMarkets() {
@@ -1008,8 +1073,9 @@ function tick() {
   const now = Math.floor(Date.now() / 1000);
   let changed = false;
   for (const position of state.positions) {
-    if (position.status === "locking" && position.deadline && now >= Number(position.deadline)) {
+    if (position.status === "deposited" && position.deadline && now >= Number(position.deadline)) {
       position.status = "expired";
+      position.refundable = true;
       changed = true;
     }
   }
@@ -1018,7 +1084,7 @@ function tick() {
     renderBlotter();
     renderSell();
   }
-  if (now - lastPoll >= 4) {
+  if (now - lastPoll >= 20) {
     lastPoll = now;
     void pollDeposits();
   }
@@ -1064,6 +1130,11 @@ function bind() {
   listen("size", "input", onTermsChanged);
   listen("confirm", "click", () => {
     void confirm();
+  });
+  listen("refund", "click", () => {
+    const deposit = shownDeposit();
+    const position = deposit && state.positions.find((item) => item.address === deposit.address);
+    if (position) void refund(position, $("refund"));
   });
   listen("copy-address", "click", () => {
     const deposit = shownDeposit();
@@ -1151,7 +1222,9 @@ loadSpot().then(() => {
   renderBlotter();
 });
 loadArtifact();
+startWatch();
 setInterval(tick, 1000);
+setInterval(startWatch, 15_000);
 setInterval(() => {
   if (state.view === "sell" && state.spotCents != null && state.address) {
     void refreshLive(++quoteGen);

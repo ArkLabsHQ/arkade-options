@@ -67,7 +67,7 @@ export class Book {
     let total = 0n;
     for (const row of this.rows) {
       const counted = (row.status === "open" && row.deadline > now)
-        || (row.status === "filled" && row.expiry > now);
+        || (row.status === "filled" && Boolean(row.fillTxid) && row.expiry > now);
       if (!counted) continue;
       const amount = BigInt(row.collateral);
       total += amount;

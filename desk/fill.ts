@@ -3,7 +3,7 @@ import { arkade, DefaultVtxo, type ArkTxInput } from "@arkade-os/sdk";
 import { DUST_SATS } from "../protocol/constants.ts";
 import { bindContracts, type Terms } from "../protocol/contracts.ts";
 import { bytesToHex } from "../protocol/hex.ts";
-import { intentProgram, vaultProgram } from "../protocol/programs.ts";
+import { intentProgram } from "../protocol/programs.ts";
 import type { QuoteRow } from "./book.ts";
 
 type Client = Awaited<ReturnType<typeof arkade.Arkade.connect>>;
@@ -48,16 +48,12 @@ export async function fillQuote(opts: {
 }): Promise<{ result: FillResult; txid?: string }> {
   const bound = bindContracts(opts.termsFor(opts.row));
   const intent = opts.client.contract(intentProgram(), bound.intent);
-  const vault = opts.client.contract(vaultProgram(), bound.vault);
-  const vaultCoins = await vault.getUtxos();
-  if (vaultCoins.length > 0) return { result: "filled" };
-  if (opts.now >= opts.row.deadline) return { result: "expired" };
-
   const coins = await intent.getUtxos();
   const collateral = BigInt(opts.row.collateral);
   const premium = BigInt(opts.row.premium);
   const coin = coins.find((item) => BigInt(item.value) >= collateral);
-  if (!coin) return { result: "waiting" };
+  if (!coin) return { result: opts.now >= opts.row.deadline ? "expired" : "waiting" };
+  if (opts.now >= opts.row.deadline) return { result: "expired" };
 
   if (!opts.client.indexer) throw new Error("indexer missing");
   const desk = await opts.client.indexer.getVtxos({
