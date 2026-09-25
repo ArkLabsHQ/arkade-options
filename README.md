@@ -10,7 +10,7 @@ The covenants are `option_vault.ark` and `option_intent.ark` in the compiler at 
 python3 -m http.server 8765
 ```
 
-Open `http://127.0.0.1:8765/app/`.
+Open `http://127.0.0.1:8765/`. The root page redirects to `app/`.
 
 Sell or buy, pick a covered call or a limited put, choose one of five strikes and an expiry, enter a BTC notional, and take the best of three simulated desk quotes. Locking starts a 30-second intent. If the desk funds, the position opens. If it does not, the lock refunds when the clock passes. An open position settles from three oracle slices. "Pyth spikes the midpoint" shows the median dropping the bad print.
 
@@ -20,9 +20,11 @@ Quotes are Black-Scholes with zero rates. A covered call is priced as a call. A 
 
 ## Deploy
 
-The page, the quotes, and the settlement math are static. Cloudflare Pages or GitHub Pages can host this repository. There is no oracle service to run.
+The page, the quotes, and the settlement math are static. There is no oracle service to run.
 
-Leave the build command empty and publish the repository root. Open `/app/`. `desk.js` loads `../artifacts/`, so the publish root has to be this repository, not `app/` alone.
+[`.github/workflows/pages.yml`](.github/workflows/pages.yml) publishes this repository to GitHub Pages on every push to `master`, and when the workflow is run from the Actions tab. It runs `node --test app/settle-math.test.mjs`, then uploads the repository root. `desk.js` loads `../artifacts/`, so the publish root is this repository, not `app/` alone. The root page redirects to `app/`.
+
+A repository admin turns the site on once: Settings → Pages → Build and deployment → Source: GitHub Actions. The site is [https://arklabshq.github.io/arkade-options/](https://arklabshq.github.io/arkade-options/).
 
 ```bash
 docker build -t arkade-options .
