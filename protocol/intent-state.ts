@@ -1,3 +1,5 @@
+import { bytesToHex } from "./hex.ts";
+
 export type IntentPhase = "open" | "funded" | "expired" | "filled" | "refunded";
 
 export type CoinView = {
@@ -54,16 +56,12 @@ function readAmount(bytes: Uint8Array, at: number): bigint {
   return value;
 }
 
-function hexOf(bytes: Uint8Array): string {
-  return [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
-}
-
 function readTxOut(bytes: Uint8Array, at: number): [TxOutput, number] {
   const amount = readAmount(bytes, at);
   at += 8;
   const [scriptLen, next] = readVarint(bytes, at);
   const script = bytes.slice(next, next + scriptLen);
-  return [{ amount, script: hexOf(script) }, next + scriptLen];
+  return [{ amount, script: bytesToHex(script) }, next + scriptLen];
 }
 
 function txParts(raw: Uint8Array): { inputCount: number; outputs: TxOutput[] } {

@@ -16,6 +16,7 @@ import {
 import { holderPayoff, oraclePreimage, settlementOutputs, twap, windows } from "../app/settle-math.js";
 import { fillQuote } from "../desk/fill.ts";
 import type { QuoteRow } from "../desk/book.ts";
+import { btcAmount } from "../app/src/fund.ts";
 import { ARK_URL, EMULATOR_URL, EXIT } from "../protocol/constants.ts";
 import { assertServerExit, bindContracts, bindSwap, payoutVtxo } from "../protocol/contracts.ts";
 import { bytesToHex, xOnly } from "../protocol/hex.ts";
@@ -63,12 +64,6 @@ async function connect(identity: SingleKey) {
     identity,
     network: networks.mutinynet,
   });
-}
-
-function btc(sats: bigint) {
-  const whole = sats / 100_000_000n;
-  const frac = (sats % 100_000_000n).toString().padStart(8, "0").replace(/0+$/, "");
-  return frac ? `${whole}.${frac}` : whole.toString();
 }
 
 const writer = SingleKey.fromHex(writerHex);
@@ -122,10 +117,10 @@ const swap = bindSwap({
 
 console.log("writer", bytesToHex(writerPk));
 console.log("desk", bytesToHex(holderPk));
-console.log("desk address", deskAddress, `(fund at least ${btc(premium)} BTC for the premium)`);
-console.log("fill intent", fill.intentAddress, `(fund ${btc(collateral)} BTC of collateral)`);
+console.log("desk address", deskAddress, `(fund at least ${btcAmount(premium)} BTC for the premium)`);
+console.log("fill intent", fill.intentAddress, `(fund ${btcAmount(collateral)} BTC of collateral)`);
 console.log("fill vault", fill.vaultAddress);
-console.log("cancel intent", cancel.intentAddress, `(fund ${btc(collateral)} BTC, refunds after ${cancelDeadline})`);
+console.log("cancel intent", cancel.intentAddress, `(fund ${btcAmount(collateral)} BTC, refunds after ${cancelDeadline})`);
 console.log("reference swap", swap.address);
 
 if (!spend) {

@@ -1,4 +1,5 @@
 import {
+  btcAmount,
   cancelIntent,
   clearAddress,
   depositAddress,
@@ -104,10 +105,8 @@ function fmtUsdFromCents(cents) {
 
 function fmtBtc(sats) {
   const neg = sats < 0n;
-  const v = neg ? -sats : sats;
-  const whole = (v / 100_000_000n).toString();
-  const frac = (v % 100_000_000n).toString().padStart(8, "0").replace(/0+$/, "");
-  return `${neg ? "-" : ""}${whole}${frac ? `.${frac}` : ""}`;
+  const body = btcAmount(neg ? -sats : sats);
+  return neg ? `-${body}` : body;
 }
 
 function fmtWhen(unix) {
@@ -273,10 +272,7 @@ function statusLead(position) {
 }
 
 function paymentUri(address, sats) {
-  const whole = sats / 100_000_000n;
-  const frac = (sats % 100_000_000n).toString().padStart(8, "0").replace(/0+$/, "");
-  const amount = frac ? `${whole}.${frac}` : whole.toString();
-  return `bitcoin:?ark=${address}&amount=${amount}`;
+  return `bitcoin:?ark=${address}&amount=${btcAmount(sats)}`;
 }
 
 function dustNote(sats) {
