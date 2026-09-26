@@ -37,21 +37,21 @@ Packet type 32 in the creating transaction. 329 bytes:
 | 1 | 8 | round, `num2bin(round, 8)` |
 | 9 + 40·n | 40 | slot n, n = 0..7, newest first: key `num2bin(key, 8)`, value 32 bytes |
 
-Genesis is round 0 with eight zero slots. For the option vault the key is the expiry and the first 8 bytes of the value are the settlement price in USD cents; the remaining 24 bytes hold the first 24 bytes of `sha256` over the committee's evidence (the signed prints the fixing was computed from), published off-chain beside every attest.
+Genesis is round 0 with eight zero slots. For the option vault the key is the expiry and the 32-byte value is `num2bin(twap, 32)`. The vault reads the first 8 bytes, the settlement price in USD cents.
 
 The packet is one stack element. `OP_INSPECTINPUTPACKET` rejects more than 520 bytes, so 9 + 40·n ≤ 520 gives at most 12 slots. Past that the state must become a Merkle root.
 
 ### Leaves
 
-`attest(key, value, sigs[5])`. Beacon at input 0. `threshold` of the five signers sign `sha256(domain + ctrlTxid + num2bin(ctrlGidx, 4) + num2bin(key, 8) + value)`. An absent signer passes an empty signature; a wrong non-empty signature fails the script, because `OP_CHECKSIGFROMSTACK` returns false only for the empty vector. `key` is positive and is not in any current slot. When `keyLag ≥ 0`, the emulator clock must have reached `key + keyLag`; a price beacon sets 60 so a fixing cannot be published before its settlement minute closes, and a nonce beacon sets −1. The new packet has round + 1, slot 0 = (key, value), slots 1..7 = old slots 0..6. Output 0 keeps the script, at least the value, and the asset unit.
+`attest(key, price0, time0, who0, sig0, price1, time1, who1, sig1, price2, time2, who2, sig2, opSig)`. Beacon at input 0. Each of the nine prints is `sha256(0x425443555344 || num2bin(price, 8) || num2bin(time, 8))`. That message names no beacon. Three distinct indexes in `0..4` sign each slice. The slices are `[key-1800, key-1740]`, `[key-960, key-900]`, and `[key, key+60]`, with `max(time) - min(time) <= 60`. The stored value is `num2bin(twap, 32)` for `twap = (mOpen*900 + mMid*900 + mClose*60) / 1860`. `key > 1800` and the key is not in any current slot. When `keyLag ≥ 0`, the emulator clock must have reached `key + keyLag`; a price beacon sets 60 so a fixing cannot be published before its settlement minute closes. `adminPk` signs `sha256(ctrlTxid || nextPacket)` and is the only key that writes the slot. The five oracle keys cannot move the coin. The new packet has round + 1, slot 0 = (key, twap), slots 1..7 = old slots 0..6. Output 0 keeps the script, at least the value, and the asset unit.
 
-A key that fell off the eight slots may be attested again. The original signatures still verify, so anyone who kept them can restore an evicted fixing without the committee.
+A key that fell off the eight slots may be attested again. The oracle signatures still verify. The operator signature covers the whole next packet, so it has to be made again for the new history.
 
 `read(selfIndex)`. `selfIndex` is the beacon's own input index. The current transaction carries a packet equal to the beacon's own. Output 0 keeps the script and the asset unit and gains `readFee` sats. No signature: anyone may read. A read pins nothing else about its transaction: not the number of inputs, not who else is in it.
 
 `migrate(next, sigs[5])`. Beacon at input 0. `threshold` signers sign `sha256(domain + "migrate" + ctrlTxid + num2bin(ctrlGidx, 4) + num2bin(round, 8) + next)`, with `round` read from the current packet, so a migrate signature is good for one state only. Output 0 pays the 32-byte program `next` with the asset unit and at least the value; the packet is carried unchanged. The consumer does not change.
 
-`quorum` also requires `1 ≤ threshold ≤ 5` and five distinct signers on every attest and migrate.
+`distinctSigners` requires the ten pairwise inequalities and is called from both `attest` and `migrate`. `quorum`, used by `migrate`, requires `1 ≤ threshold ≤ 5`.
 
 `unilateral(adminSig)` tapscript. `older(exit)` and the admin key.
 
@@ -86,7 +86,7 @@ in 2  fee coin, when readFee > 0 out 2  writer leg, when both legs are above dus
 | LayerZero / USDT0 example | here |
 | --- | --- |
 | Endpoint state coin with control asset | beacon coin with identity asset |
-| DVN 2-of-2 over the attested hash | threshold-of-5 over `sha256(domain + id + key + value)` |
+| DVN 2-of-2 over the attested hash | nine oracle prints plus `adminPk` over `sha256(ctrlTxid \|\| next)` |
 | OApp reads the marker's previous packet | vault reads the beacon's previous packet |
 | Marker minted per message and burned by the consumer | the beacon itself is co-spent and continued |
 | DVN config change by the owner | `migrate` by the committee |
@@ -100,7 +100,7 @@ The marker design was not taken here because a marker unit can be re-homed by wh
 
 Script, `attestation_beacon.ark`:
 
-- Quorum over the exact message, threshold in 1..5, distinct signers. Round + 1. Key positive and absent from the slots. Clock past `key + keyLag` when enabled. Slot shift by 40 bytes; every byte of the next packet is pinned. Continuation of script, value, and asset unit on output 0. Attest and migrate at input 0. A read carries the packet unchanged and pays `readFee`.
+- Nine oracle signatures over `sha256(BTCUSD || price || time)`, three distinct signers in each slice, the TWAP, and `adminPk` over `sha256(ctrlTxid || next)`. Distinct signers. Round + 1. Key above 1800 and absent from the slots. Clock past `key + keyLag` when enabled. Slot value `num2bin(twap, 32)`. History shift of 280 bytes. Continuation of script, value, and asset unit on output 0. Attest and migrate at input 0. A read carries the packet unchanged and pays `readFee`. `migrate` is still a threshold of the five signers.
 
 Script, `option_vault.ark`:
 
@@ -120,14 +120,14 @@ Emulator:
 | --- | --- |
 | Consumer supplies a packet with a different price | blocked: `read` requires `tx.packet(32) == tx.inputs[selfIndex].packet(32)`; the vault reads the input packet anyway. |
 | Consumer claims a different asset is the beacon | blocked: vault `tx.inputs[1].assets.lookup(beaconTxid, beaconGidx) == 1`; arkd checks the claim against the prevout. |
-| A second identity unit | blocked by arkd only if the issuance was uncontrolled with supply 1. The script cannot see the issuance. The binder must check the genesis transaction: issuance group at `ctrlGidx` with no control asset, output sum exactly 1, that output paying the beacon script, state packet version 1 with round 0 and eight zero slots, `1 ≤ threshold ≤ 5`, five distinct signers. |
+| A second identity unit | blocked by arkd only if the issuance was uncontrolled with supply 1. The script cannot see the issuance. The binder checks two transactions: issuance group 0 with no control asset, no inputs, and one output of amount 1; then a deploy that spends the checkpoint of that output, pays the recomputed beacon script, carries the genesis state, and puts only that one unit on the beacon output. Five distinct signers, threshold 3. |
 | Committee attests the same expiry twice while it is in a slot | blocked: `absent`. |
 | A fixing is evicted before a vault settles | recoverable: after it falls off, anyone may re-attest it with the original signatures. A vault has no fallback of its own until then. |
 | Fixing published before the settlement minute closes | blocked when `keyLag ≥ 0`: `checkTime(key + keyLag)`. Lateness is not bounded. |
 | Consumer attaches a forged previous transaction for input 1 | not blocked by any script. The VM's `OP_INSPECTINPUTPACKET` takes the previous transaction from its fetcher without comparing a hash; the compiler's test harness maps it by outpoint with no check, and a probe against that harness accepted a forged previous transaction. Whether the emulator service binds the attached transaction to the input, through the checkpoint hop, is unverified here. Everything that reads a previous packet, this design and the LayerZero example alike, rests on it. |
 | Two settlements race for the beacon | one is rejected and rebuilt on the new outpoint. Bounded, not impossible. |
 | Someone reads the beacon to move it | costs `readFee` per read. Bounded, not blocked. Each read also lengthens the beacon's off-chain ancestry, which every payout that read it inherits at exit; the operator refreshes the beacon coin to keep that short. |
-| Signatures replayed on another beacon with the same committee and domain | blocked: the digest names `(ctrlTxid, ctrlGidx)`. |
+| Oracle prints replayed on another beacon | not blocked: the print digest names no beacon. The operator digest names `ctrlTxid` and the next packet, so the write itself does not replay. |
 | Old migrate signatures replayed | blocked: the digest names the round. |
 | Migrate to a script that lies | threshold of the committee. That is the trust a consumer accepts by committing to the asset id. |
 | Layout version bumped while vaults are open | not blocked. An old vault's `settle` fails, `close` needs both parties, and the writer's `unilateral` then takes the whole coin after the CSV. Do not bump the version while vaults bound to the old layout are open. |
@@ -135,23 +135,32 @@ Emulator:
 
 Not claimed: committee honesty, committee liveness, hidden prices, settlement without the operator, any bound on how late a fixing is published.
 
-What moved off-chain: `option_vault.ark` verified nine signed prints from three distinct oracles per slice, with the observation times inside the slices. Here the committee signs one number and the evidence hash beside it. The script no longer proves how the number was made.
+The nine prints are checked again inside `attest`. The operator cannot store a TWAP the prints do not support. What stays off-chain is whether those prints match the market.
 
 ## 5. Checked
 
-Both contracts compile with `arkadec` from `arkade-os/compiler` at `5786b2f` with no warnings. The artifacts are committed. `OptionVault.settle` is the beacon-reading leaf: no `CHECKSIGFROMSTACK`, one `INSPECTINASSETLOOKUP`, one `INSPECTINPUTPACKET`.
+Both contracts compile with `arkadec` from `arkade-os/compiler` at `5786b2f` with no warnings. The artifacts are committed. `AttestationBeacon.attest` has 10 `CHECKSIGFROMSTACK`. `OptionVault.settle` is unchanged: no `CHECKSIGFROMSTACK`, one `INSPECTINASSETLOOKUP`, one `INSPECTINPUTPACKET`.
 
-`pnpm test` covers the state codec, the digests, the artifacts, the bindings, `verifyGenesis`, and the layout of the transactions `cospend.ts` builds.
+`pnpm test` passed on 2026-09-26. It covers the state codec, `publishDigest`, the artifacts, the bindings, two-step `verifyGenesis` (including a funding coin that already holds another asset), `fixing`, the oracle service, and the layout of the transactions `cospend.ts` builds.
 
-The contracts were also run once, on 2026-09-26, through the compiler's Go harness against the emulator's script engine, with every leaf in one taproot tree: attest with a quorum accepted and every rejection in §3 observed; nine fixings evict the first and it is re-attested with its original signatures; settle pays 600/19,400 at 10,000,000 cents, folds the 330 leg, splits at 331, caps the put, and takes the newest of two equal keys; migrate with a quorum accepted; a settle and an attest built by `cospend.ts` with checkpoints and previous transactions were accepted by the same engine. That harness is not in this repository.
+The compiler's Go harness `/tmp/arkade-compiler/tests/e2e/zz_beacon_spike_test.go` was run once, outside this repository, with `ARKADEC` set to the release binary of `5786b2f`:
 
-Not run: anything against the emulator service or arkd. See §7.
+```
+go test -run TestBeaconSpike -count=1
+--- FAIL: TestBeaconSpike (0.01s)
+    zz_beacon_spike_test.go:80: compile /workspace/contracts/beacon_option_vault.ark: exit status 1
+        cannot read '/workspace/contracts/beacon_option_vault.ark': No such file or directory
+```
+
+The script engine was not reached. That file is not in this repository, and the harness still builds the previous `attest(key, value, sigs[5])` witness, so it would not exercise this leaf even if the path existed. The harness is not committed here.
+
+Not run: anything against the emulator service or arkd, and nothing was broadcast to Mutinynet. See §7.
 
 ## 6. Implementation
 
 - `contracts/attestation_beacon.ark`, `contracts/option_vault.ark` and their `*.artifact.json`.
-- `protocol/beacon.ts`: state codec (`genesisState`, `nextState`, `decodeState`, `findFixing`), `priceValue`, `attestDigest`, `migrateDigest`, `beaconIdOf` (the script compares the display txid reversed), `verifyGenesis` (the §4 checklist), `bindBeacon`. `bindContracts` in `protocol/contracts.ts` passes `beaconTxid` and `beaconGidx` into `OptionVault`. Programs load through `secondsExit` in `protocol/programs.ts`.
-- `protocol/cospend.ts`: Arkade transactions with more than one covenant input. One checkpoint per input through `buildOffchainTx`, one emulator entry per covenant, the previous transaction on every input, one extension with the asset packet, the state packet and the emulator packet ahead of the anchor. `buildSettle`, `buildAttest`, `buildMigrate`, `submit`. The SDK's builder and `attachExtension` are single-covenant and private; everything else is exported.
+- `protocol/beacon.ts`: state codec (`genesisState`, `nextState`, `decodeState`, `findFixing`), `priceValue` (`num2bin(twap, 32)`), `publishDigest` (`sha256(ctrlTxid || next)`), `migrateDigest`, `beaconIdOf` (the script compares the display txid reversed), `genesisOutputs`, `verifyGenesis` (issue, then the deploy that spends the checkpoint of that issuance), `bindBeacon`. `bindContracts` in `protocol/contracts.ts` passes `beaconTxid` and `beaconGidx` into `OptionVault`. Programs load through `secondsExit` in `protocol/programs.ts`.
+- `protocol/cospend.ts`: Arkade transactions with more than one covenant input. One checkpoint per input through `buildOffchainTx`, one emulator entry per covenant, the previous transaction on every input, one extension with the asset packet, the state packet and the emulator packet ahead of the anchor. `buildSettle`, `buildAttest` (nine prints and `opSig`), `buildMigrate`, `submit`. The SDK's builder and `attachExtension` are single-covenant and private; everything else is exported. Deploy of the beacon is not a covenant spend: it uses the wallet's `buildAndSubmitOffchainTx`.
 - `protocol/beacon.test.ts`: the tests above.
 
 An Arkade transaction's inputs spend checkpoint outputs, not the coins themselves. `tx.input.current.scriptPubKey` and `tx.inputs[i].packet` reach the coin through the previous Arkade transaction attached to the input, which is what the continuation and the packet read rely on.

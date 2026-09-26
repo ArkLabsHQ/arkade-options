@@ -342,7 +342,7 @@
       <div class="coin beacon covenant" data-sat="330" data-asset="unit:1" data-party="beacon">
         <div class="who"><svg class="lock" viewBox="0 0 16 16" aria-hidden="true"><path d="M5 7V5a3 3 0 0 1 6 0v2M3 7h10v7H3z" fill="none" stroke="currentColor"/></svg>AttestationBeacon · input 0</div>
         <strong>330</strong> sats
-        <p>1 identity unit. Leaf <code>attest</code>. Threshold of the five committee keys. Empty signatures do not count. A wrong non-empty signature fails the script.</p>
+        <p>1 identity unit. Leaf <code>attest</code>. Nine prints, three distinct oracles in each slice, and the operator signature. The oracle keys cannot move the coin.</p>
       </div>
     </div>
     <div class="spine">
@@ -356,7 +356,7 @@
       <div class="coin beacon covenant" data-sat="330" data-asset="unit:1" data-party="beacon">
         <div class="who"><svg class="lock" viewBox="0 0 16 16" aria-hidden="true"><path d="M5 7V5a3 3 0 0 1 6 0v2M3 7h10v7H3z" fill="none" stroke="currentColor"/></svg>AttestationBeacon</div>
         <strong>330</strong> sats
-        <p>Same script, same 330, same unit. Round 1. Newest slot key is the expiry. First 8 bytes of the value are 10,000,000 cents. The other 24 bytes are an evidence prefix the script does not interpret.</p>
+        <p>Same script, same 330, same unit. Round 1. Newest slot key is the expiry. The 32 bytes are num2bin(twap, 32). The vault reads the first 8 bytes, 10,000,000 cents.</p>
       </div>
       <div class="tail">
         <div class="coin protocol opreturn" data-sat="0" data-party="protocol"><div class="who">Extension</div><strong>0</strong> sats<p>Asset packet, state packet, emulator packet.</p></div>
@@ -365,8 +365,8 @@
     </div>
   </section>
   <ul class="checks">
-    <li>Quorum over <code>sha256(domain + ctrlTxid + num2bin(ctrlGidx, 4) + num2bin(key, 8) + value)</code>. Threshold is between 1 and 5. The five signers are distinct.</li>
-    <li>Key &gt; 0 and absent from every slot. If <code>keyLag ≥ 0</code>, <code>checkTime(key + keyLag)</code>.</li>
+    <li>Each oracle signs <code>sha256(BTCUSD || price_le64 || time_le64)</code>. The message names no beacon. The operator signs <code>sha256(ctrlTxid || next state)</code>. The five signers are distinct.</li>
+    <li>Key &gt; 1800 and absent from every slot. If <code>keyLag ≥ 0</code>, <code>checkTime(key + keyLag)</code>.</li>
     <li>Round increases by 1. The new slot is first. The previous seven slots shift. Output 0 keeps the script, the value, and the unit.</li>
   </ul>
 </article>
@@ -929,7 +929,7 @@
       <tr><td>OptionVault.settle</td><td>Server and emulator. No price signatures in this script.</td><td><code>buildSettle</code></td><td>Output 0 is the beacon’s. Payouts follow, folded at 330 sats.</td></tr>
       <tr><td>OptionVault.close</td><td>Writer, holder, server, emulator.</td><td>No caller.</td><td>None.</td></tr>
       <tr><td>OptionVault.unilateral</td><td>Writer, after 2,048 seconds.</td><td>No caller.</td><td>None.</td></tr>
-      <tr><td>AttestationBeacon.attest</td><td>Threshold of 5 committee keys, server, emulator.</td><td><code>buildAttest</code></td><td>Output 0: same script, value, and identity unit. New state.</td></tr>
+      <tr><td>AttestationBeacon.attest</td><td>Nine oracle signatures and the operator, plus server and emulator.</td><td><code>buildAttest</code></td><td>Output 0: same script, value, and identity unit. New state.</td></tr>
       <tr><td>AttestationBeacon.read</td><td>Server and emulator. No committee signature.</td><td><code>buildSettle</code></td><td>Output 0: same script and unit, value ≥ input + read fee, packet unchanged.</td></tr>
       <tr><td>AttestationBeacon.migrate</td><td>Threshold of 5, server, emulator.</td><td><code>buildMigrate</code></td><td>Output 0: the signed next program, value, and unit. Packet unchanged.</td></tr>
       <tr><td>AttestationBeacon.unilateral</td><td>Admin, after 2,048 seconds.</td><td>No caller.</td><td>None.</td></tr>
@@ -944,7 +944,7 @@
     <tbody>
       <tr><td>OptionIntent</td><td>Finalize before the deadline. Cancel at the deadline. Unilateral after 2,048 seconds.</td><td>The first confirmed spend. Finalize and cancel do not both pass <code>checkTime</code>.</td><td>The other leaf is spent. There is no second coin to rebuild.</td></tr>
       <tr><td>OptionVault</td><td>Settle after expiry, with the beacon. Close any time both parties sign. Unilateral after 2,048 seconds.</td><td>The first confirmed spend.</td><td>Close or unilateral spends the collateral. Settle cannot be rebuilt.</td></tr>
-      <tr><td>AttestationBeacon</td><td>Attest, read, migrate, or the admin’s unilateral. One identity unit.</td><td>The first confirmed spend. A read that is not this vault’s settle still moves the coin.</td><td>The vault’s settle names an outpoint. It is rebuilt against the continuation. A read carries the state, so the price is still there. An attest changes the slots. A key that falls off the eight slots can be attested again with the same signatures. Until then the vault has no fixing.</td></tr>
+      <tr><td>AttestationBeacon</td><td>Attest, read, migrate, or the admin’s unilateral. One identity unit.</td><td>The first confirmed spend. A read that is not this vault’s settle still moves the coin.</td><td>The vault’s settle names an outpoint. It is rebuilt against the continuation. A read carries the state, so the price is still there. An attest changes the slots. A key that falls off the eight slots can be attested again with the same oracle signatures. The operator signs the new packet. Until then the vault has no fixing.</td></tr>
     </tbody>
   </table>
 </section>
@@ -961,7 +961,7 @@
   </ul>
   <h2>Not claimed</h2>
   <ul class="checks">
-    <li>The committee’s price is honest. The 24-byte evidence prefix is not checked. The fixture prints on this page are unverified.</li>
+    <li>The oracles’ prices match the market. The script checks the nine prints and stores num2bin(twap, 32). The fixture prints on this page are unverified.</li>
     <li>Someone publishes the expiry key before it falls out of the eight slots, and someone pays the read fee and submits the settle. Lateness of a fixing is not bounded. A version byte other than 0x01 fails settle and leaves the coin to the writer’s unilateral leaf after the delay.</li>
     <li>The emulator binds each input’s previous transaction to that input. The script cannot see a forged previous packet. That binding was not re-checked here.</li>
     <li>Close, every unilateral leaf, and side 1 have no caller. Unpinned outputs are drawn at the input amount so the picture balances.</li>

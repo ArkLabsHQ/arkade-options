@@ -3,6 +3,7 @@ import test from "node:test";
 import { premiumSats } from "../protocol/pricing.ts";
 import { bestQuote, bsCall } from "./quote.js";
 import {
+  fixing,
   holderPayoff,
   writerPayoff,
   median3,
@@ -72,6 +73,28 @@ test("oracle preimage is ticker plus two little-endian int64s", () => {
   assert.equal(bytes[6], 1);
   assert.equal(bytes[14], 2);
   assert.equal(bytes[21], 0);
+});
+
+test("fixing reuses the slice medians and the twap", () => {
+  const expiry = 10_000n;
+  const honest = (base, who, times) => ({
+    price: [base - 5n, base, base + 5n],
+    time: times,
+    who,
+  });
+  const slices = [
+    honest(20_000n, [0n, 1n, 2n], [expiry - 1780n, expiry - 1770n, expiry - 1760n]),
+    honest(20_000n, [1n, 2n, 3n], [expiry - 940n, expiry - 930n, expiry - 920n]),
+    honest(20_000n, [2n, 3n, 4n], [expiry + 10n, expiry + 20n, expiry + 30n]),
+  ];
+  const position = { kind: 0, strike: 10_000n, collateral: 100_000n, expiry };
+  assert.equal(fixing(expiry, slices).twap, settle(position, slices).settlement);
+  assert.equal(fixing(expiry, slices).medians[1], 20_000n);
+  assert.equal(fixing(1800n, slices).error, "expiry");
+  const same = slices.map((slice, index) => index === 0 ? { ...slice, who: [0n, 0n, 1n] } : slice);
+  assert.equal(fixing(expiry, same).error, "same oracle");
+  const early = slices.map((slice, index) => index === 2 ? { ...slice, time: [expiry - 10n, expiry - 20n, expiry - 30n] } : slice);
+  assert.equal(fixing(expiry, early).error, "slice early");
 });
 
 test("settle drops one dishonest print and pays the call", () => {

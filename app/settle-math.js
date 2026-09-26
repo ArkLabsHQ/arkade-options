@@ -92,6 +92,33 @@ export function oraclePreimage(price, time) {
   return out;
 }
 
+/** TWAP of three slices, the number `attest` stores as `num2bin(twap, 32)`. */
+export function fixing(expiry, slices) {
+  if (expiry <= 1800n) return { error: "expiry" };
+  const names = ["open", "mid", "close"];
+  const bounds = windows(expiry);
+  const medians = [];
+  for (let i = 0; i < 3; i += 1) {
+    const slice = slices[i];
+    if (!distinct(slice.who)) return { error: "same oracle" };
+    for (const who of slice.who) {
+      if (who < 0n || who > 4n) return { error: "oracle index" };
+    }
+    for (const time of slice.time) {
+      if (time <= 0n) return { error: "time" };
+    }
+    const bad = sliceError(slice.time, bounds[names[i]][0], bounds[names[i]][1]);
+    if (bad) return { error: bad };
+    for (const price of slice.price) {
+      if (price <= 0n || price > PRICE_MAX) return { error: "price" };
+    }
+    medians.push(median3(slice.price[0], slice.price[1], slice.price[2]));
+  }
+  const settlement = twap(medians[0], medians[1], medians[2]);
+  if (settlement <= 0n) return { error: "zero twap" };
+  return { twap: settlement, medians };
+}
+
 export function settle(position, slices) {
   if (position.collateral < Q_MIN || position.collateral > Q_MAX) {
     return { error: "collateral" };
