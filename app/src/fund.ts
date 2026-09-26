@@ -252,14 +252,6 @@ export async function depositAddress(req: FundRequest): Promise<Deposit> {
   };
 }
 
-export async function fundingState(req: FundRequest): Promise<"open" | "funded" | "filled"> {
-  const { intent, vault } = await build(req);
-  const [vaultCoins, intentCoins] = await Promise.all([vault.getUtxos(), intent.getUtxos()]);
-  if (vaultCoins.length > 0) return "filled";
-  if (intentCoins.length > 0) return "funded";
-  return "open";
-}
-
 /** After the deadline, cancel pays the whole coin back to the writer address. */
 export async function cancelIntent(req: FundRequest): Promise<string> {
   const { intent, bound } = await build(req);

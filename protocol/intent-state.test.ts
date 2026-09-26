@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
-import { classifyIntent, psbtOutputs } from "./intent-state.ts";
+import { classifyIntent, psbtOutputs, psbtView } from "./intent-state.ts";
 
 const writer = "5120806de010d4f26b83a7d2b0cc29973a7ffc3b17d163651bfc4de55aec4cc8d44b";
 const intent = "5120b81cbe74a0c932b6bf2424d28f867cab9fe09cc6eae887050be13dbd1b63d292";
@@ -54,6 +56,26 @@ test("premium on the writer script is paid out, and the full coin back is a refu
     deadline: 1_000,
   });
   assert.equal(refunded.phase, "refunded");
+});
+
+test("a fill with no intent coin still pays the writer", () => {
+  const spent = "51205327a5c6693c7f8f932418d934b5517509f3d01cc5a3a8f9e509503c15bcf5bd";
+  const view = psbtView(readFileSync(fileURLToPath(new URL("./testdata/fill.b64", import.meta.url)), "utf8"));
+  const input = view.inputs.find((item) => item.script === spent);
+  assert.ok(input);
+  assert.equal(input.amount, 20_000n);
+  assert.equal(view.outputs[0]?.amount, 414n);
+  assert.equal(view.outputs[0]?.script, writer);
+  const seen = classifyIntent({
+    coins: [{ value: input.amount, spent: true, spentBy: "fill" }],
+    spends: { fill: view.outputs },
+    collateral: 20_000n,
+    premium: 414n,
+    writerScript: writer,
+    now: 1_790_380_800,
+    deadline: 1_790_380_900,
+  });
+  assert.deepEqual(seen, { phase: "filled", refundable: false });
 });
 
 test("the deposit transaction pays the intent, not the writer", () => {

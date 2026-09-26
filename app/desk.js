@@ -31,7 +31,6 @@ const state = {
   quoteNote: "",
   quoting: false,
   confirming: false,
-  deposit: null,
   positions: loadPositions(),
   selected: null,
 };
@@ -45,7 +44,8 @@ const $ = (id) => document.getElementById(id);
 function loadPositions() {
   try {
     const raw = JSON.parse(localStorage.getItem(STORE) || "[]");
-    return raw.map(revive);
+    const rows = Array.isArray(raw) ? raw : raw.positions || [];
+    return rows.map(revive);
   } catch {
     return [];
   }
@@ -87,6 +87,7 @@ function persist() {
     createdAt: p.createdAt,
     apy: p.apy,
     apyFrozen: p.apyFrozen,
+    refundable: Boolean(p.refundable),
     marketSats: p.marketSats ? p.marketSats.toString() : "",
     marketApy: p.marketApy,
   }));
@@ -151,17 +152,21 @@ function expiryUnix(days) {
   return BigInt(Math.floor(d.getTime() / 1000));
 }
 
+let pinnedStrike = null;
+
 function ladder() {
   const steps = state.kind === 0 ? [105n, 110n, 115n, 125n, 140n] : [95n, 90n, 85n, 75n, 60n];
   const grid = state.spotCents >= 10_000_000n ? 100_000n : 50_000n;
   const seen = new Set();
-  return steps.map((step) => {
+  const rows = steps.map((step) => {
     let cents = ((state.spotCents * step) / 100n + grid / 2n) / grid * grid;
     const bump = state.kind === 0 ? grid : -grid;
     while (seen.has(cents.toString())) cents += bump;
     seen.add(cents.toString());
     return cents;
   });
+  if (pinnedStrike != null && !rows.includes(pinnedStrike)) return [pinnedStrike, ...rows.slice(0, 4)];
+  return rows;
 }
 
 function strike() {
@@ -290,10 +295,32 @@ function humanNote(note) {
   return note;
 }
 
+function positionKey(position) {
+  return `${position.kind}:${position.strike}:${position.expiry}:${position.collateral}`;
+}
+
+function positionForForm() {
+  const key = termsKey();
+  if (!key) return null;
+  let match = null;
+  for (const position of visiblePositions()) {
+    if (positionKey(position) !== key) continue;
+    if (!match || (position.createdAt || 0) >= (match.createdAt || 0)) match = position;
+  }
+  return match;
+}
+
 function shownDeposit() {
-  if (!state.deposit || state.deposit.status !== "ready") return null;
-  if (!state.deposit.termsKey || state.deposit.termsKey !== termsKey()) return null;
-  return state.deposit;
+  const position = positionForForm();
+  if (!position) return null;
+  return {
+    address: position.address,
+    uri: position.uri || paymentUri(position.address, position.collateral),
+    amountSats: position.collateral,
+    premium: position.premiumSats,
+    apy: position.apy,
+    deadline: position.deadline,
+  };
 }
 
 function liveQuote() {
@@ -441,6 +468,9 @@ function renderSell() {
   document.querySelectorAll("[data-kind]").forEach((btn) => {
     btn.setAttribute("aria-pressed", String(Number(btn.dataset.kind) === state.kind));
   });
+  document.querySelectorAll("[data-days]").forEach((btn) => {
+    btn.setAttribute("aria-pressed", String(Number(btn.dataset.days) === state.days));
+  });
   $("kind-copy").textContent = kindCopy();
   $("expiry-when").textContent = state.spotCents == null ? "" : fmtWhen(expiryUnix(state.days));
   const sats = sizeSats();
@@ -471,7 +501,13 @@ function renderSell() {
   const quote = liveQuote();
   const moved = Boolean(quote && deposit && !frozen && quote.sats !== deposit.premium);
   const confirm = $("confirm");
-  if (frozen) {
+  const again = position && (position.status === "filled" || position.status === "refunded" || position.status === "expired");
+  if (again) {
+    confirm.hidden = false;
+    confirm.textContent = state.confirming ? "Confirming" : "Sell again";
+    const tooSmall = quote && quote.sats <= DUST;
+    confirm.disabled = state.confirming || Boolean(err) || !quote || tooSmall;
+  } else if (frozen) {
     confirm.hidden = true;
   } else if (!deposit || moved) {
     confirm.hidden = false;
@@ -723,6 +759,21 @@ async function copyToClipboard(button, text) {
   }, 1200);
 }
 
+function adoptQuote() {
+  const latest = visiblePositions()
+    .filter((position) => position.kind === state.kind && position.address)
+    .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))[0];
+  if (!latest) return;
+  pinnedStrike = latest.strike;
+  const idx = ladder().findIndex((cents) => cents === latest.strike);
+  if (idx < 0) return;
+  state.strikeIndex = idx;
+  if (latest.days === 7 || latest.days === 30 || latest.days === 90) state.days = latest.days;
+  const size = $("size");
+  if (size) size.value = fmtBtc(latest.collateral);
+  strikeKey = "";
+}
+
 function onTermsChanged() {
   state.market = null;
   state.deskQuote = null;
@@ -862,16 +913,6 @@ async function confirm() {
       state.positions.unshift(position);
     }
     state.selected = position.id;
-    state.deposit = {
-      status: "ready",
-      termsKey: termsKey(),
-      address: deposit.address,
-      uri: deposit.uri,
-      amountSats: deposit.amountSats,
-      premium: quote.sats,
-      apy,
-      deadline,
-    };
     persist();
   } catch (err) {
     $("status").textContent = err instanceof Error ? err.message : "Could not build the deposit.";
@@ -888,6 +929,7 @@ function openSell(kind) {
   if (changed) {
     state.strikeIndex = 0;
     strikeKey = "";
+    pinnedStrike = null;
   }
   show("sell", onSell ? "replace" : "push");
   if (changed) onTermsChanged();
@@ -907,7 +949,6 @@ function connectAddress() {
 function disconnect() {
   clearAddress();
   state.address = "";
-  state.deposit = null;
   state.market = null;
   state.deskQuote = null;
   show("connect");
@@ -956,10 +997,11 @@ async function refund(position, button) {
   button.textContent = "Refunding";
   try {
     await cancelIntent(await fundRequest(position));
-    position.status = "refunded";
-    persist();
-    renderBlotter();
-    renderSell();
+    applyChain(position, await readIntent(watchRow(position)));
+    if (position.status !== "refunded" && button.isConnected) {
+      button.disabled = false;
+      button.textContent = "Refund";
+    }
   } catch (err) {
     button.disabled = false;
     button.textContent = err instanceof Error ? err.message : "Refund failed";
@@ -984,6 +1026,7 @@ const CHAIN_STATUS = {
 function applyChain(position, update) {
   const next = CHAIN_STATUS[update.phase];
   if (!next) return;
+  if (next === "locking" && position.status !== "locking") return;
   const same = position.status === next && Boolean(position.refundable) === update.refundable;
   if (same) return;
   if (next === "deposited" || next === "filled" || next === "expired") freeze(position);
@@ -1001,6 +1044,7 @@ function watchRow(position) {
     collateral: BigInt(position.collateral),
     premium: BigInt(position.premiumSats),
     deadline: Number(position.deadline),
+    since: Number(position.createdAt) || 0,
   };
 }
 
@@ -1071,23 +1115,12 @@ async function refreshPositionMarkets() {
 
 function tick() {
   const now = Math.floor(Date.now() / 1000);
-  let changed = false;
-  for (const position of state.positions) {
-    if (position.status === "deposited" && position.deadline && now >= Number(position.deadline)) {
-      position.status = "expired";
-      position.refundable = true;
-      changed = true;
-    }
-  }
-  if (changed) {
-    persist();
-    renderBlotter();
-    renderSell();
-  }
-  if (now - lastPoll >= 20) {
-    lastPoll = now;
-    void pollDeposits();
-  }
+  const due = state.positions.some((position) => (
+    position.status === "deposited" && position.deadline && now >= Number(position.deadline)
+  ));
+  if (!due && now - lastPoll < 20) return;
+  lastPoll = now;
+  void pollDeposits();
 }
 
 function listen(id, type, fn) {
@@ -1123,8 +1156,17 @@ function bind() {
     const btn = event.target.closest("button");
     if (!btn) return;
     const index = Number(btn.dataset.index);
-    if (index === state.strikeIndex) return;
-    state.strikeIndex = index;
+    const picked = ladder()[index];
+    if (pinnedStrike != null && picked !== pinnedStrike) {
+      pinnedStrike = null;
+      strikeKey = "";
+      const next = ladder().findIndex((cents) => cents === picked);
+      state.strikeIndex = next >= 0 ? next : 0;
+    } else if (index !== state.strikeIndex) {
+      state.strikeIndex = index;
+    } else {
+      return;
+    }
     onTermsChanged();
   });
   listen("size", "input", onTermsChanged);
@@ -1195,6 +1237,7 @@ function showFromHash() {
     if (changed && state.view === "sell") {
       state.strikeIndex = 0;
       strikeKey = "";
+      pinnedStrike = null;
     }
     show("sell", "quiet");
     if (changed) onTermsChanged();
@@ -1218,6 +1261,7 @@ window.addEventListener("hashchange", showFromHash);
 loadSpot().then(() => {
   $("spot-source").textContent = state.spotSource;
   $("spot-px").textContent = fmtUsdFromCents(state.spotCents);
+  adoptQuote();
   if (state.view === "sell") onTermsChanged();
   renderBlotter();
 });
