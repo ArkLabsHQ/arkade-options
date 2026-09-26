@@ -1,0 +1,1035 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Option contracts — where the sats go</title>
+<style>
+  :root {
+    --ink: #1c1915;
+    --muted: #5c564e;
+    --paper: #f3efe6;
+    --card: #fffdf8;
+    --line: #d9d1c3;
+    --writer: #1d4e89;
+    --desk: #0f6e56;
+    --intent: #8a5a00;
+    --vault: #5c3d8f;
+    --solver: #9a3412;
+    --taker: #9f1239;
+    --protocol: #44403c;
+    --bad: #8f2d2d;
+    --ok: #1f6b3a;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    color: var(--ink);
+    background: var(--paper);
+    font: 16px/1.45 ui-sans-serif, "Segoe UI", sans-serif;
+    font-variant-numeric: tabular-nums;
+  }
+  header, main { width: min(1100px, calc(100% - 32px)); margin: 0 auto; }
+  header { padding: 28px 0 8px; }
+  h1 { font-size: 1.7rem; line-height: 1.15; margin: 0 0 8px; }
+  h2 { font-size: 1.25rem; margin: 2rem 0 0.4rem; }
+  h3 { font-size: 1rem; margin: 0 0 8px; }
+  p, li { color: var(--ink); }
+  .lede, .note, figcaption, .src { color: var(--muted); }
+  a { color: var(--writer); }
+  nav { display: flex; flex-wrap: wrap; gap: 8px 14px; padding: 8px 0 4px; }
+  nav a { font-size: 0.92rem; }
+  .legend { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0; }
+  .swatch { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); background: var(--card); border-radius: 999px; padding: 3px 10px; font-size: 0.85rem; }
+  .dot { width: 0.7rem; height: 0.7rem; border-radius: 50%; display: inline-block; }
+  .writer { --party: var(--writer); }
+  .desk { --party: var(--desk); }
+  .intent { --party: var(--intent); }
+  .vault { --party: var(--vault); }
+  .solver { --party: var(--solver); }
+  .taker { --party: var(--taker); }
+  .protocol { --party: var(--protocol); }
+  .dot.writer { background: var(--writer); }
+  .dot.desk { background: var(--desk); }
+  .dot.intent { background: var(--intent); }
+  .dot.vault { background: var(--vault); }
+  .dot.solver { background: var(--solver); }
+  .dot.taker { background: var(--taker); }
+  .dot.protocol { background: var(--protocol); }
+  .params { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
+  .panel, .scenario, .coin, .spine, .band, .nets li, table { background: var(--card); }
+  .panel, .scenario { border: 1px solid var(--line); border-radius: 12px; padding: 14px; }
+  .panel h2, .scenario h2 { margin-top: 0; }
+  dl { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 2px 12px; margin: 0; }
+  code, a, dd { overflow-wrap: anywhere; }
+  dt { color: var(--muted); }
+  dd { margin: 0; }
+  .band {
+    border: 1px dashed var(--line);
+    border-radius: 10px;
+    padding: 8px 12px;
+    margin: 10px 0;
+  }
+  .tx {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 9.5rem minmax(0, 1fr);
+    grid-template-areas: "inputs spine outputs";
+    gap: 10px;
+    align-items: stretch;
+    margin: 10px 0;
+  }
+  .inputs { grid-area: inputs; }
+  .spine { grid-area: spine; }
+  .outputs { grid-area: outputs; }
+  .col { display: flex; flex-direction: column; gap: 8px; }
+  .coin {
+    border: 1px solid var(--line);
+    border-left: 6px solid var(--party, var(--protocol));
+    border-radius: 10px;
+    padding: 8px 10px;
+  }
+  .coin.covenant {
+    background-image: repeating-linear-gradient(-45deg, transparent, transparent 5px, rgba(28, 25, 21, 0.06) 5px, rgba(28, 25, 21, 0.06) 6px);
+  }
+  .coin.opreturn { border-style: dotted; background: transparent; }
+  .coin.unpinned { outline: 1px dashed var(--muted); }
+  .coin .who { font-size: 0.78rem; letter-spacing: 0.04em; text-transform: uppercase; color: var(--party, var(--muted)); }
+  .coin strong { font-size: 1.15rem; }
+  .coin p { margin: 4px 0 0; font-size: 0.88rem; color: var(--muted); }
+  .lock { width: 0.85rem; height: 0.85rem; vertical-align: -1px; margin-right: 3px; }
+  .spine {
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 10px 8px;
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 4px;
+  }
+  .spine .tid { font-weight: 650; }
+  .spine .ok { color: var(--ok); font-size: 0.85rem; }
+  .spine .bad { color: var(--bad); font-size: 0.85rem; }
+  .scenario.rejected { outline: 2px solid var(--bad); }
+  .checks { margin: 8px 0 0; padding-left: 1.1rem; }
+  .checks li { margin: 2px 0; }
+  .nets { display: flex; flex-wrap: wrap; gap: 8px; list-style: none; padding: 0; margin: 10px 0 0; }
+  .nets li { border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; min-width: 9rem; }
+  .nets .up { color: var(--ok); }
+  .nets .down { color: var(--bad); }
+  #leaves { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.92rem; }
+  th, td { border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; padding: 8px; }
+  th { color: var(--muted); font-weight: 600; }
+  .src { font-size: 0.85rem; margin: 18px 0 32px; }
+  @media (max-width: 760px) {
+    .params { grid-template-columns: minmax(0, 1fr); }
+    .tx {
+      grid-template-columns: minmax(0, 1fr);
+      grid-template-areas: "inputs" "spine" "outputs";
+    }
+    header, main { width: min(1100px, calc(100% - 20px)); }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>Where the option contracts move sats</h1>
+  <p class="lede">OptionIntent and OptionVault are the path the desk and the page use. NonInteractiveSwap and SingleSig are in the repo and are not spent by that path. Amounts below are the lifecycle fixture, not a live quote. Prices are unverified fixture prints, dated with the parameter fetch on 2026-09-26.</p>
+  <div class="legend" aria-label="Parties">
+    <span class="swatch"><i class="dot writer"></i>Writer</span>
+    <span class="swatch"><i class="dot desk"></i>Desk</span>
+    <span class="swatch"><i class="dot intent"></i>OptionIntent</span>
+    <span class="swatch"><i class="dot vault"></i>OptionVault</span>
+    <span class="swatch"><i class="dot solver"></i>Solver</span>
+    <span class="swatch"><i class="dot taker"></i>Taker</span>
+    <span class="swatch"><i class="dot protocol"></i>Anchor / extension</span>
+  </div>
+  <nav>
+    <a href="#params">Parameters</a>
+    <a href="#call-itm">Covered call, in the money</a>
+    <a href="#fill-dust">Desk change</a>
+    <a href="#call-otm">At the strike</a>
+    <a href="#dust">Dust boundary</a>
+    <a href="#put-all">Limited put</a>
+    <a href="#refund">Refund</a>
+    <a href="#recovery">2048-second recovery</a>
+    <a href="#side1">Side 1</a>
+    <a href="#rejected">Rejected</a>
+    <a href="#swap">Swap</a>
+    <a href="#leaves">Leaves</a>
+  </nav>
+</header>
+<main>
+<section class="panel" id="params">
+  <h2>Two number sets</h2>
+  <div class="params">
+    <div>
+      <h3>Fixture the diagrams use</h3>
+      <dl>
+        <dt>Collateral Q</dt><dd>20,000 sats</dd>
+        <dt>Premium</dt><dd>1,000 sats</dd>
+        <dt>Strike K</dt><dd>9,700,000 cents ($97,000.00)</dd>
+        <dt>Exit</dt><dd>2,048 seconds, unilateral leaves only</dd>
+        <dt>Contract dust</dt><dd>330 sats, strict</dd>
+        <dt>Fill window</dt><dd>deadline = now + 180 seconds</dd>
+        <dt>Quote validity</dt><dd>30 seconds, the RFQ field, not the script</dd>
+      </dl>
+      <p class="note">Q, premium, strike and the $100,000 print are <code>protocol/lifecycle.test.ts</code>. The 180-second deadline is <code>LOCK_S</code> in <code>desk/main.ts</code>. The 30 seconds is <code>QUOTE_TTL_S</code>, stored as <code>validUntil</code>. <code>bindContracts</code> always sets intent side to 0.</p>
+    </div>
+    <div>
+      <h3>Live Mutinynet, 2026-09-26</h3>
+      <dl>
+        <dt>Endpoint</dt><dd>https://mutinynet.arkade.sh/v1/info</dd>
+        <dt>dust</dt><dd>330</dd>
+        <dt>vtxoMinAmount</dt><dd>1</dd>
+        <dt>vtxoMaxAmount</dt><dd>−1 (no cap)</dd>
+        <dt>utxoMinAmount</dt><dd>330</dd>
+        <dt>maxOpReturnOutputs</dt><dd>3</dd>
+        <dt>maxTxWeight</dt><dd>40,000</dd>
+        <dt>unilateralExitDelay</dt><dd>2,048</dd>
+        <dt>Intent fees</dt><dd>0.0 on every input and output</dd>
+        <dt>txFeeRate</dt><dd>0</dd>
+      </dl>
+      <p class="note">Protocol fare on every drawn transaction is 0, matching that fee block. The premium is the option price, not this fare. This page does not weigh the fixture transactions against <code>maxTxWeight</code>.</p>
+    </div>
+  </div>
+</section>
+
+<article class="scenario" id="call-itm" data-writer="400" data-desk="-400">
+  <h2>Covered call, in the money</h2>
+  <p>The writer sends the collateral. The desk (<code>fillQuote</code>) adds the premium and finalizes. Later, settle pays the holder 600 sats and the writer 19,400. Fixture print 10,000,000 cents ($100,000.00), unverified, not a live oracle.</p>
+  <div class="band">Before. Writer holds 20,000. Desk holds 1,000. Nothing is in a covenant yet.</div>
+  <section class="tx" data-name="deposit">
+    <div class="col inputs">
+      <div class="coin writer" data-sat="20000" data-party="writer">
+        <div class="who">Writer · signs the wallet spend</div>
+        <strong>20,000</strong> sats
+        <p>Sender: the writer, to the intent address from <code>depositAddress</code>. This picture is the resulting coin. The round’s tree and forfeits are not an OptionIntent leaf.</p>
+      </div>
+    </div>
+    <div class="spine">
+      <div class="tid">deposit</div>
+      <div>20,000 in</div>
+      <div>20,000 out</div>
+      <div>fare 0</div>
+      <div class="ok">BTC conserved</div>
+    </div>
+    <div class="col outputs">
+      <div class="coin intent covenant" data-sat="20000" data-party="intent">
+        <div class="who"><svg class="lock" viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1" fill="none" stroke="currentColor"/><path d="M5 7V5a3 3 0 0 1 6 0v2" fill="none" stroke="currentColor"/></svg>OptionIntent</div>
+        <strong>20,000</strong> sats
+        <p>Locked. Equals collateral, so finalize adds no extra change for the writer.</p>
+      </div>
+    </div>
+  </section>
+  <div class="band">Intent locked · 20,000 sats · deadline not reached (now + 180s on a live quote).</div>
+  <section class="tx" data-name="fill-exact">
+    <div class="col inputs">
+      <div class="coin intent covenant" data-sat="20000" data-party="intent">
+        <div class="who"><svg class="lock" viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1" fill="none" stroke="currentColor"/><path d="M5 7V5a3 3 0 0 1 6 0v2" fill="none" stroke="currentColor"/></svg>OptionIntent · server + emulator</div>
+        <strong>20,000</strong> sats
+        <p>Leaf <code>finalize</code>. The writer does not sign this input.</p>
+      </div>
+      <div class="coin desk" data-sat="1000" data-party="desk">
+        <div class="who">Desk · forfeit leaf</div>
+        <strong>1,000</strong> sats
+        <p>Sender: the desk, <code>fillQuote</code>. One vtxo that matches the premium exactly, so there is no change.</p>
+      </div>
+    </div>
+    <div class="spine">
+      <div class="tid">finalize</div>
+      <div>21,000 in</div>
+      <div>21,000 out</div>
+      <div>fare 0</div>
+      <div class="ok">BTC conserved</div>
+    </div>
+    <div class="col outputs">
+      <div class="coin writer" data-sat="1000" data-party="writer">
+        <div class="who">Writer · pasted address</div>
+        <strong>1,000</strong> sats
+        <p>Output 0. Premium + (20,000 − 20,000). The page sets <code>payoutKey</code> from the pasted address, so this is that address’s 32-byte program. <code>INSPECTOUTPUTSCRIPTPUBKEY</code> then <code>OP_DROP</code> compares those 32 bytes; the wire script is <code>5120</code> plus the program. A binding with no payout key would be a new DefaultVtxo instead.</p>
+      </div>
+      <div class="coin vault covenant" data-sat="20000" data-party="vault">
+        <div class="who"><svg class="lock" viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1" fill="none" stroke="currentColor"/><path d="M5 7V5a3 3 0 0 1 6 0v2" fill="none" stroke="currentColor"/></svg>OptionVault</div>
+        <strong>20,000</strong> sats
+        <p>Output 1. Exactly collateral. <code>fill.ts</code> does not leave the writer’s surplus here.</p>
+      </div>
+      <div class="coin protocol opreturn" data-sat="0" data-party="protocol">
+        <div class="who">Extension</div>
+        <strong>0</strong> sats
+        <p>OP_RETURN packet attached by <code>attachExtension</code> after <code>buildOffchainTx</code> counts OP_RETURNs.</p>
+      </div>
+      <div class="coin protocol" data-sat="0" data-party="protocol">
+        <div class="who">Anchor</div>
+        <strong>0</strong> sats
+        <p>Pay-to-anchor <code>51024e73</code>, <code>ANCHOR_VALUE = 0</code>, appended by <code>buildVirtualTx</code>. <code>attachExtension</code> inserts the OP_RETURN before this anchor.</p>
+      </div>
+    </div>
+  </section>
+  <p>Side 0 has no dust test on the writer’s own extra sats. A 1-sat overfunding is added to output 0, not dropped and not given its own output. The cards below stay the exact 20,000 coin.</p>
+  <section class="tx" data-name="fill-over">
+    <div class="col inputs">
+      <div class="coin intent covenant" data-sat="20001" data-party="intent">
+        <div class="who"><svg class="lock" viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1" fill="none" stroke="currentColor"/><path d="M5 7V5a3 3 0 0 1 6 0v2" fill="none" stroke="currentColor"/></svg>OptionIntent · server + emulator</div>
+        <strong>20,001</strong> sats
+        <p>One sat above collateral. <code>fill.ts</code> sets the writer output to premium + (locked − collateral).</p>
+      </div>
+      <div class="coin desk" data-sat="1000" data-party="desk">
+        <div class="who">Desk · forfeit leaf</div>
+        <strong>1,000</strong> sats
+        <p>Sender: the desk. Exact premium, so no desk change.</p>
+      </div>
+    </div>
+    <div class="spine">
+      <div class="tid">finalize</div>
+      <div>21,001 in</div>
+      <div>21,001 out</div>
+      <div>fare 0</div>
+      <div class="ok">BTC conserved</div>
+    </div>
+    <div class="col outputs">
+      <div class="coin writer" data-sat="1001" data-party="writer">
+        <div class="who">Writer · pasted address</div>
+        <strong>1,001</strong> sats
+        <p>Output 0. The extra sat rides on the premium. The output is above live dust 330.</p>
+      </div>
+      <div class="coin vault covenant" data-sat="20000" data-party="vault">
+        <div class="who"><svg class="lock" viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1" fill="none" stroke="currentColor"/><path d="M5 7V5a3 3 0 0 1 6 0v2" fill="none" stroke="currentColor"/></svg>OptionVault</div>
+        <strong>20,000</strong> sats
+        <p>Output 1. Still exactly collateral.</p>
+      </div>
+      <div class="coin protocol opreturn" data-sat="0" data-party="protocol"><div class="who">Extension</div><strong>0</strong> sats<p>OP_RETURN.</p></div>
+      <div class="coin protocol" data-sat="0" data-party="protocol"><div class="who">Anchor</div><strong>0</strong> sats<p>Pay-to-anchor.</p></div>
+    </div>
+  </section>
+  <div class="band">Vault locked · 20,000 sats · writer already holds the 1,000 premium. Settle does not check the wall clock, only the oracle slice windows.</div>
+  <section class="tx" data-name="settle-split">
+    <div class="col inputs">
+      <div class="coin vault covenant" data-sat="20000" data-party="vault">
+        <div class="who"><svg class="lock" viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1" fill="none" stroke="currentColor"/><path d="M5 7V5a3 3 0 0 1 6 0v2" fill="none" stroke="currentColor"/></svg>OptionVault · server + emulator</div>
+        <strong>20,000</strong> sats
+        <p>Leaf <code>settle</code>. One input. Oracle signatures check the message; they are not input signers. The e2e script submits this. The page does not.</p>
+      </div>
+    </div>
+    <div class="spine">
+      <div class="tid">settle</div>
+      <div>20,000 in</div>
+      <div>20,000 out</div>
+      <div>fare 0</div>
+      <div class="ok">BTC conserved</div>
+    </div>
+    <div class="col outputs">
+      <div class="coin desk covenant" data-sat="600" data-party="desk">
+        <div class="who"><svg class="lock" viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1" fill="none" stroke="currentColor"/><path d="M5 7V5a3 3 0 0 1 6 0v2" fill="none" stroke="currentColor"/></svg>Desk vtxo</div>
+        <strong>600</strong> sats
+        <p>Output 0. Holder payoff Q×(ST−K)/ST = 20,000×300,000/10,000,000. This is a DefaultVtxo: the desk key, the server, and its own 2,048-second exit. The vault leaf does not apply that delay. The desk spends it by forfeit with the server, or alone after that exit.</p>
+      </div>
+      <div class="coin writer" data-sat="19400" data-party="writer">
+        <div class="who">Writer · pasted address</div>
+        <strong>19,400</strong> sats
+        <p>Output 1. Locked minus the holder leg. Both legs are above 330.</p>
+      </div>
+      <div class="coin protocol opreturn" data-sat="0" data-party="protocol">
+        <div class="who">Extension</div>
+        <strong>0</strong> sats
+        <p>OP_RETURN.</p>
+      </div>
+      <div class="coin protocol" data-sat="0" data-party="protocol">
+        <div class="who">Anchor</div>
+        <strong>0</strong> sats
+        <p>Pay-to-anchor.</p>
+      </div>
+    </div>
+  </section>
+  <h3>What the scripts check</h3>
+  <ul class="checks">
+    <li>Finalize: side is 0 or 1; collateral and premium are each greater than 330; the deadline has not been reached.</li>
+    <li>Side 0: the intent input is at least collateral; output 0 pays the writer program at least premium plus any sats above collateral; output 1 pays the vault program at least collateral.</li>
+    <li>Settle: one input. Kind is 0 or 1. Strike is 1 through 1,000,000,000. Collateral is 331 through 1,000,000,000. Expiry is above 1,800.</li>
+    <li>Nine oracle checks, three distinct oracles per slice. Each price is 1 through 1,000,000,000, each time is positive, and the message is sha256 of BTCUSD, the price, and the time. The slice max must sit in [expiry−1,800, expiry−1,740], [expiry−960, expiry−900], or [expiry, expiry+60], and the three times in a slice span at most 60 seconds.</li>
+    <li>TWAP is the median of each slice, then (m0×900 + m1×900 + m2×60) / 1,860. Covered call: if ST is above K, the holder leg is Q×(ST−K)/ST, truncating. A leg of 330 or less is not its own output.</li>
+    <li>Side 0 change has no dust test. Sats above collateral are added to the premium output, including a 1-sat extra.</li>
+  </ul>
+  <ul class="nets">
+    <li class="writer" data-party="writer" data-net="400"><div class="who">Writer</div><strong class="up">+400</strong><div>20,000 → 20,400</div></li>
+    <li class="desk" data-party="desk" data-net="-400"><div class="who">Desk</div><strong class="down">−400</strong><div>1,000 → 600</div></li>
+  </ul>
+</article>
+
+<article class="scenario" id="call-otm" data-writer="1000" data-desk="-1000">
+  <h2>Covered call, at the strike</h2>
+  <p>Same deposit and the same finalize as above. Print equals the strike, 9,700,000 cents ($97,000.00), unverified. Holder payoff is 0, which is not above 330, so the writer receives the whole vault coin.</p>
+  <div class="band">Vault locked · 20,000 · writer already holds 1,000.</div>
+  <section class="tx" data-name="settle-otm">
+    <div class="col inputs">
+      <div class="coin vault covenant" data-sat="20000" data-party="vault">
+        <div class="who"><svg class="lock" viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1" fill="none" stroke="currentColor"/><path d="M5 7V5a3 3 0 0 1 6 0v2" fill="none" stroke="currentColor"/></svg>OptionVault · server + emulator</div>
+        <strong>20,000</strong> sats
+        <p>Leaf <code>settle</code>. Sender: whoever submits. The leaf does not check the submitter.</p>
+      </div>
+    </div>
+    <div class="spine">
+      <div class="tid">settle</div>
+      <div>20,000 in</div>
+      <div>20,000 out</div>
+      <div>fare 0</div>
+      <div class="ok">BTC conserved</div>
+    </div>
+    <div class="col outputs">
+      <div class="coin writer" data-sat="20000" data-party="writer">
+        <div class="who">Writer · pasted address</div>
+        <strong>20,000</strong> sats
+        <p>Output 0 must be at least the whole input, paid to the writer program. No holder output.</p>
+      </div>
+      <div class="coin protocol opreturn" data-sat="0" data-party="protocol"><div class="who">Extension</div><strong>0</strong> sats<p>OP_RETURN.</p></div>
+      <div class="coin protocol" data-sat="0" data-party="protocol"><div class="who">Anchor</div><strong>0</strong> sats<p>Pay-to-anchor.</p></div>
+    </div>
+  </section>
+  <ul class="checks">
+    <li>Kind 0 and ST ≤ K leaves the holder leg at 0.</li>
+    <li>A holder leg of 330 or less pays the whole coin to the writer program, including a formula result of 1 through 330.</li>
+  </ul>
+  <ul class="nets">
+    <li class="writer" data-party="writer" data-net="1000"><div class="who">Writer</div><strong class="up">+1,000</strong><div>20,000 → 21,000</div></li>
+    <li class="desk" data-party="desk" data-net="-1000"><div class="who">Desk</div><strong class="down">−1,000</strong><div>1,000 → 0</div></li>
+  </ul>
+</article>
+
+<article class="scenario" id="dust" data-writer="669" data-desk="-669">
+  <h2>Dust boundary on the settlement</h2>
+  <p>Same 20,000 coin and the same 1,000 premium. Two fixture prints, unverified. At 9,862,736 cents the formula’s holder leg is 330, so the writer still takes the whole coin and the net is the same as at the strike: writer +1,000, desk −1,000. At 9,863,237 cents the holder leg is 331 and the split opens.</p>
+  <section class="tx" data-name="settle-dust-keep">
+    <div class="col inputs">
+      <div class="coin vault covenant" data-sat="20000" data-party="vault">
+        <div class="who"><svg class="lock" viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1" fill="none" stroke="currentColor"/><path d="M5 7V5a3 3 0 0 1 6 0v2" fill="none" stroke="currentColor"/></svg>OptionVault · ST 9,862,736¢</div>
+        <strong>20,000</strong> sats
+        <p>Formula holder leg 330. That is not greater than dust.</p>
+      </div>
+    </div>
+    <div class="spine">
+      <div class="tid">settle</div>
+      <div>20,000 in</div>
+      <div>20,000 out</div>
+      <div>fare 0</div>
+      <div class="ok">BTC conserved</div>
+    </div>
+    <div class="col outputs">
+      <div class="coin writer" data-sat="20000" data-party="writer">
+        <div class="who">Writer</div>
+        <strong>20,000</strong> sats
+        <p>The 330 from the formula stays in this output. The desk receives nothing from the vault.</p>
+      </div>
+      <div class="coin protocol opreturn" data-sat="0" data-party="protocol"><div class="who">Extension</div><strong>0</strong> sats<p>OP_RETURN.</p></div>
+      <div class="coin protocol" data-sat="0" data-party="protocol"><div class="who">Anchor</div><strong>0</strong> sats<p>Pay-to-anchor.</p></div>
+    </div>
+  </section>
+  <section class="tx" data-name="settle-split-edge">
+    <div class="col inputs">
+      <div class="coin vault covenant" data-sat="20000" data-party="vault">
+        <div class="who"><svg class="lock" viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1" fill="none" stroke="currentColor"/><path d="M5 7V5a3 3 0 0 1 6 0v2" fill="none" stroke="currentColor"/></svg>OptionVault · ST 9,863,237¢</div>
+        <strong>20,000</strong> sats
+        <p>Formula holder leg 331, writer leg 19,669. Both are above 330.</p>
+      </div>
+    </div>
+    <div class="spine">
+      <div class="tid">settle</div>
+      <div>20,000 in</div>
+      <div>20,000 out</div>
+      <div>fare 0</div>
+      <div class="ok">BTC conserved</div>
+    </div>
+    <div class="col outputs">
+      <div class="coin desk covenant" data-sat="331" data-party="desk">
+        <div class="who"><svg class="lock" viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1" fill="none" stroke="currentColor"/><path d="M5 7V5a3 3 0 0 1 6 0v2" fill="none" stroke="currentColor"/></svg>Desk vtxo</div>
+        <strong>331</strong> sats
+        <p>Output 0. First split above the contract dust for this Q and K.</p>
+      </div>
+      <div class="coin writer" data-sat="19669" data-party="writer">
+        <div class="who">Writer</div>
+        <strong>19,669</strong> sats
+        <p>Output 1.</p>
+      </div>
+      <div class="coin protocol opreturn" data-sat="0" data-party="protocol"><div class="who">Extension</div><strong>0</strong> sats<p>OP_RETURN.</p></div>
+      <div class="coin protocol" data-sat="0" data-party="protocol"><div class="who">Anchor</div><strong>0</strong> sats<p>Pay-to-anchor.</p></div>
+    </div>
+  </section>
+  <p>The cards are the 331-sat split. Live server dust is also 330, and <code>vtxoMinAmount</code> is 1, so a 331-sat vtxo is above both. The contract never asks for a 1-sat leg.</p>
+  <ul class="checks">
+    <li><code>ph &gt; 330</code> and <code>writerAmt &gt; 330</code>: output 0 is the holder program, output 1 is the writer program.</li>
+    <li><code>ph ≤ 330</code>: output 0 is the whole input, paid to the writer program.</li>
+  </ul>
+  <ul class="nets">
+    <li class="writer" data-party="writer" data-net="669"><div class="who">Writer</div><strong class="up">+669</strong><div>20,000 → 20,669</div></li>
+    <li class="desk" data-party="desk" data-net="-669"><div class="who">Desk</div><strong class="down">−669</strong><div>1,000 → 331</div></li>
+  </ul>
+</article>
+
+<article class="scenario" id="fill-dust" data-writer="730" data-desk="-730">
+  <h2>Desk change at 330 and at 331</h2>
+  <p>The intent coin is still exactly 20,000. The desk’s coins sum to more than the premium. <code>fill.ts</code> folds a surplus of 1 through 330 into the writer’s output. A surplus of 331 is a change output back to the desk. Then the in-the-money settle from the first scenario runs on the 20,000 vault coin. Cards are the folded case.</p>
+  <section class="tx" data-name="fill-fold">
+    <div class="col inputs">
+      <div class="coin intent covenant" data-sat="20000" data-party="intent">
+        <div class="who"><svg class="lock" viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1" fill="none" stroke="currentColor"/><path d="M5 7V5a3 3 0 0 1 6 0v2" fill="none" stroke="currentColor"/></svg>OptionIntent · server + emulator</div>
+        <strong>20,000</strong> sats
+      </div>
+      <div class="coin desk" data-sat="1330" data-party="desk">
+        <div class="who">Desk · forfeit</div>
+        <strong>1,330</strong> sats
+        <p>Sender: the desk. Premium 1,000 plus surplus 330.</p>
+      </div>
+    </div>
+    <div class="spine">
+      <div class="tid">finalize</div>
+      <div>21,330 in</div>
+      <div>21,330 out</div>
+      <div>fare 0</div>
+      <div class="ok">BTC conserved</div>
+    </div>
+    <div class="col outputs">
+      <div class="coin writer" data-sat="1330" data-party="writer">
+        <div class="who">Writer · pasted address</div>
+        <strong>1,330</strong> sats
+        <p>Output 0. The 330 surplus is added here. No change output.</p>
+      </div>
+      <div class="coin vault covenant" data-sat="20000" data-party="vault">
+        <div class="who"><svg class="lock" viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1" fill="none" stroke="currentColor"/><path d="M5 7V5a3 3 0 0 1 6 0v2" fill="none" stroke="currentColor"/></svg>OptionVault</div>
+        <strong>20,000</strong> sats
+        <p>Output 1. Still exactly collateral.</p>
+      </div>
+      <div class="coin protocol opreturn" data-sat="0" data-party="protocol"><div class="who">Extension</div><strong>0</strong> sats<p>OP_RETURN.</p></div>
+      <div class="coin protocol" data-sat="0" data-party="protocol"><div class="who">Anchor</div><strong>0</strong> sats<p>Pay-to-anchor.</p></div>
+    </div>
+  </section>
+  <section class="tx" data-name="fill-change">
+    <div class="col inputs">
+      <div class="coin intent covenant" data-sat="20000" data-party="intent">
+        <div class="who"><svg class="lock" viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1" fill="none" stroke="currentColor"/><path d="M5 7V5a3 3 0 0 1 6 0v2" fill="none" stroke="currentColor"/></svg>OptionIntent · server + emulator</div>
+        <strong>20,000</strong> sats
+      </div>
+      <div class="coin desk" data-sat="1331" data-party="desk">
+        <div class="who">Desk · forfeit</div>
+        <strong>1,331</strong> sats
+        <p>Premium 1,000 plus surplus 331, which is above dust.</p>
+      </div>
+    </div>
+    <div class="spine">
+      <div class="tid">finalize</div>
+      <div>21,331 in</div>
+      <div>21,331 out</div>
+      <div>fare 0</div>
+      <div class="ok">BTC conserved</div>
+    </div>
+    <div class="col outputs">
+      <div class="coin writer" data-sat="1000" data-party="writer">
+        <div class="who">Writer</div>
+        <strong>1,000</strong> sats
+        <p>Output 0. Premium only.</p>
+      </div>
+      <div class="coin vault covenant" data-sat="20000" data-party="vault">
+        <div class="who"><svg class="lock" viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1" fill="none" stroke="currentColor"/><path d="M5 7V5a3 3 0 0 1 6 0v2" fill="none" stroke="currentColor"/></svg>OptionVault</div>
+        <strong>20,000</strong> sats
+        <p>Output 1.</p>
+      </div>
+      <div class="coin desk covenant" data-sat="331" data-party="desk">
+        <div class="who"><svg class="lock" viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1" fill="none" stroke="currentColor"/><path d="M5 7V5a3 3 0 0 1 6 0v2" fill="none" stroke="currentColor"/></svg>Desk change</div>
+        <strong>331</strong> sats
+        <p><code>spend.change</code> to the desk vtxo. Above contract dust and above live server dust.</p>
+      </div>
+      <div class="coin protocol opreturn" data-sat="0" data-party="protocol"><div class="who">Extension</div><strong>0</strong> sats<p>OP_RETURN.</p></div>
+      <div class="coin protocol" data-sat="0" data-party="protocol"><div class="who">Anchor</div><strong>0</strong> sats<p>Pay-to-anchor.</p></div>
+    </div>
+  </section>
+  <div class="band">After either fill the vault still holds 20,000. The in-the-money settle then pays the desk 600 and the writer 19,400.</div>
+  <ul class="checks">
+    <li><code>selectFloat</code> stops on exact change or on change above 330. A last coin that still leaves 1–330 of change is kept, and that surplus is added to the writer output.</li>
+    <li>Side 0 does not forbid a third output. The change output is the builder’s, not an extra covenant check.</li>
+  </ul>
+  <ul class="nets">
+    <li class="writer" data-party="writer" data-net="730"><div class="who">Writer, surplus folded</div><strong class="up">+730</strong><div>20,000 → 20,730</div></li>
+    <li class="desk" data-party="desk" data-net="-730"><div class="who">Desk, surplus folded</div><strong class="down">−730</strong><div>1,330 → 600</div></li>
+  </ul>
+  <p class="note">If the surplus is 331 instead, the writer’s net returns to +400 and the desk’s to −400. The 331 comes back as change, and settle still moves 400 of option value.</p>
+</article>
+
+<article class="scenario" id="put-all" data-writer="-19000" data-desk="19000">
+  <h2>Limited put, holder takes the coin</h2>
+  <p>Kind 1, still side 0: the writer locks 20,000 and the desk pays 1,000 at finalize, the same two transactions as the covered call. Print 4,849,878 cents ($48,498.78), unverified. Raw holder leg is 20,001, the script caps it at collateral, the writer’s leg is 0, and the holder receives the whole coin.</p>
+  <div class="band">Vault locked · 20,000 · writer already holds the 1,000 premium.</div>
+  <section class="tx" data-name="settle-put">
+    <div class="col inputs">
+      <div class="coin vault covenant" data-sat="20000" data-party="vault">
+        <div class="who"><svg class="lock" viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1" fill="none" stroke="currentColor"/><path d="M5 7V5a3 3 0 0 1 6 0v2" fill="none" stroke="currentColor"/></svg>OptionVault · server + emulator</div>
+        <strong>20,000</strong> sats
+        <p>Leaf <code>settle</code>, kind 1. One input.</p>
+      </div>
+    </div>
+    <div class="spine">
+      <div class="tid">settle</div>
+      <div>20,000 in</div>
+      <div>20,000 out</div>
+      <div>fare 0</div>
+      <div class="ok">BTC conserved</div>
+    </div>
+    <div class="col outputs">
+      <div class="coin desk covenant" data-sat="20000" data-party="desk">
+        <div class="who"><svg class="lock" viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1" fill="none" stroke="currentColor"/><path d="M5 7V5a3 3 0 0 1 6 0v2" fill="none" stroke="currentColor"/></svg>Desk vtxo</div>
+        <strong>20,000</strong> sats
+        <p>Output 0 is the whole input. The raw 20,001 is not an output. The cap happens before the dust test.</p>
+      </div>
+      <div class="coin protocol opreturn" data-sat="0" data-party="protocol"><div class="who">Extension</div><strong>0</strong> sats<p>OP_RETURN.</p></div>
+      <div class="coin protocol" data-sat="0" data-party="protocol"><div class="who">Anchor</div><strong>0</strong> sats<p>Pay-to-anchor.</p></div>
+    </div>
+  </section>
+  <ul class="checks">
+    <li>Kind 1 and ST below K: holder leg is Q×(K−ST)/ST, then capped at collateral.</li>
+    <li>A writer leg of 330 or less, with a holder leg above 330, pays the whole input to the holder program.</li>
+    <li>At the strike, kind 1 pays the writer the whole coin, the same shape as the covered call at the strike.</li>
+  </ul>
+  <ul class="nets">
+    <li class="writer" data-party="writer" data-net="-19000"><div class="who">Writer</div><strong class="down">−19,000</strong><div>20,000 → 1,000</div></li>
+    <li class="desk" data-party="desk" data-net="19000"><div class="who">Desk</div><strong class="up">+19,000</strong><div>1,000 → 20,000</div></li>
+  </ul>
+</article>
+
+<article class="scenario" id="refund" data-writer="0" data-desk="0">
+  <h2>Missed fill, then refund</h2>
+  <p>The writer’s 20,000 is on the intent. The deadline passes with that coin still there. <code>fillQuote</code> returns expired and does not send. The coin sits until someone submits cancel. Sender of the refund: the writer’s page, <code>cancelIntent</code>. The leaf does not check that signature. It forces the sats back to the writer program.</p>
+  <div class="band">Unclaimed. Intent still holds 20,000. Deadline has passed. No transaction yet.</div>
+  <section class="tx" data-name="cancel">
+    <div class="col inputs">
+      <div class="coin intent covenant" data-sat="20000" data-party="intent">
+        <div class="who"><svg class="lock" viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1" fill="none" stroke="currentColor"/><path d="M5 7V5a3 3 0 0 1 6 0v2" fill="none" stroke="currentColor"/></svg>OptionIntent · server + emulator</div>
+        <strong>20,000</strong> sats
+        <p>Leaf <code>cancel</code>. Exactly one input. The 2,048-second exit is not on this leaf.</p>
+      </div>
+    </div>
+    <div class="spine">
+      <div class="tid">cancel</div>
+      <div>20,000 in</div>
+      <div>20,000 out</div>
+      <div>fare 0</div>
+      <div class="ok">BTC conserved</div>
+    </div>
+    <div class="col outputs">
+      <div class="coin writer" data-sat="20000" data-party="writer">
+        <div class="who">Writer · pasted address</div>
+        <strong>20,000</strong> sats
+        <p>Output 0 is at least the whole input, paid to the writer program. <code>cancelIntent</code> pays <code>coin.value</code>.</p>
+      </div>
+      <div class="coin protocol opreturn" data-sat="0" data-party="protocol"><div class="who">Extension</div><strong>0</strong> sats<p>OP_RETURN.</p></div>
+      <div class="coin protocol" data-sat="0" data-party="protocol"><div class="who">Anchor</div><strong>0</strong> sats<p>Pay-to-anchor.</p></div>
+    </div>
+  </section>
+  <ul class="checks">
+    <li>Cancel requires the deadline to have been reached. Finalize requires that it has not. The two leaves cannot both pass.</li>
+    <li>One input. Output 0’s 32-byte program is the writer program, and its value is at least the input.</li>
+  </ul>
+  <ul class="nets">
+    <li class="writer" data-party="writer" data-net="0"><div class="who">Writer</div><strong>0</strong><div>20,000 → 20,000</div></li>
+    <li class="desk" data-party="desk" data-net="0"><div class="who">Desk</div><strong>0</strong><div>no coins moved</div></li>
+  </ul>
+</article>
+
+<article class="scenario" id="recovery" data-writer="0" data-desk="0">
+  <h2>After 2,048 seconds, and a joint close</h2>
+  <p>The timelock is only on the unilateral leaves. <code>programs.ts</code> marks that CSV as seconds. The compiler artifact emits it as blocks; the spent program changes the type and leaves the integer 2,048. No caller in the desk or the page sends these leaves. The outputs drawn at the input amount are not pinned. The signer can pay another script.</p>
+  <section class="tx" data-name="intent-unilateral">
+    <div class="col inputs">
+      <div class="coin intent covenant" data-sat="20000" data-party="intent">
+        <div class="who"><svg class="lock" viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1" fill="none" stroke="currentColor"/><path d="M5 7V5a3 3 0 0 1 6 0v2" fill="none" stroke="currentColor"/></svg>OptionIntent · writer key</div>
+        <strong>20,000</strong> sats
+        <p>Leaf <code>unilateral</code>. Signer: <code>userPk</code>, after 2,048 seconds. No server signature, no emulator signature.</p>
+      </div>
+    </div>
+    <div class="spine">
+      <div class="tid">unilateral</div>
+      <div>20,000 in</div>
+      <div>20,000 out</div>
+      <div>fare 0</div>
+      <div class="ok">BTC conserved</div>
+    </div>
+    <div class="col outputs">
+      <div class="coin writer unpinned" data-sat="20000" data-party="writer">
+        <div class="who">Not pinned</div>
+        <strong>20,000</strong> sats
+        <p>Drawn at the input amount so the picture balances. The script does not check the output.</p>
+      </div>
+    </div>
+  </section>
+  <section class="tx" data-name="vault-close">
+    <div class="col inputs">
+      <div class="coin vault covenant" data-sat="20000" data-party="vault">
+        <div class="who"><svg class="lock" viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1" fill="none" stroke="currentColor"/><path d="M5 7V5a3 3 0 0 1 6 0v2" fill="none" stroke="currentColor"/></svg>OptionVault · both parties</div>
+        <strong>20,000</strong> sats
+        <p>Leaf <code>close</code>. Script checks writer and holder signatures. The leaf also requires server and emulator. No timelock. No caller sends it.</p>
+      </div>
+    </div>
+    <div class="spine">
+      <div class="tid">close</div>
+      <div>20,000 in</div>
+      <div>20,000 out</div>
+      <div>fare 0</div>
+      <div class="ok">BTC conserved</div>
+    </div>
+    <div class="col outputs">
+      <div class="coin protocol unpinned" data-sat="20000" data-party="protocol">
+        <div class="who">Not pinned</div>
+        <strong>20,000</strong> sats
+        <p>The two signatures can agree on any outputs. Nothing in this repo builds them.</p>
+      </div>
+    </div>
+  </section>
+  <section class="tx" data-name="vault-unilateral">
+    <div class="col inputs">
+      <div class="coin vault covenant" data-sat="20000" data-party="vault">
+        <div class="who"><svg class="lock" viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1" fill="none" stroke="currentColor"/><path d="M5 7V5a3 3 0 0 1 6 0v2" fill="none" stroke="currentColor"/></svg>OptionVault · writer key</div>
+        <strong>20,000</strong> sats
+        <p>Leaf <code>unilateral</code>. Signer: <code>writerPk</code>, after 2,048 seconds. The holder does not sign.</p>
+      </div>
+    </div>
+    <div class="spine">
+      <div class="tid">unilateral</div>
+      <div>20,000 in</div>
+      <div>20,000 out</div>
+      <div>fare 0</div>
+      <div class="ok">BTC conserved</div>
+    </div>
+    <div class="col outputs">
+      <div class="coin writer unpinned" data-sat="20000" data-party="writer">
+        <div class="who">Not pinned</div>
+        <strong>20,000</strong> sats
+        <p>The script does not check the output. No caller sends this leaf.</p>
+      </div>
+    </div>
+  </section>
+  <ul class="checks">
+    <li>Intent unilateral: <code>older(exit)</code> and <code>checkSig(userSig, userPk)</code>.</li>
+    <li>Vault close: <code>checkSig</code> for the writer and the holder, plus the server and emulator on the leaf. No CSV.</li>
+    <li>Vault unilateral: <code>older(exit)</code> and the writer signature. No holder signature.</li>
+  </ul>
+  <ul class="nets">
+    <li class="writer" data-party="writer" data-net="0"><div class="who">If the coin returns</div><strong>0</strong><div>only when the signer pays themselves</div></li>
+    <li class="desk" data-party="desk" data-net="0"><div class="who">Desk</div><strong>0</strong><div>these leaves do not name the desk</div></li>
+  </ul>
+</article>
+
+<article class="scenario" id="side1">
+  <h2>Side 1 finalize</h2>
+  <p>The script allows a second shape: the intent coin is the premium, output 0 pays the solver program, output 1 pays the vault at least collateral, and a change above 330 returns to the user. <code>bindContracts</code> sets side to 0. No builder in this repo emits side 1. The amounts are the minimum that satisfy those checks when the intent coin is exactly the 1,000 premium.</p>
+  <section class="tx" data-name="side1-min">
+    <div class="col inputs">
+      <div class="coin intent covenant" data-sat="1000" data-party="intent">
+        <div class="who"><svg class="lock" viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1" fill="none" stroke="currentColor"/><path d="M5 7V5a3 3 0 0 1 6 0v2" fill="none" stroke="currentColor"/></svg>OptionIntent · the user is the holder</div>
+        <strong>1,000</strong> sats
+        <p>Input value equals the premium, so the change check does not add output 2.</p>
+      </div>
+      <div class="coin solver" data-sat="20000" data-party="solver">
+        <div class="who">Solver funding · index not pinned</div>
+        <strong>20,000</strong> sats
+        <p>The script does not name this input. It is the smallest addition that covers a 20,000 collateral output.</p>
+      </div>
+    </div>
+    <div class="spine">
+      <div class="tid">finalize · side 1</div>
+      <div>21,000 in</div>
+      <div>21,000 out</div>
+      <div>fare 0</div>
+      <div class="ok">BTC conserved</div>
+    </div>
+    <div class="col outputs">
+      <div class="coin desk covenant" data-sat="1000" data-party="desk">
+        <div class="who"><svg class="lock" viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1" fill="none" stroke="currentColor"/><path d="M5 7V5a3 3 0 0 1 6 0v2" fill="none" stroke="currentColor"/></svg>Solver program · holder vtxo</div>
+        <strong>1,000</strong> sats
+        <p>Output 0. At least the premium. <code>bindContracts</code> sets <code>solverScript</code> to the holder’s DefaultVtxo. Side stays 0, so no builder creates this output.</p>
+      </div>
+      <div class="coin vault covenant" data-sat="20000" data-party="vault">
+        <div class="who"><svg class="lock" viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1" fill="none" stroke="currentColor"/><path d="M5 7V5a3 3 0 0 1 6 0v2" fill="none" stroke="currentColor"/></svg>OptionVault</div>
+        <strong>20,000</strong> sats
+        <p>Output 1. At least collateral.</p>
+      </div>
+      <div class="coin protocol opreturn" data-sat="0" data-party="protocol"><div class="who">Extension</div><strong>0</strong> sats<p>OP_RETURN, if a builder attached one. None does.</p></div>
+      <div class="coin protocol" data-sat="0" data-party="protocol"><div class="who">Anchor</div><strong>0</strong> sats<p>Pay-to-anchor, if the virtual tx is built.</p></div>
+    </div>
+  </section>
+  <ul class="checks">
+    <li>Side 1: input at least the premium; output 0 at least the premium to the solver program; output 1 at least collateral to the vault program.</li>
+    <li>If the intent input exceeds the premium by more than 330, output 2 must return that change to the user program.</li>
+  </ul>
+</article>
+
+<article class="scenario rejected" id="rejected">
+  <h2>Rejected, or not submitted</h2>
+  <section class="tx" data-name="reject-premium" data-reject="script">
+    <div class="col inputs">
+      <div class="coin intent covenant" data-sat="20000" data-party="intent">
+        <div class="who"><svg class="lock" viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1" fill="none" stroke="currentColor"/><path d="M5 7V5a3 3 0 0 1 6 0v2" fill="none" stroke="currentColor"/></svg>OptionIntent</div>
+        <strong>20,000</strong> sats
+      </div>
+      <div class="coin desk" data-sat="330" data-party="desk">
+        <div class="who">Desk</div>
+        <strong>330</strong> sats
+        <p>A premium of 330.</p>
+      </div>
+    </div>
+    <div class="spine">
+      <div class="tid">finalize</div>
+      <div>20,330 in</div>
+      <div>20,330 out</div>
+      <div class="bad">rejected</div>
+    </div>
+    <div class="col outputs">
+      <div class="coin writer" data-sat="330" data-party="writer"><div class="who">Writer</div><strong>330</strong> sats<p>Would be output 0.</p></div>
+      <div class="coin vault covenant" data-sat="20000" data-party="vault"><div class="who"><svg class="lock" viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1" fill="none" stroke="currentColor"/><path d="M5 7V5a3 3 0 0 1 6 0v2" fill="none" stroke="currentColor"/></svg>OptionVault</div><strong>20,000</strong> sats<p>Would be output 1.</p></div>
+    </div>
+  </section>
+  <p>The script requires <code>premium &gt; 330</code>. 330 fails that check. <code>premiumRefusal</code> returns “premium below dust” and the desk does not quote it. 331 is the smallest premium the script accepts. Live server dust is 330 as well.</p>
+
+  <section class="tx" data-name="reject-collateral" data-reject="desk">
+    <div class="col inputs">
+      <div class="coin writer" data-sat="9999" data-party="writer">
+        <div class="who">Writer</div>
+        <strong>9,999</strong> sats
+        <p>Above the script’s 330 floor. Below the desk’s 10,000 floor.</p>
+      </div>
+    </div>
+    <div class="spine">
+      <div class="tid">quote</div>
+      <div>not submitted</div>
+      <div class="bad">desk refuses</div>
+    </div>
+    <div class="col outputs">
+      <div class="coin intent covenant" data-sat="9999" data-party="intent">
+        <div class="who"><svg class="lock" viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1" fill="none" stroke="currentColor"/><path d="M5 7V5a3 3 0 0 1 6 0v2" fill="none" stroke="currentColor"/></svg>Would be an intent coin</div>
+        <strong>9,999</strong> sats
+        <p><code>requestRefusal</code> returns “collateral” when the amount is under <code>Q_MIN</code> (10,000) or over 1,000,000,000. The script’s own cap is the same 1,000,000,000, and its floor is 330.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="tx" data-name="reject-short" data-reject="short">
+    <div class="col inputs">
+      <div class="coin intent covenant" data-sat="20000" data-party="intent">
+        <div class="who"><svg class="lock" viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1" fill="none" stroke="currentColor"/><path d="M5 7V5a3 3 0 0 1 6 0v2" fill="none" stroke="currentColor"/></svg>OptionIntent</div>
+        <strong>20,000</strong> sats
+        <p>The collateral is on the intent. The deadline has not passed.</p>
+      </div>
+      <div class="coin desk" data-sat="999" data-party="desk">
+        <div class="who">Desk</div>
+        <strong>999</strong> sats
+        <p>Short of the 1,000 premium by 1 sat.</p>
+      </div>
+    </div>
+    <div class="spine">
+      <div class="tid">fillQuote</div>
+      <div>20,999 on hand</div>
+      <div>21,000 required</div>
+      <div class="bad">not submitted</div>
+    </div>
+    <div class="col outputs">
+      <div class="coin writer" data-sat="1000" data-party="writer"><div class="who">Wanted</div><strong>1,000</strong> sats<p>Premium. Not created.</p></div>
+      <div class="coin vault covenant" data-sat="20000" data-party="vault"><div class="who">Wanted</div><strong>20,000</strong> sats<p>Vault. Not created.</p></div>
+    </div>
+  </section>
+  <p><code>selectFloat</code> returns null. <code>fillQuote</code> returns <code>short</code> and does not call <code>send</code>. The intent coin stays where it is.</p>
+
+  <section class="tx" data-name="reject-opreturn" data-reject="builder">
+    <div class="col inputs">
+      <div class="coin writer" data-sat="21000" data-party="writer">
+        <div class="who">Caller outputs, before the extension</div>
+        <strong>21,000</strong> sats
+        <p>Payment outputs that would balance. Not a transaction <code>fill.ts</code> builds.</p>
+      </div>
+    </div>
+    <div class="spine">
+      <div class="tid">buildOffchainTx</div>
+      <div>21,000 in</div>
+      <div>21,000 out</div>
+      <div class="bad">SDK rejects</div>
+    </div>
+    <div class="col outputs">
+      <div class="coin writer" data-sat="1000" data-party="writer"><div class="who">Payment</div><strong>1,000</strong> sats</div>
+      <div class="coin vault covenant" data-sat="20000" data-party="vault"><div class="who">Payment</div><strong>20,000</strong> sats</div>
+      <div class="coin protocol opreturn" data-sat="0" data-party="protocol"><div class="who">OP_RETURN 1</div><strong>0</strong> sats</div>
+      <div class="coin protocol opreturn" data-sat="0" data-party="protocol"><div class="who">OP_RETURN 2</div><strong>0</strong> sats</div>
+      <div class="coin protocol opreturn" data-sat="0" data-party="protocol"><div class="who">OP_RETURN 3</div><strong>0</strong> sats<p><code>MAX_OP_RETURN</code> is 2. The throw happens before the anchor is appended and before <code>attachExtension</code> adds the emulator packet.</p></div>
+    </div>
+  </section>
+  <p>A real finalize passes zero OP_RETURN outputs into that check, then <code>attachExtension</code> adds one. On the wire that is one OP_RETURN, under the SDK cap of 2 and under the live server cap of 3. The anchor is not an OP_RETURN.</p>
+  <ul class="checks">
+    <li>Script: <code>premium &gt; 330</code>, <code>collateral &gt; 330</code>, and <code>collateral ≤ 1,000,000,000</code>.</li>
+    <li>Desk: <code>requestRefusal</code> uses 10,000 as the floor, and <code>premiumRefusal</code> rejects a premium of 330 or less.</li>
+    <li>Live <code>dust</code> is 330 and <code>vtxoMinAmount</code> is 1. The options scripts do not create a 1-sat payment output.</li>
+    <li>Live <code>maxOpReturnOutputs</code> is 3. The SDK builder’s own cap, on the outputs it is given, is 2.</li>
+  </ul>
+</article>
+
+<article class="scenario" id="swap">
+  <h2>Swap and SingleSig</h2>
+  <p>NonInteractiveSwap is the pattern OptionIntent copies. The desk does not send it. <code>bindSwap</code> is used by the program check and the e2e script’s address print. Asset amounts here are that program check: offer 1,000, want 2,000. They are asset units. The script does not pin the BTC on those outputs, so this picture does not invent a sat split. Sats on a real swap would still have to clear live dust 330 and <code>vtxoMinAmount</code> 1 if they were vtxos; this contract does not say what those sats are.</p>
+  <section class="tx" data-name="swap-asset" data-assets="1">
+    <div class="col inputs">
+      <div class="coin solver covenant" data-asset="offer:1000" data-party="solver">
+        <div class="who"><svg class="lock" viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1" fill="none" stroke="currentColor"/><path d="M5 7V5a3 3 0 0 1 6 0v2" fill="none" stroke="currentColor"/></svg>Swap coin · maker</div>
+        <strong>1,000</strong> offer
+        <p>Sats: not checked. Leaf signers: server and emulator. The script also checks <code>takerSig</code> against <code>takerPk</code>.</p>
+      </div>
+      <div class="coin taker" data-asset="want:2000" data-party="taker">
+        <div class="who">Taker funding · index not pinned</div>
+        <strong>2,000</strong> want
+        <p>Some input has to supply the want asset. The script does not name its index. Sats: not checked.</p>
+      </div>
+    </div>
+    <div class="spine">
+      <div class="tid">swap</div>
+      <div>offer 1,000 in</div>
+      <div>want 2,000 in</div>
+      <div class="ok">assets conserved</div>
+      <div>sats not pinned</div>
+    </div>
+    <div class="col outputs">
+      <div class="coin solver covenant" data-asset="want:2000" data-party="solver">
+        <div class="who"><svg class="lock" viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1" fill="none" stroke="currentColor"/><path d="M5 7V5a3 3 0 0 1 6 0v2" fill="none" stroke="currentColor"/></svg>Output 0 · maker program</div>
+        <strong>2,000</strong> want
+        <p>The 32-byte program must equal the committed <code>vtxo_SingleSig_makerPk_exit</code> parameter. <code>swapMakerProgram</code> sets that to a payout vtxo key, not to a separately compiled SingleSig address.</p>
+      </div>
+      <div class="coin taker" data-asset="offer:1000" data-party="taker">
+        <div class="who">Output 1 · taker script</div>
+        <strong>1,000</strong> offer
+        <p>Must equal the <code>takerScriptPubKey</code> argument.</p>
+      </div>
+    </div>
+  </section>
+  <section class="tx" data-name="swap-cancel" data-assets="1">
+    <div class="col inputs">
+      <div class="coin solver covenant" data-asset="offer:1000" data-party="solver">
+        <div class="who"><svg class="lock" viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1" fill="none" stroke="currentColor"/><path d="M5 7V5a3 3 0 0 1 6 0v2" fill="none" stroke="currentColor"/></svg>Swap coin</div>
+        <strong>1,000</strong> offer
+        <p>Leaf <code>cancel</code>. Maker signature inside the script, plus server and emulator. <code>tx.time ≥ expirationTime</code>. The source comment says block height; the opcode is <code>INSPECTLOCKTIME</code>. The value is whatever the caller stored.</p>
+      </div>
+    </div>
+    <div class="spine">
+      <div class="tid">cancel</div>
+      <div>offer 1,000 in</div>
+      <div>offer 1,000 out</div>
+      <div class="ok">assets conserved</div>
+    </div>
+    <div class="col outputs">
+      <div class="coin solver unpinned" data-asset="offer:1000" data-party="solver">
+        <div class="who">Not pinned</div>
+        <strong>1,000</strong> offer
+        <p>The cancel leaf does not check outputs. No caller sends it.</p>
+      </div>
+    </div>
+  </section>
+  <section class="tx" data-name="swap-unilateral" data-assets="1">
+    <div class="col inputs">
+      <div class="coin solver covenant" data-asset="offer:1000" data-party="solver">
+        <div class="who"><svg class="lock" viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1" fill="none" stroke="currentColor"/><path d="M5 7V5a3 3 0 0 1 6 0v2" fill="none" stroke="currentColor"/></svg>Swap coin · maker</div>
+        <strong>1,000</strong> offer
+        <p>Leaf <code>unilateral</code>. Maker signature after 2,048 seconds. No server signature.</p>
+      </div>
+    </div>
+    <div class="spine">
+      <div class="tid">unilateral</div>
+      <div>offer 1,000 in</div>
+      <div>offer 1,000 out</div>
+      <div class="ok">assets conserved</div>
+    </div>
+    <div class="col outputs">
+      <div class="coin solver unpinned" data-asset="offer:1000" data-party="solver">
+        <div class="who">Not pinned</div>
+        <strong>1,000</strong> offer
+        <p>Outputs are not checked. No caller sends this leaf.</p>
+      </div>
+    </div>
+  </section>
+  <p>SingleSig.spend asks for the user’s signature and does not pin outputs. Its unilateral leaf is the same signature after <code>older(exit)</code>. The swap source imports that contract. This repo does not load a SingleSig artifact, and the options desk does not call either leaf. There is no sat amount in <code>single_sig.ark</code> to draw.</p>
+  <ul class="checks">
+    <li>Swap: output 0’s want asset is at least <code>wantAmount</code> and its program is the committed maker program; output 1’s offer asset is at least <code>offerAmount</code> and its script is the taker’s argument.</li>
+    <li>Cancel: locktime at least <code>expirationTime</code>, and the maker signature. No output check. No CSV.</li>
+    <li>Unilateral: the 2,048-second CSV and the maker signature.</li>
+  </ul>
+</article>
+
+<section class="panel" id="leaves">
+  <h2>Leaves</h2>
+  <table>
+    <thead>
+      <tr><th>Leaf</th><th>Signatures</th><th>Used by</th><th>Pinned outputs</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>OptionIntent.finalize</td>
+        <td>Server and emulator. Desk signs each funding input’s forfeit leaf.</td>
+        <td><code>desk/fill.ts</code> <code>fillQuote</code></td>
+        <td>Side 0: output 0 writer program ≥ premium + surplus collateral; output 1 vault program ≥ collateral.</td>
+      </tr>
+      <tr>
+        <td>OptionIntent.cancel</td>
+        <td>Server and emulator. The writer key is not a signer.</td>
+        <td><code>app/src/fund.ts</code> <code>cancelIntent</code></td>
+        <td>One input. Output 0 writer program ≥ the input value.</td>
+      </tr>
+      <tr>
+        <td>OptionIntent.unilateral</td>
+        <td>Writer key, after 2,048 seconds.</td>
+        <td>No caller.</td>
+        <td>None.</td>
+      </tr>
+      <tr>
+        <td>OptionVault.settle</td>
+        <td>Server and emulator. Nine oracle signatures check messages.</td>
+        <td><code>scripts/e2e-mutinynet.ts</code> and the lifecycle test call <code>send</code>. <code>app/settle-math.js</code> copies the payoff for the page and does not broadcast.</td>
+        <td>Split, writer-takes-all, or holder-takes-all, as the dust rules above.</td>
+      </tr>
+      <tr>
+        <td>OptionVault.close</td>
+        <td>Writer, holder, server, emulator.</td>
+        <td>No caller.</td>
+        <td>None.</td>
+      </tr>
+      <tr>
+        <td>OptionVault.unilateral</td>
+        <td>Writer key, after 2,048 seconds.</td>
+        <td>No caller.</td>
+        <td>None.</td>
+      </tr>
+      <tr>
+        <td>NonInteractiveSwap.swap</td>
+        <td>Taker key inside the script. Server and emulator on the leaf.</td>
+        <td>No caller. <code>bindSwap</code> only derives an address.</td>
+        <td>Output 0: committed maker program and want asset. Output 1: taker script and offer asset.</td>
+      </tr>
+      <tr>
+        <td>NonInteractiveSwap.cancel</td>
+        <td>Maker key, server, emulator.</td>
+        <td>No caller.</td>
+        <td>None. Locktime ≥ <code>expirationTime</code>.</td>
+      </tr>
+      <tr>
+        <td>NonInteractiveSwap.unilateral</td>
+        <td>Maker key, after 2,048 seconds.</td>
+        <td>No caller.</td>
+        <td>None.</td>
+      </tr>
+      <tr>
+        <td>SingleSig.spend</td>
+        <td>User key.</td>
+        <td>No caller. Not loaded as a spent program.</td>
+        <td>None.</td>
+      </tr>
+      <tr>
+        <td>SingleSig.unilateral</td>
+        <td>User key, after <code>older(exit)</code>.</td>
+        <td>No caller.</td>
+        <td>None.</td>
+      </tr>
+    </tbody>
+  </table>
+</section>
+<p class="src">Read at commit 5027bc786c7e0c313e2d4409fe629a0cc4af9882. Scripts: <code>contracts/option_intent.ark</code>, <code>contracts/option_vault.ark</code>, <code>contracts/non_interactive_swap.ark</code>, <code>contracts/single_sig.ark</code>. Builders: <code>desk/fill.ts</code>, <code>app/src/fund.ts</code>, <code>protocol/contracts.ts</code>, <code>protocol/programs.ts</code>. Payoff mirror: <code>app/settle-math.js</code>. SDK checks named above: <code>buildOffchainTx</code>, <code>buildVirtualTx</code>, <code>attachExtension</code>. Live parameters: Mutinynet <code>/v1/info</code> on 2026-09-26. English only.</p>
+</main>
+</body>
+</html>
