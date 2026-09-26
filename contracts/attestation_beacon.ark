@@ -4,29 +4,30 @@ pragma arkade ^0.1.0;
 // by spending it in the same transaction.
 //
 // Identity is an asset, not a script. The beacon coin carries one unit of an
-// uncontrolled asset (ctrlTxid, ctrlGidx). arkd never reissues an asset that
-// has no control asset, so exactly one coin holds that unit at any time, and
-// every cooperative spend of that coin runs one of the leaves below. A
-// consumer commits to the asset id only. The committee can move the unit to a
-// new script with `migrate`, and the consumer keeps reading.
+// asset (ctrlTxid, ctrlGidx) that was issued once, uncontrolled, with supply
+// 1. arkd never reissues an asset that has no control asset, so exactly one
+// coin holds that unit, and every cooperative spend of that coin runs one of
+// the leaves below. A consumer commits to the asset id only, checks the
+// issuance once, and keeps reading after the committee moves the unit to a
+// new script with `migrate`.
 //
 // State is the extension packet of type STATE in the transaction that created
-// the coin. Layout, 169 bytes:
-//   0        version, 1
+// the coin. Layout, 329 bytes:
+//   0        version, 0x01
 //   1..9     round, num2bin(round, 8)
-//   9..169   4 slots of 40 bytes, newest first: key num2bin(key, 8), value 32 bytes
-// `attest` writes slot 0 and shifts the other three. Keys strictly increase,
-// so a key is attested at most once in this lineage. For the option vault the
-// key is the expiry and the first 8 bytes of the value are the settlement
-// price in cents.
+//   9..329   8 slots of 40 bytes, newest first: key num2bin(key, 8), value 32 bytes
+// `attest` writes slot 0 and shifts the other seven. A key that is in a slot
+// cannot be attested again while it is there. A key that fell off may be
+// attested again, with the same signatures if anyone kept them.
 //
-// Messages, signed by threshold-of-5 committee keys (an absent signer passes an
-// empty signature; a wrong non-empty signature fails the script):
-//   attest:  sha256(domain + num2bin(key, 8) + value)
-//   migrate: sha256(domain + "migrate" + next)
+// Messages, signed by threshold-of-5 committee keys. An absent signer passes an
+// empty signature; a wrong non-empty signature fails the script.
+//   attest:  sha256(domain + ctrlTxid + num2bin(ctrlGidx, 4) + num2bin(key, 8) + value)
+//   migrate: sha256(domain + "migrate" + ctrlTxid + num2bin(ctrlGidx, 4) + num2bin(round, 8) + next)
 //
-// Layout of a read: input 0 is the consumer, input 1 is this coin, output 0 is
-// this coin again with the same script, value, asset and packet.
+// Every leaf continues the coin at output 0: same script (or `next` for
+// migrate), at least the same value, the asset unit, the packet. `read` adds
+// readFee sats to the coin. A read pins nothing else about its transaction.
 
 contract AttestationBeacon(
   bytes32 ctrlTxid,
@@ -34,17 +35,31 @@ contract AttestationBeacon(
   pubkey[5] signers,
   int threshold,
   bytes domain,
+  int keyLag,
+  int readFee,
   pubkey adminPk,
   int exit
 ) {
   const int STATE = 32;
-  const int SIZE = 169;
+  const int SIZE = 329;
   const int SLOTS = 9;
   const int VALUE_AT = 17;
   const int HISTORY_AT = 49;
-  const int HISTORY = 120;
+  const int HISTORY = 280;
 
   private function quorum(bytes32 message, signature[5] sigs) {
+    require(threshold >= 1, "threshold floor");
+    require(threshold <= 5, "threshold cap");
+    require(signers[0] != signers[1], "duplicate signer");
+    require(signers[0] != signers[2], "duplicate signer");
+    require(signers[0] != signers[3], "duplicate signer");
+    require(signers[0] != signers[4], "duplicate signer");
+    require(signers[1] != signers[2], "duplicate signer");
+    require(signers[1] != signers[3], "duplicate signer");
+    require(signers[1] != signers[4], "duplicate signer");
+    require(signers[2] != signers[3], "duplicate signer");
+    require(signers[2] != signers[4], "duplicate signer");
+    require(signers[3] != signers[4], "duplicate signer");
     int valid = 0;
     for (i, sig) in sigs {
       if (checkSigFromStack(sig, signers[i], message)) {
@@ -58,39 +73,51 @@ contract AttestationBeacon(
     require(size(state) == SIZE, "state size");
     require(substr(state, 0, 1) == 0x01, "state version");
     require(tx.outputs[0].scriptPubKey == tx.input.current.scriptPubKey, "script");
-    require(tx.outputs[0].value >= tx.input.current.value, "value");
     require(tx.outputs[0].assets.lookup(ctrlTxid, ctrlGidx) == 1, "identity asset");
+  }
+
+  private function absent(bytes prev, int key) {
+    int[8] slots = [9, 49, 89, 129, 169, 209, 249, 289];
+    for (i, offset) in slots {
+      require(substr(prev, offset, 8) != num2bin(key, 8), "key already in a slot");
+    }
   }
 
   function attest(int key, bytes32 value, signature[5] sigs) {
     require(this.activeInputIndex == 0, "beacon is input 0");
     require(key > 0, "key");
-    quorum(sha256(domain + num2bin(key, 8) + value), sigs);
+    if (keyLag >= 0) {
+      require(checkTime(key + keyLag), "before key time");
+    }
+    quorum(sha256(domain + ctrlTxid + num2bin(ctrlGidx, 4) + num2bin(key, 8) + value), sigs);
 
     bytes prev = tx.inputs[0].packet(STATE);
     bytes next = tx.packet(STATE);
     require(size(prev) == SIZE, "prev size");
-    require(key > bin2num(substr(prev, SLOTS, 8)), "key must increase");
+    absent(prev, key);
     require(bin2num(substr(next, 1, 8)) == bin2num(substr(prev, 1, 8)) + 1, "round");
     require(substr(next, SLOTS, 8) == num2bin(key, 8), "slot key");
     require(substr(next, VALUE_AT, 32) == value, "slot value");
     require(substr(next, HISTORY_AT, HISTORY) == substr(prev, SLOTS, HISTORY), "history");
+    require(tx.outputs[0].value >= tx.input.current.value, "value");
     continues(next);
   }
 
-  function read() {
-    require(this.activeInputIndex == 1, "beacon is input 1");
+  function read(int selfIndex) {
+    require(selfIndex == this.activeInputIndex, "self index");
     bytes state = tx.packet(STATE);
-    require(state == tx.inputs[1].packet(STATE), "state carried");
+    require(state == tx.inputs[selfIndex].packet(STATE), "state carried");
+    require(tx.outputs[0].value >= tx.input.current.value + readFee, "read fee");
     continues(state);
   }
 
   function migrate(bytes32 next, signature[5] sigs) {
     require(this.activeInputIndex == 0, "beacon is input 0");
-    quorum(sha256(domain + "migrate" + next), sigs);
     bytes state = tx.packet(STATE);
     require(state == tx.inputs[0].packet(STATE), "state carried");
     require(size(state) == SIZE, "state size");
+    int round = bin2num(substr(state, 1, 8));
+    quorum(sha256(domain + "migrate" + ctrlTxid + num2bin(ctrlGidx, 4) + num2bin(round, 8) + next), sigs);
     require(tx.outputs[0].scriptPubKey == next, "next script");
     require(tx.outputs[0].value >= tx.input.current.value, "value");
     require(tx.outputs[0].assets.lookup(ctrlTxid, ctrlGidx) == 1, "identity asset");

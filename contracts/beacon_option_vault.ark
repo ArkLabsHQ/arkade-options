@@ -5,12 +5,13 @@ pragma arkade ^0.1.0;
 //
 // The vault commits to the beacon's identity asset (beaconTxid, beaconGidx),
 // not to the beacon script or the committee keys. Settle spends this coin as
-// input 0 and the beacon as input 1. Output 0 is the beacon's continuation,
-// enforced by the beacon's `read` leaf. Payouts start at output 1.
+// input 0 and the beacon as input 1. A third input may pay the beacon's read
+// fee. Output 0 is the beacon's continuation, enforced by the beacon's `read`
+// leaf. Payouts start at output 1.
 //
-// The settlement price is the fixing whose key equals `expiry` in the beacon
-// state packet the beacon coin was created with: the first 8 bytes of that
-// slot's value, in USD cents. Payoff in sats, division truncates:
+// The settlement price is the newest fixing whose key equals `expiry` in the
+// beacon state packet the beacon coin was created with: the first 8 bytes of
+// that slot's value, in USD cents. Payoff in sats, division truncates:
 //   covered call: ST <= K -> holder 0, else Q*(ST-K)/ST
 //   limited put:  ST >= K -> holder 0, else min(Q, Q*(K-ST)/ST)
 // A leg of DUST sats or less is folded into the other output.
@@ -35,7 +36,7 @@ contract BeaconOptionVault(
   const int PRICE_MAX = 1000000000;
   const int Q_MAX = 1000000000;
   const int STATE = 32;
-  const int SIZE = 169;
+  const int SIZE = 329;
 
   function settle() {
     require(kind == 0 || kind == 1, "kind");
@@ -45,7 +46,7 @@ contract BeaconOptionVault(
     require(collateral <= Q_MAX, "collateral cap");
     require(checkTime(expiry), "before expiry");
     require(this.activeInputIndex == 0, "vault is input 0");
-    require(tx.numInputs == 2, "vault and beacon");
+    require(tx.numInputs >= 2, "vault and beacon");
     require(tx.inputs[1].assets.lookup(beaconTxid, beaconGidx) == 1, "beacon");
 
     bytes state = tx.inputs[1].packet(STATE);
@@ -54,9 +55,9 @@ contract BeaconOptionVault(
 
     int st = 0;
     int found = 0;
-    int[4] slots = [9, 49, 89, 129];
+    int[8] slots = [9, 49, 89, 129, 169, 209, 249, 289];
     for (i, offset) in slots {
-      if (substr(state, offset, 8) == num2bin(expiry, 8)) {
+      if (found == 0 && substr(state, offset, 8) == num2bin(expiry, 8)) {
         st = bin2num(substr(state, (offset + 8), 8));
         found = 1;
       }
