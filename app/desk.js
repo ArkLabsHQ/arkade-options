@@ -80,6 +80,8 @@ function persist() {
     deadline: p.deadline,
     holderPkHex: p.holderPkHex,
     oraclePkHex: p.oraclePkHex,
+    beaconTxid: p.beaconTxid,
+    beaconGidx: p.beaconGidx,
     exit: p.exit,
     vaultAddress: p.vaultAddress,
     writerHex: p.writerHex,
@@ -868,6 +870,8 @@ async function confirm() {
       writerAddress: state.address,
       holderPkHex: quote.holderPkHex,
       oraclePkHex: quote.oraclePkHex,
+      beaconTxidHex: quote.beaconTxid,
+      beaconGidx: quote.beaconGidx,
       exit: quote.exit != null ? BigInt(quote.exit) : undefined,
     });
     if (quote.intentAddress && (deposit.address !== quote.intentAddress || deposit.vaultAddress !== quote.vaultAddress)) {
@@ -891,6 +895,8 @@ async function confirm() {
         address: deposit.address,
         holderPkHex: deposit.holderPkHex,
         oraclePkHex: deposit.oraclePkHex,
+        beaconTxid: deposit.beaconTxidHex,
+        beaconGidx: deposit.beaconGidx,
         exit: deposit.exit,
         vaultAddress: deposit.vaultAddress,
         writerAddress: state.address,
@@ -977,6 +983,8 @@ async function fundRequest(position) {
     deadline: BigInt(position.deadline),
     holderPkHex: position.holderPkHex,
     oraclePkHex: position.oraclePkHex,
+    beaconTxidHex: position.beaconTxid,
+    beaconGidx: position.beaconGidx,
     exit: position.exit != null ? BigInt(position.exit) : undefined,
   };
   if (position.writerAddress) return { ...base, writerAddress: position.writerAddress };

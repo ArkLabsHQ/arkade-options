@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
 import test from "node:test";
 
 import { base64 } from "@scure/base";
 import {
   arkade,
+  asset,
   buildOffchainTx,
+  CSVMultisigTapscript,
   networks,
   SingleKey,
   Transaction,
@@ -15,12 +16,14 @@ import {
   type IndexerProvider,
 } from "@arkade-os/sdk";
 
-import { holderPayoff, oraclePreimage, settlementOutputs, twap, windows } from "../app/settle-math.js";
+import { holderPayoff, settlementOutputs } from "../app/settle-math.js";
 import type { QuoteRow } from "../desk/book.ts";
 import { fillQuote } from "../desk/fill.ts";
+import { beaconIdOf, bindBeacon, genesisState, nextState, priceValue } from "./beacon.ts";
 import { EXIT } from "./constants.ts";
 import { bindContracts, payoutVtxo, type Terms } from "./contracts.ts";
-import { bytesToHex } from "./hex.ts";
+import { buildSettle, submit } from "./cospend.ts";
+import { bytesToHex, hexToBytes } from "./hex.ts";
 import { intentProgram, vaultProgram } from "./programs.ts";
 
 // Mutinynet's signer and checkpoint closure. Connect needs both; arkd is not called.
@@ -124,6 +127,8 @@ test("a covered call locks, pays the writer, settles, and refunds a missed fill"
   const writerPk = await writer.xOnlyPublicKey();
   const holderPk = await desk.xOnlyPublicKey();
   const oraclePks = await Promise.all(oracles.map((item) => item.xOnlyPublicKey()));
+  const displayTxid = "00".repeat(31) + "07";
+  const beacon = beaconIdOf(asset.AssetId.create(displayTxid, 0));
   const shared = {
     kind: 0 as const,
     strike,
@@ -134,7 +139,7 @@ test("a covered call locks, pays the writer, settles, and refunds a missed fill"
     writerPk,
     payoutKey: writerPk,
     holderPk,
-    oraclePks,
+    beacon,
     serverKey: client.serverKey,
     emulatorKey: client.emulatorKey,
   };
@@ -213,37 +218,58 @@ test("a covered call locks, pays the writer, settles, and refunds a missed fill"
   const vault = client.contract(vaultProgram(), bound.vault);
   const vaultCoin = (await vault.getUtxos())[0];
   assert.ok(vaultCoin);
-  const slices = (["open", "mid", "close"] as const).map((name) => {
-    const [lo] = windows(terms.expiry)[name];
-    return { price, time: [lo, lo + 20n, lo + 40n] as const, who: [0, 1, 2] as const };
-  });
-  const medians = slices.map(() => price);
-  const ph = holderPayoff(0, twap(medians[0]!, medians[1]!, medians[2]!), strike, collateral);
+  const ph = holderPayoff(0, price, strike, collateral);
   const split = settlementOutputs(ph, collateral);
   assert.equal(split.mode, "split");
-  const args: (bigint | Uint8Array)[] = [];
-  for (const slice of slices) {
-    const sigs = await Promise.all(slice.who.map((who, index) => {
-      const hash = createHash("sha256").update(oraclePreimage(slice.price, slice.time[index]!)).digest();
-      return oracles[who]!.signSchnorrDeterministic(hash);
-    }));
-    args.push(slice.price, slice.price, slice.price, ...slice.time, ...slice.who.map((who) => BigInt(who)), ...sigs);
-  }
-  const settle = vault.functions.settle as (...input: (bigint | Uint8Array)[]) => {
-    from(coin: typeof vaultCoin): {
-      to(outputs: { script: Uint8Array; amount: bigint }[]): { send(): Promise<{ txid: string }> };
-    };
-  };
-  const settled = await settle(...args).from(vaultCoin).to([
-    { script: bound.holderPkScript, amount: split.holder },
-    { script: bound.writerPkScript, amount: split.writer },
-  ]).send();
+  assert.equal(split.holder, 600n);
+  assert.equal(split.writer, 19_400n);
+  const beaconBound = bindBeacon({
+    id: beacon,
+    signers: oraclePks,
+    threshold: 3n,
+    domain: new TextEncoder().encode("BTCUSD-FIX"),
+    keyLag: 0n,
+    readFee: 0n,
+    adminPk: oraclePks[0]!,
+    serverKey: client.serverKey,
+    emulatorKey: client.emulatorKey,
+  });
+  const fixed = nextState(genesisState(), terms.expiry, priceValue(price));
+  const beaconTx = new Transaction({ version: 3, allowUnknownOutputs: true });
+  beaconTx.addInput({ txid: new Uint8Array(32), index: 1 });
+  beaconTx.addOutput({ script: beaconBound.pkScript, amount: 330n });
+  const fillParsed = Transaction.fromPSBT(base64.decode(fillTx));
+  const vaultScript = new arkade.ArkadeProgramScript(vaultProgram(), bound.vault, {
+    serverKey: client.serverKey,
+    emulatorKey: client.emulatorKey,
+  });
+  const built = buildSettle({
+    vault: {
+      script: vaultScript,
+      coin: { txid: fillParsed.id, vout: 1, value: collateral, prevTx: fillParsed.toBytes(true, true) },
+    },
+    beacon: {
+      script: beaconBound.script,
+      coin: { txid: beaconTx.id, vout: 0, value: 330n, prevTx: beaconTx.toBytes(true, true) },
+      state: fixed,
+      id: asset.AssetId.create(displayTxid, 0),
+    },
+    readFee: 0n,
+    payouts: [
+      { script: bound.holderPkScript, amount: split.holder },
+      { script: bound.writerPkScript, amount: split.writer },
+    ],
+    checkpoint: CSVMultisigTapscript.decode(hexToBytes(CHECKPOINT)),
+  });
+  const settled = await submit(built, book.emulator as EmulatorProvider);
   assert.ok(settled.txid);
   const settledOut = spendOutputs(book.submitted.at(-1)!);
-  assert.equal(settledOut[0]?.amount, split.holder);
-  assert.equal(settledOut[0]?.script, bytesToHex(bound.holderPkScript));
-  assert.equal(settledOut[1]?.amount, split.writer);
-  assert.equal(settledOut[1]?.script, bytesToHex(bound.writerPkScript));
+  assert.equal(settledOut[0]?.amount, 330n);
+  assert.equal(settledOut[0]?.script, bytesToHex(beaconBound.pkScript));
+  assert.equal(settledOut[1]?.amount, split.holder);
+  assert.equal(settledOut[1]?.script, bytesToHex(bound.holderPkScript));
+  assert.equal(settledOut[2]?.amount, split.writer);
+  assert.equal(settledOut[2]?.script, bytesToHex(bound.writerPkScript));
 
   const late: Terms = { ...shared, deadline: now - 60n };
   const lateBound = bindContracts(late);

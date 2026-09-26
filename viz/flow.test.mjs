@@ -59,15 +59,15 @@ function optionNet(kind, settlement) {
 test("every drawn bitcoin transaction conserves sats", () => {
   const names = [...html.matchAll(/data-name="([^"]+)"/g)].map((match) => match[1]);
   assert.ok(names.length >= 16);
+  const order = (map) => [...map].sort(([a], [b]) => a.localeCompare(b));
   for (const name of names) {
     const block = tx(name);
-    if (block.includes('data-assets="1"')) {
+    if (block.includes("data-asset=")) {
       const left = assets(column(block, "inputs"));
       const right = assets(column(block, "outputs"));
-      const order = (map) => [...map].sort(([a], [b]) => a.localeCompare(b));
       assert.deepEqual(order(left), order(right), name);
-      continue;
     }
+    if (block.includes('data-assets="1"') && !block.includes('data-sat="')) continue;
     const inn = sumSat(column(block, "inputs"));
     const out = sumSat(column(block, "outputs"));
     if (block.includes('data-reject="short"')) {
@@ -98,7 +98,7 @@ test("scenario nets match the vault payoff", () => {
 
 test("the page names the live parameters and the sources", () => {
   assert.match(html, /lang="en"/);
-  assert.match(html, /5027bc786c7e0c313e2d4409fe629a0cc4af9882/);
+  assert.match(html, /COMMIT_PENDING/);
   assert.match(html, /2026-09-26/);
   assert.match(html, /vtxoMinAmount/);
   assert.match(html, /maxOpReturnOutputs/);
@@ -111,11 +111,20 @@ test("the page names the live parameters and the sources", () => {
   for (const file of ["../scripts/build.mjs", "../scripts/dev.mjs"]) {
     const source = readFileSync(new URL(file, import.meta.url), "utf8");
     assert.match(source, /viz\/index\.html/);
+    assert.match(source, /settle-math\.js/);
   }
   const vault = readFileSync(new URL("../contracts/option_vault.ark", import.meta.url), "utf8");
-  assert.match(vault, /ph = collateral \* \(twap - strike\) \/ twap/);
+  assert.match(vault, /ph = collateral \* \(st - strike\) \/ st/);
   assert.match(vault, /if \(ph > collateral\)/);
+  assert.match(vault, /beaconTxid/);
+  assert.doesNotMatch(vault, /twap/);
   const intent = readFileSync(new URL("../contracts/option_intent.ark", import.meta.url), "utf8");
   assert.match(intent, /premium \+ change/);
   assert.match(intent, /checkTime\(deadline\)/);
+  const beacon = readFileSync(new URL("../contracts/attestation_beacon.ark", import.meta.url), "utf8");
+  assert.match(beacon, /readFee/);
+  assert.match(html, /holderPayoff/);
+  assert.match(html, /settlementOutputs/);
+  assert.match(html, /Enforced/);
+  assert.match(html, /Not claimed/);
 });

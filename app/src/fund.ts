@@ -2,6 +2,7 @@ import {
   ArkAddress,
   BIP21,
   arkade,
+  asset,
   networks,
   RestArkProvider,
   RestEmulatorProvider,
@@ -9,6 +10,7 @@ import {
   SingleKey,
 } from "@arkade-os/sdk";
 
+import { beaconIdOf } from "../../protocol/beacon-id.ts";
 import { ARK_URL, EMULATOR_URL, EXIT } from "../../protocol/constants.ts";
 import { assertServerExit, bindContracts, payoutVtxo, type Terms } from "../../protocol/contracts.ts";
 import { bytesToHex, hexToBytes, xOnly } from "../../protocol/hex.ts";
@@ -35,6 +37,9 @@ export type FundRequest = {
   writerHex?: string;
   holderPkHex?: string;
   oraclePkHex?: string[];
+  /** Display txid of the beacon identity asset. Omitted only when no desk answered. */
+  beaconTxidHex?: string;
+  beaconGidx?: number;
   exit?: bigint;
 };
 
@@ -46,8 +51,12 @@ export type Deposit = {
   uri: string;
   holderPkHex: string;
   oraclePkHex: string[];
+  beaconTxidHex: string;
+  beaconGidx: number;
   exit: number;
 };
+
+const FALLBACK_BEACON_TXID = `${"00".repeat(31)}07`;
 
 export type WriterBinding = {
   pubkey: string;
@@ -217,6 +226,9 @@ async function build(req: FundRequest) {
   const oraclePks = req.oraclePkHex
     ? req.oraclePkHex.map((hex) => hexToBytes(hex))
     : await Promise.all(ORACLES.map((key) => key.xOnlyPublicKey()));
+  const beaconTxidHex = (req.beaconTxidHex ?? FALLBACK_BEACON_TXID).toLowerCase();
+  const beaconGidx = req.beaconGidx ?? 0;
+  if (!/^[0-9a-f]{64}$/.test(beaconTxidHex)) throw new Error("The beacon txid is not 32 bytes.");
   const exit = req.exit ?? EXIT;
   const terms: Terms = {
     kind: req.kind,
@@ -229,7 +241,7 @@ async function build(req: FundRequest) {
     writerPk,
     payoutKey,
     holderPk,
-    oraclePks,
+    beacon: beaconIdOf(asset.AssetId.create(beaconTxidHex, beaconGidx)),
     serverKey,
     emulatorKey,
   };
@@ -239,12 +251,12 @@ async function build(req: FundRequest) {
   if (intent.address !== bound.intentAddress || vault.address !== bound.vaultAddress) {
     throw new Error("The contract address does not match the local derivation.");
   }
-  return { bound, intent, vault, holderPk, oraclePks, exit };
+  return { bound, intent, vault, holderPk, oraclePks, beaconTxidHex, beaconGidx, exit };
 }
 
 /** Mutinynet address the seller funds. Collateral stays with the seller until finalize. */
 export async function depositAddress(req: FundRequest): Promise<Deposit> {
-  const { bound, holderPk, oraclePks, exit } = await build(req);
+  const { bound, holderPk, oraclePks, beaconTxidHex, beaconGidx, exit } = await build(req);
   return {
     network: NETWORK_NAME,
     address: bound.intentAddress,
@@ -253,6 +265,8 @@ export async function depositAddress(req: FundRequest): Promise<Deposit> {
     uri: paymentUri(bound.intentAddress, req.collateral),
     holderPkHex: bytesToHex(holderPk),
     oraclePkHex: oraclePks.map((pk) => bytesToHex(pk)),
+    beaconTxidHex,
+    beaconGidx,
     exit: Number(exit),
   };
 }

@@ -1,8 +1,8 @@
-import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 
 import {
   arkade,
+  asset,
   InMemoryContractRepository,
   InMemoryWalletRepository,
   networks,
@@ -13,7 +13,7 @@ import {
   Wallet,
 } from "@arkade-os/sdk";
 
-import { holderPayoff, oraclePreimage, settlementOutputs, twap, windows } from "../app/settle-math.js";
+import { beaconIdOf } from "../protocol/beacon.ts";
 import { fillQuote } from "../desk/fill.ts";
 import type { QuoteRow } from "../desk/book.ts";
 import { btcAmount } from "../app/src/fund.ts";
@@ -50,8 +50,6 @@ const deskHex = saved?.desk ?? process.env.DESK_KEY ?? "2".padStart(64, "0");
 const collateral = 50_000n;
 const premium = 1_000n;
 const strike = 9_700_000n;
-const price = 10_000_000n;
-
 function key(n: number) {
   return SingleKey.fromHex(n.toString(16).padStart(64, "0"));
 }
@@ -82,6 +80,8 @@ const cancelDeadline = now + 30n;
 const writerPk = await writer.xOnlyPublicKey();
 const holderPk = await desk.xOnlyPublicKey();
 const oraclePks = await Promise.all(oracles.map((item) => item.xOnlyPublicKey()));
+const beaconDisplay = (process.env.BEACON_TXID ?? `${"00".repeat(31)}07`).trim().toLowerCase();
+const beaconGidx = Number(process.env.BEACON_GIDX ?? "0");
 const shared = {
   kind: 0 as const,
   strike,
@@ -91,7 +91,7 @@ const shared = {
   exit: EXIT,
   writerPk,
   holderPk,
-  oraclePks,
+  beacon: beaconIdOf(asset.AssetId.create(beaconDisplay, beaconGidx)),
   serverKey: writerClient.serverKey,
   emulatorKey: writerClient.emulatorKey,
 };
@@ -143,6 +143,8 @@ function row(bound: typeof fill, deadline: bigint): QuoteRow {
     writerPkScript: bytesToHex(bound.writerPkScript),
     holderPubkey: bytesToHex(holderPk),
     oraclePubkeys: oraclePks.map((item) => bytesToHex(item)),
+    beaconTxid: beaconDisplay,
+    beaconGidx,
     intentAddress: bound.intentAddress,
     vaultAddress: bound.vaultAddress,
     status: "open",
@@ -203,7 +205,7 @@ const filled = await fillQuote({
     exit: EXIT,
     writerPk,
     holderPk,
-    oraclePks,
+    beacon: beaconIdOf(asset.AssetId.create(beaconDisplay, beaconGidx)),
     serverKey: deskClient.serverKey,
     emulatorKey: deskClient.emulatorKey!,
   }),
@@ -232,49 +234,15 @@ if (cancelCoins.length === 0) {
 
 const vault = deskClient.contract(vaultProgram(), fill.vault);
 const vaultCoins = await vault.getUtxos();
-const vaultCoin = vaultCoins[0];
-if (!vaultCoin) {
-  console.log("settle waiting for the vault");
-} else {
-  const locked = BigInt(vaultCoin.value);
-  const slices = (["open", "mid", "close"] as const).map((name) => {
-    const [lo] = windows(expiry)[name];
-    return {
-      price: [price, price, price],
-      time: [lo, lo + 20n, lo + 40n],
-      who: [0n, 1n, 2n],
-    };
-  });
-  const medians = slices.map((slice) => slice.price[1]!);
-  const ph = holderPayoff(0, twap(medians[0]!, medians[1]!, medians[2]!), strike, collateral);
-  const outputs = settlementOutputs(ph, locked);
-  const args: (bigint | Uint8Array)[] = [];
-  for (const slice of slices) {
-    const sigs = await Promise.all(slice.who.map((who, index) => signOracle(oracles[Number(who)]!, slice.price[index]!, slice.time[index]!)));
-    args.push(...slice.price, ...slice.time, ...slice.who, ...sigs);
-  }
-  const settle = vault.functions.settle as (...input: (bigint | Uint8Array)[]) => {
-    from(coin: typeof vaultCoin): {
-      to(script: Uint8Array, amount: bigint): { send(): Promise<{ txid: string }> };
-      to(outputs: { script: Uint8Array; amount: bigint }[]): { send(): Promise<{ txid: string }> };
-    };
-  };
-  const builder = settle(...args).from(vaultCoin);
-  const sent = outputs.mode === "split"
-    ? await builder.to([
-      { script: payoutVtxo(holderPk, deskClient.serverKey, EXIT).pkScript, amount: outputs.holder },
-      { script: payoutVtxo(writerPk, deskClient.serverKey, EXIT).pkScript, amount: outputs.writer },
-    ]).send()
-    : await builder.to(
-      payoutVtxo(outputs.mode === "holder" ? holderPk : writerPk, deskClient.serverKey, EXIT).pkScript,
-      outputs.mode === "holder" ? outputs.holder : outputs.writer,
-    ).send();
-  console.log("settle", sent.txid, outputs.mode);
+if (vaultCoins.length === 0) console.log("settle waiting for the vault coin");
+else {
+  console.log(
+    "settle is a co-spend of this vault with the beacon",
+    beaconDisplay,
+    "group",
+    beaconGidx,
+    "via buildSettle. This script does not broadcast that transaction.",
+  );
 }
 
 process.exit(0);
-
-async function signOracle(oracle: SingleKey, px: bigint, time: bigint) {
-  const hash = createHash("sha256").update(oraclePreimage(px, time)).digest();
-  return oracle.signSchnorrDeterministic(hash);
-}

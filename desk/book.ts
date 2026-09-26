@@ -17,6 +17,9 @@ export type QuoteRow = {
   writerPkScript: string;
   holderPubkey: string;
   oraclePubkeys: string[];
+  /** Display txid of the beacon identity asset. */
+  beaconTxid: string;
+  beaconGidx: number;
   intentAddress: string;
   vaultAddress: string;
   status: QuoteStatus;

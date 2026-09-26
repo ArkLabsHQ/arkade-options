@@ -1,5 +1,8 @@
 import { generateSecretKey } from "nostr-tools/pure";
 
+import { asset } from "@arkade-os/sdk";
+
+import { beaconIdOf } from "../../protocol/beacon-id.ts";
 import { DUST_SATS, EXIT, PAIR } from "../../protocol/constants.ts";
 import { bindContracts } from "../../protocol/contracts.ts";
 import { bytesToHex, hexToBytes } from "../../protocol/hex.ts";
@@ -17,6 +20,8 @@ export type LiveQuote = {
   exit: number;
   holderPkHex: string;
   oraclePkHex: string[];
+  beaconTxid: string;
+  beaconGidx: number;
   intentAddress: string;
   vaultAddress: string;
 };
@@ -116,7 +121,7 @@ export async function requestQuotes(input: {
         writerPk: hexToBytes(profile.pubkey),
         payoutKey: profile.payoutKey,
         holderPk: hexToBytes(quote.profile.holder_pubkey),
-        oraclePks: quote.profile.oracle_pubkeys.map((pk) => hexToBytes(pk)),
+        beacon: beaconIdOf(asset.AssetId.create(quote.profile.beacon_txid, quote.profile.beacon_gidx)),
         serverKey: profile.serverKey,
         emulatorKey: profile.emulatorKey,
       });
@@ -137,6 +142,8 @@ export async function requestQuotes(input: {
       exit: quote.profile.exit,
       holderPkHex: quote.profile.holder_pubkey,
       oraclePkHex: quote.profile.oracle_pubkeys,
+      beaconTxid: quote.profile.beacon_txid,
+      beaconGidx: quote.profile.beacon_gidx,
       intentAddress: quote.profile.intent_address,
       vaultAddress: quote.profile.vault_address,
     });

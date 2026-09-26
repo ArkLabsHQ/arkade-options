@@ -1,7 +1,6 @@
 import { arkade } from "@arkade-os/sdk";
 
 import beaconArtifact from "../contracts/attestation_beacon.artifact.json" with { type: "json" };
-import beaconVaultArtifact from "../contracts/beacon_option_vault.artifact.json" with { type: "json" };
 import swapArtifact from "../contracts/non_interactive_swap.artifact.json" with { type: "json" };
 import intentArtifact from "../contracts/option_intent.artifact.json" with { type: "json" };
 import vaultArtifact from "../contracts/option_vault.artifact.json" with { type: "json" };
@@ -70,11 +69,6 @@ export function beaconProgram() {
   return secondsExit(beaconArtifact as arkade.ContractArtifact);
 }
 
-/** OptionVault with the oracle keys replaced by the beacon's identity asset. */
-export function beaconVaultProgram() {
-  return secondsExit(beaconVaultArtifact as arkade.ContractArtifact);
-}
-
 export function rawVaultProgram() {
   return arkade.programFromArtifact(vaultArtifact as arkade.ContractArtifact);
 }
@@ -83,9 +77,6 @@ export function rawBeaconProgram() {
   return arkade.programFromArtifact(beaconArtifact as arkade.ContractArtifact);
 }
 
-export function rawBeaconVaultProgram() {
-  return arkade.programFromArtifact(beaconVaultArtifact as arkade.ContractArtifact);
-}
 
 export function rawIntentProgram() {
   return arkade.programFromArtifact(intentArtifact as arkade.ContractArtifact);
@@ -103,12 +94,12 @@ function count(asm: readonly unknown[] | undefined, name: string) {
 export function artifactLine() {
   const vault = vaultProgram();
   const intent = intentProgram();
-  const settle = vault.functions.settle?.arkadeScript?.asm;
+  const settle = vault.functions.settle?.arkadeScript?.asm ?? [];
   const finalize = intent.functions.finalize?.arkadeScript?.asm ?? [];
-  const sigs = count(settle, "CHECKSIGFROMSTACK");
-  const hashes = count(settle, "SHA256");
-  const muls = count(settle, "MUL");
-  const divs = count(settle, "DIV");
-  const clock = finalize.includes("CHECKTIME") ? "gates the fill on the 30-second clock." : "is loaded.";
-  return `OptionVault settle · ${sigs} oracle signatures · ${muls} multiplies · ${divs} divides · ${hashes} hashes. OptionIntent ${clock}`;
+  const reads = settle.includes("INSPECTINASSETLOOKUP") && settle.includes("INSPECTINPUTPACKET");
+  const clock = finalize.includes("CHECKTIME")
+    ? "OptionIntent finalize gates the fill with CHECKTIME(deadline)."
+    : "OptionIntent finalize is loaded.";
+  if (!reads) return `OptionVault settle is missing the beacon read. ${clock}`;
+  return `OptionVault settle reads the beacon identity asset and its state packet. It checks ${count(settle, "MUL")} multiplies and ${count(settle, "DIV")} divides, and no oracle signatures. ${clock}`;
 }

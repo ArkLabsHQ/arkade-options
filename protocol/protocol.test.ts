@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { SingleKey } from "@arkade-os/sdk";
+import { asset, SingleKey } from "@arkade-os/sdk";
 import { generateSecretKey } from "nostr-tools/pure";
 
+import { beaconIdOf } from "./beacon.ts";
 import { bindContracts, bindSwap, directPayoutKey } from "./contracts.ts";
 import { bytesToHex, hexToBytes, xOnly } from "./hex.ts";
 import { parseWire, premiumRefusal, requestRefusal, type RfqRequest } from "./messages.ts";
@@ -15,7 +16,6 @@ const key = (n: number) => SingleKey.fromHex(n.toString(16).padStart(64, "0"));
 async function sampleTerms() {
   const writer = key(1);
   const holder = key(2);
-  const oracles = [3, 4, 5, 6, 7].map(key);
   const server = key(8);
   const emulator = key(9);
   return {
@@ -28,7 +28,7 @@ async function sampleTerms() {
     exit: 512n,
     writerPk: await writer.xOnlyPublicKey(),
     holderPk: await holder.xOnlyPublicKey(),
-    oraclePks: await Promise.all(oracles.map((item) => item.xOnlyPublicKey())),
+    beacon: beaconIdOf(asset.AssetId.create("07".repeat(32), 0)),
     serverKey: await server.xOnlyPublicKey(),
     emulatorKey: await emulator.compressedPublicKey(),
   };
@@ -51,11 +51,11 @@ test("derived intent and vault addresses stay pinned", async () => {
   const bound = bindContracts(terms);
   assert.equal(
     bound.intentAddress,
-    "tark1qqhsre0ptn9r28d07wzrldc08shs5x7aqhj6lzy2vauyaulppg4qrpvwumn6q529zcl6lruapmg34r0upz6a6jpu5clpsj0kjqq9r8ccwg7c7d",
+    "tark1qqhsre0ptn9r28d07wzrldc08shs5x7aqhj6lzy2vauyaulppg4qrr6mz0grnvmrwtkfvh9flzl6k2juxvv6tzxauafl7zxg89nwwraega7ama",
   );
   assert.equal(
     bound.vaultAddress,
-    "tark1qqhsre0ptn9r28d07wzrldc08shs5x7aqhj6lzy2vauyaulppg4qrw4swtnv64x0kzl0r4vxp4swnpwjdst2jgax5l8nkffvs59nlskcv7z7yj",
+    "tark1qqhsre0ptn9r28d07wzrldc08shs5x7aqhj6lzy2vauyaulppg4qz7ta84zxe7xp4g3gzzuaxf8x3d5sslmwutzn9guq226hujf8vdgmg2ktcg",
   );
   assert.equal(bytesToHex(bound.writerPkScript), "51203d002da23716b1975b89b46563d89040a3c71d017593934bfb751b68a7cae991");
   assert.deepEqual(bindContracts(terms).intentPkScript, bound.intentPkScript);

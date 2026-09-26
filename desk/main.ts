@@ -7,6 +7,7 @@ import path from "node:path";
 import {
   ArkAddress,
   arkade,
+  asset,
   DefaultVtxo,
   networks,
   RestArkProvider,
@@ -15,6 +16,7 @@ import {
   SingleKey,
 } from "@arkade-os/sdk";
 
+import { beaconIdOf } from "../protocol/beacon-id.ts";
 import {
   ARK_URL,
   DEFAULT_RELAYS,
@@ -109,6 +111,7 @@ if (!Number.isInteger(port) || port < 1) throw new Error("PORT");
 const identity = SingleKey.fromHex(deskKeyHex);
 const book = await Book.open(dataDir);
 const oracles = await oraclePubkeys(dataDir);
+const beaconDisplay = beaconFromEnv();
 const client = await arkade.Arkade.connect({
   arkade: new RestArkProvider(arkUrl),
   indexer: new RestIndexerProvider(arkUrl),
@@ -128,6 +131,16 @@ let balance = 0n;
 let spot: { cents: bigint; sources: string[] } | null = null;
 let polling = false;
 
+function beaconFromEnv() {
+  const txid = (process.env.BEACON_TXID ?? "").trim().toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(txid)) {
+    throw new Error("BEACON_TXID must be the 64-hex display txid of the identity asset");
+  }
+  const gidx = (process.env.BEACON_GIDX ?? "0").trim();
+  if (!/^\d+$/.test(gidx) || Number(gidx) > 65_535) throw new Error("BEACON_GIDX must be an integer from 0 to 65535");
+  return { txid, gidx: Number(gidx) };
+}
+
 function termsFor(row: QuoteRow): Terms {
   return {
     kind: row.kind,
@@ -140,7 +153,7 @@ function termsFor(row: QuoteRow): Terms {
     writerPk: hexToBytes(row.writerPubkey),
     payoutKey: directPayoutKey(row.writerPubkey, row.writerPkScript),
     holderPk: hexToBytes(row.holderPubkey),
-    oraclePks: row.oraclePubkeys.map((item) => hexToBytes(item)),
+    beacon: beaconIdOf(asset.AssetId.create(row.beaconTxid, row.beaconGidx)),
     serverKey: client.serverKey,
     emulatorKey: client.emulatorKey!,
   };
@@ -161,6 +174,8 @@ function quoteMessage(row: QuoteRow): RfqQuote {
       holder_pubkey: row.holderPubkey,
       holder_pk_script: bytesToHex(bound.holderPkScript),
       oracle_pubkeys: row.oraclePubkeys,
+      beacon_txid: row.beaconTxid,
+      beacon_gidx: row.beaconGidx,
       deadline: row.deadline,
       exit: row.exit,
       intent_address: row.intentAddress,
@@ -247,6 +262,8 @@ async function onRequest(message: RfqRequest, from: string) {
     writerPkScript: message.profile.writer_pk_script,
     holderPubkey: bytesToHex(holderPk),
     oraclePubkeys: oracles.map((item) => bytesToHex(item)),
+    beaconTxid: beaconDisplay.txid,
+    beaconGidx: beaconDisplay.gidx,
     intentAddress: "",
     vaultAddress: "",
     status: "open",

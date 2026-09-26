@@ -12,7 +12,6 @@ import {
   beaconIdOf,
   bin2num,
   bindBeacon,
-  bindBeaconVault,
   decodeState,
   encodeState,
   findFixing,
@@ -29,9 +28,10 @@ import {
   type BeaconId,
 } from "./beacon.ts";
 import { EXIT } from "./constants.ts";
+import { bindContracts } from "./contracts.ts";
 import { buildAttest, buildSettle, encodeWitness, statePacket } from "./cospend.ts";
 import { bytesToHex, hexToBytes } from "./hex.ts";
-import { beaconProgram, beaconVaultProgram, rawBeaconProgram, rawBeaconVaultProgram } from "./programs.ts";
+import { beaconProgram, rawBeaconProgram, rawVaultProgram, vaultProgram } from "./programs.ts";
 
 const here = (file: string) => new URL(file, import.meta.url);
 
@@ -92,17 +92,29 @@ async function buildFixture() {
     serverKey,
     emulatorKey,
   });
-  const vault = bindBeaconVault({
+  const bound = bindContracts({
     kind: FIXTURE.kind,
     strike: FIXTURE.strike,
     collateral: FIXTURE.collateral,
+    premium: 1_000n,
     expiry: FIXTURE.expiry,
+    deadline: FIXTURE.expiry,
+    exit: EXIT,
     writerPk,
     holderPk,
     beacon: id,
     serverKey,
     emulatorKey,
   });
+  const vault = {
+    script: new arkade.ArkadeProgramScript(vaultProgram(), bound.vault, { serverKey, emulatorKey }),
+    pkScript: bound.vaultPkScript,
+    address: bound.vaultAddress,
+    args: bound.vault,
+    holderPkScript: bound.holderPkScript,
+    writerPkScript: bound.writerPkScript,
+    program: bound.optionProgram,
+  };
 
   const value = priceValue(FIXTURE.price);
   const digest = attestDigest(FIXTURE.domain, id, FIXTURE.expiry, value);
@@ -194,7 +206,7 @@ test("script numbers are little-endian sign-magnitude", () => {
 
 test("slot offsets match both contract sources", () => {
   const literal = `[${SLOT_OFFSETS.join(", ")}]`;
-  for (const file of ["../contracts/attestation_beacon.ark", "../contracts/beacon_option_vault.ark"]) {
+  for (const file of ["../contracts/attestation_beacon.ark", "../contracts/option_vault.ark"]) {
     const source = readFileSync(here(file), "utf8");
     assert.ok(source.includes(literal), `${file} lacks ${literal}`);
     assert.ok(source.includes(`const int SIZE = ${STATE_SIZE};`), file);
@@ -246,7 +258,7 @@ function onlyExitDiffers(raw: ReturnType<typeof rawBeaconProgram>, spent: Return
 
 test("artifacts load and only the exit leaf changes", () => {
   onlyExitDiffers(rawBeaconProgram(), beaconProgram());
-  onlyExitDiffers(rawBeaconVaultProgram(), beaconVaultProgram());
+  onlyExitDiffers(rawVaultProgram(), vaultProgram());
   const count = (asm: readonly unknown[] | undefined, name: string) => (asm ?? []).filter((token) => token === name).length;
   const beacon = beaconProgram();
   const attest = beacon.functions.attest?.arkadeScript?.asm;
@@ -259,13 +271,13 @@ test("artifacts load and only the exit leaf changes", () => {
   assert.equal(count(read, "INSPECTINPUTPACKET"), 1);
   assert.equal(count(read, "CHECKSIGFROMSTACK"), 0);
   assert.equal(count(beacon.functions.migrate?.arkadeScript?.asm, "CHECKSIGFROMSTACK"), 5);
-  const settle = beaconVaultProgram().functions.settle?.arkadeScript?.asm;
+  const settle = vaultProgram().functions.settle?.arkadeScript?.asm;
   assert.equal(count(settle, "INSPECTINASSETLOOKUP"), 1);
   assert.equal(count(settle, "INSPECTINPUTPACKET"), 1);
   assert.equal(count(settle, "CHECKTIME"), 1);
   assert.equal(count(settle, "CHECKSIGFROMSTACK"), 0);
   assert.deepEqual(Object.keys(beacon.functions), ["attest", "read", "migrate", "unilateral"]);
-  assert.deepEqual(Object.keys(beaconVaultProgram().functions), ["settle", "close", "unilateral"]);
+  assert.deepEqual(Object.keys(vaultProgram().functions), ["settle", "close", "unilateral"]);
 });
 
 test("bindings are deterministic Mutinynet addresses and refuse a bad committee", async () => {

@@ -2,10 +2,13 @@ import { createHash } from "node:crypto";
 
 import { arkade, asset, Extension, Transaction } from "@arkade-os/sdk";
 
+import { beaconIdOf, scriptTxid, type BeaconId } from "./beacon-id.ts";
 import { EXIT } from "./constants.ts";
-import { addressOf, directPayout, payoutVtxo } from "./contracts.ts";
+import { addressOf } from "./contracts.ts";
 import { bytesToHex, xOnly } from "./hex.ts";
-import { beaconProgram, beaconVaultProgram } from "./programs.ts";
+import { beaconProgram } from "./programs.ts";
+
+export { beaconIdOf, scriptTxid, type BeaconId };
 
 /**
  * AttestationBeacon state and bindings. Layout and digests follow
@@ -118,17 +121,6 @@ export function priceOf(value: Uint8Array): bigint {
   return bin2num(value.subarray(0, 8));
 }
 
-export type BeaconId = { txid: Uint8Array; gidx: bigint };
-
-/** The asset id as the script compares it: serialization order, the display txid reversed. */
-export function scriptTxid(id: asset.AssetId): Uint8Array {
-  return Uint8Array.from(id.txid).reverse();
-}
-
-export function beaconIdOf(id: asset.AssetId): BeaconId {
-  return { txid: scriptTxid(id), gidx: BigInt(id.groupIndex) };
-}
-
 function idBytes(id: BeaconId): Uint8Array {
   return concat(id.txid, num2bin(id.gidx, 4));
 }
@@ -202,67 +194,6 @@ export function bindBeacon(input: BeaconArgs): Bound {
     program: script.tweakedPublicKey,
     args,
     script,
-  };
-}
-
-export type BeaconVaultTerms = {
-  kind: 0 | 1;
-  strike: bigint;
-  collateral: bigint;
-  expiry: bigint;
-  exit?: bigint;
-  writerPk: Uint8Array;
-  /** Taproot output key of the writer's Arkade address. Settlement pays this key. */
-  payoutKey?: Uint8Array;
-  holderPk: Uint8Array;
-  beacon: BeaconId;
-  serverKey: Uint8Array;
-  emulatorKey: Uint8Array;
-};
-
-export type BoundVault = Bound & {
-  writerPkScript: Uint8Array;
-  holderPkScript: Uint8Array;
-  writerProgram: Uint8Array;
-  holderProgram: Uint8Array;
-};
-
-export function bindBeaconVault(terms: BeaconVaultTerms): BoundVault {
-  if (terms.emulatorKey.length !== 33) throw new Error("emulator key must be 33 bytes");
-  const serverKey = xOnly(terms.serverKey);
-  const writerPk = xOnly(terms.writerPk);
-  const holderPk = xOnly(terms.holderPk);
-  const exit = terms.exit ?? EXIT;
-  const writer = terms.payoutKey ? directPayout(terms.payoutKey) : payoutVtxo(writerPk, serverKey, exit);
-  const holder = payoutVtxo(holderPk, serverKey, exit);
-  const args: Record<string, bigint | Uint8Array> = {
-    kind: BigInt(terms.kind),
-    writerPk,
-    holderPk,
-    writerScript: writer.tweakedPublicKey,
-    holderScript: holder.tweakedPublicKey,
-    strike: terms.strike,
-    collateral: terms.collateral,
-    expiry: terms.expiry,
-    beaconTxid: terms.beacon.txid,
-    beaconGidx: terms.beacon.gidx,
-    exit,
-    server: serverKey,
-  };
-  const script = new arkade.ArkadeProgramScript(beaconVaultProgram(), args, {
-    serverKey,
-    emulatorKey: terms.emulatorKey,
-  });
-  return {
-    address: addressOf(script, serverKey),
-    pkScript: script.pkScript,
-    program: script.tweakedPublicKey,
-    args,
-    script,
-    writerPkScript: writer.pkScript,
-    holderPkScript: holder.pkScript,
-    writerProgram: writer.tweakedPublicKey,
-    holderProgram: holder.tweakedPublicKey,
   };
 }
 
