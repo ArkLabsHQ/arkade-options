@@ -5,7 +5,7 @@ import { SingleKey } from "@arkade-os/sdk";
 import { generateSecretKey } from "nostr-tools/pure";
 
 import { bindContracts, bindSwap, directPayoutKey } from "./contracts.ts";
-import { bytesToHex } from "./hex.ts";
+import { bytesToHex, hexToBytes, xOnly } from "./hex.ts";
 import { parseWire, premiumRefusal, requestRefusal, type RfqRequest } from "./messages.ts";
 import { nostrPubkey, openSealed, quoteRelay, seal } from "./nostr.ts";
 import { premiumSats } from "./pricing.ts";
@@ -33,6 +33,18 @@ async function sampleTerms() {
     emulatorKey: await emulator.compressedPublicKey(),
   };
 }
+
+test("hex is lowercase and a compressed key drops its prefix", () => {
+  const bytes = Uint8Array.from([0x00, 0xff, 0x10]);
+  assert.equal(bytesToHex(bytes), "00ff10");
+  assert.deepEqual(hexToBytes("00FF10"), bytes);
+  assert.throws(() => hexToBytes("zz"), /hex|letter/);
+  const compressed = Uint8Array.from([0x03, ...new Uint8Array(32).fill(0x01)]);
+  const only = xOnly(compressed);
+  assert.equal(only.length, 32);
+  assert.equal(only[0], 1);
+  assert.equal(xOnly(only), only);
+});
 
 test("derived intent and vault addresses stay pinned", async () => {
   const terms = await sampleTerms();

@@ -1,5 +1,6 @@
 import {
   ArkAddress,
+  BIP21,
   arkade,
   networks,
   RestArkProvider,
@@ -92,6 +93,11 @@ export function btcAmount(sats: bigint) {
   const whole = sats / 100_000_000n;
   const frac = (sats % 100_000_000n).toString().padStart(8, "0").replace(/0+$/, "");
   return frac ? `${whole}.${frac}` : whole.toString();
+}
+
+/** BIP21 deposit link. Amount stays a decimal string so 1 sat is not `1e-8`. */
+export function paymentUri(address: string, sats: bigint): string {
+  return BIP21.create({ ark: address, amount: btcAmount(sats) as unknown as number });
 }
 
 function storedHex(name: string): string | null {
@@ -239,13 +245,12 @@ async function build(req: FundRequest) {
 /** Mutinynet address the seller funds. Collateral stays with the seller until finalize. */
 export async function depositAddress(req: FundRequest): Promise<Deposit> {
   const { bound, holderPk, oraclePks, exit } = await build(req);
-  const amount = btcAmount(req.collateral);
   return {
     network: NETWORK_NAME,
     address: bound.intentAddress,
     vaultAddress: bound.vaultAddress,
     amountSats: req.collateral,
-    uri: `bitcoin:?ark=${bound.intentAddress}&amount=${amount}`,
+    uri: paymentUri(bound.intentAddress, req.collateral),
     holderPkHex: bytesToHex(holderPk),
     oraclePkHex: oraclePks.map((pk) => bytesToHex(pk)),
     exit: Number(exit),

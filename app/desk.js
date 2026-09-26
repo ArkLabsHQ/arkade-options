@@ -4,6 +4,7 @@ import {
   clearAddress,
   depositAddress,
   legacyWriterHex,
+  paymentUri,
   readAddress,
   saveAddress,
   writerPayoutAddress,
@@ -269,10 +270,6 @@ function statusLead(position) {
   if (position.status === "refunded") return "Refunded to your address.";
   if (position.status === "settled") return "Settled.";
   return "Open.";
-}
-
-function paymentUri(address, sats) {
-  return `bitcoin:?ark=${address}&amount=${btcAmount(sats)}`;
 }
 
 function dustNote(sats) {
