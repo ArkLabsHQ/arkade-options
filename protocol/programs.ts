@@ -4,8 +4,9 @@ import swapArtifact from "../contracts/non_interactive_swap.artifact.json" with 
 import intentArtifact from "../contracts/option_intent.artifact.json" with { type: "json" };
 import vaultArtifact from "../contracts/option_vault.artifact.json" with { type: "json" };
 
-// The median returns compile to OP_PUT (replace a stack item). The emulator
-// assigns it 0xbb. This SDK build's table stops before that opcode.
+// CHECKTIME (0xdc) is in the SDK. The vault median still compiles to OP_PUT
+// (0xbb), which that table does not list, so the spent program cannot load
+// without this entry.
 const ops = arkade.ARKADE_OPS as Record<string, number>;
 const op = arkade.ARKADE_OP as Record<string, number>;
 if (!Object.hasOwn(ops, "PUT")) {
@@ -89,6 +90,6 @@ export function artifactLine() {
   const hashes = count(settle, "SHA256");
   const muls = count(settle, "MUL");
   const divs = count(settle, "DIV");
-  const clock = finalize.includes("CHECKTIME") ? "gates the fill on the 30-second clock." : "is loaded.";
-  return `OptionVault settle · ${sigs} oracle signatures · ${muls} multiplies · ${divs} divides · ${hashes} hashes. OptionIntent ${clock}`;
+  if (!finalize.includes("CHECKTIME")) throw new Error("OptionIntent finalize is missing CHECKTIME");
+  return `OptionVault settle · ${sigs} oracle signatures · ${muls} multiplies · ${divs} divides · ${hashes} hashes. OptionIntent finalize checks the deadline with CHECKTIME.`;
 }

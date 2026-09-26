@@ -144,7 +144,7 @@ if (!(swap.functions.cancel?.arkadeScript?.asm ?? []).includes("INSPECTLOCKTIME"
 }
 
 const line = artifactLine();
-if (!line.includes("9 oracle signatures") || !line.includes("30-second clock")) {
+if (!line.includes("9 oracle signatures") || !line.includes("CHECKTIME")) {
   throw new Error(line);
 }
 
