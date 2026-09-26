@@ -5,8 +5,9 @@ import swapArtifact from "../contracts/non_interactive_swap.artifact.json" with 
 import intentArtifact from "../contracts/option_intent.artifact.json" with { type: "json" };
 import vaultArtifact from "../contracts/option_vault.artifact.json" with { type: "json" };
 
-// The median returns compile to OP_PUT (replace a stack item). The emulator
-// assigns it 0xbb. This SDK build's table stops before that opcode.
+// CHECKTIME (0xdc) is in the SDK. The vault's slot loop still compiles to OP_PUT
+// (0xbb), which that table does not list, so the spent program cannot load
+// without this entry.
 const ops = arkade.ARKADE_OPS as Record<string, number>;
 const op = arkade.ARKADE_OP as Record<string, number>;
 if (!Object.hasOwn(ops, "PUT")) {
@@ -96,10 +97,9 @@ export function artifactLine() {
   const intent = intentProgram();
   const settle = vault.functions.settle?.arkadeScript?.asm ?? [];
   const finalize = intent.functions.finalize?.arkadeScript?.asm ?? [];
-  const reads = settle.includes("INSPECTINASSETLOOKUP") && settle.includes("INSPECTINPUTPACKET");
-  const clock = finalize.includes("CHECKTIME")
-    ? "OptionIntent finalize gates the fill with CHECKTIME(deadline)."
-    : "OptionIntent finalize is loaded.";
-  if (!reads) return `OptionVault settle is missing the beacon read. ${clock}`;
-  return `OptionVault settle reads the beacon identity asset and its state packet. It checks ${count(settle, "MUL")} multiplies and ${count(settle, "DIV")} divides, and no oracle signatures. ${clock}`;
+  if (!finalize.includes("CHECKTIME")) throw new Error("OptionIntent finalize is missing CHECKTIME");
+  if (!settle.includes("INSPECTINASSETLOOKUP") || !settle.includes("INSPECTINPUTPACKET")) {
+    throw new Error("OptionVault settle is missing the beacon read");
+  }
+  return `OptionVault settle reads the beacon identity asset and its state packet. It checks ${count(settle, "MUL")} multiplies and ${count(settle, "DIV")} divides, and no oracle signatures. OptionIntent finalize gates the fill with CHECKTIME(deadline).`;
 }
