@@ -1,0 +1,103 @@
+pragma arkade ^0.1.0;
+
+// AttestationBeacon: a committee-signed registry that other covenants read
+// by spending it in the same transaction.
+//
+// Identity is an asset, not a script. The beacon coin carries one unit of an
+// uncontrolled asset (ctrlTxid, ctrlGidx). arkd never reissues an asset that
+// has no control asset, so exactly one coin holds that unit at any time, and
+// every cooperative spend of that coin runs one of the leaves below. A
+// consumer commits to the asset id only. The committee can move the unit to a
+// new script with `migrate`, and the consumer keeps reading.
+//
+// State is the extension packet of type STATE in the transaction that created
+// the coin. Layout, 169 bytes:
+//   0        version, 1
+//   1..9     round, num2bin(round, 8)
+//   9..169   4 slots of 40 bytes, newest first: key num2bin(key, 8), value 32 bytes
+// `attest` writes slot 0 and shifts the other three. Keys strictly increase,
+// so a key is attested at most once in this lineage. For the option vault the
+// key is the expiry and the first 8 bytes of the value are the settlement
+// price in cents.
+//
+// Messages, signed by threshold-of-5 committee keys (an absent signer passes an
+// empty signature; a wrong non-empty signature fails the script):
+//   attest:  sha256(domain + num2bin(key, 8) + value)
+//   migrate: sha256(domain + "migrate" + next)
+//
+// Layout of a read: input 0 is the consumer, input 1 is this coin, output 0 is
+// this coin again with the same script, value, asset and packet.
+
+contract AttestationBeacon(
+  bytes32 ctrlTxid,
+  int ctrlGidx,
+  pubkey[5] signers,
+  int threshold,
+  bytes domain,
+  pubkey adminPk,
+  int exit
+) {
+  const int STATE = 32;
+  const int SIZE = 169;
+  const int SLOTS = 9;
+  const int VALUE_AT = 17;
+  const int HISTORY_AT = 49;
+  const int HISTORY = 120;
+
+  private function quorum(bytes32 message, signature[5] sigs) {
+    int valid = 0;
+    for (i, sig) in sigs {
+      if (checkSigFromStack(sig, signers[i], message)) {
+        valid = valid + 1;
+      }
+    }
+    require(valid >= threshold, "quorum");
+  }
+
+  private function continues(bytes state) {
+    require(size(state) == SIZE, "state size");
+    require(substr(state, 0, 1) == 0x01, "state version");
+    require(tx.outputs[0].scriptPubKey == tx.input.current.scriptPubKey, "script");
+    require(tx.outputs[0].value >= tx.input.current.value, "value");
+    require(tx.outputs[0].assets.lookup(ctrlTxid, ctrlGidx) == 1, "identity asset");
+  }
+
+  function attest(int key, bytes32 value, signature[5] sigs) {
+    require(this.activeInputIndex == 0, "beacon is input 0");
+    require(key > 0, "key");
+    quorum(sha256(domain + num2bin(key, 8) + value), sigs);
+
+    bytes prev = tx.inputs[0].packet(STATE);
+    bytes next = tx.packet(STATE);
+    require(size(prev) == SIZE, "prev size");
+    require(key > bin2num(substr(prev, SLOTS, 8)), "key must increase");
+    require(bin2num(substr(next, 1, 8)) == bin2num(substr(prev, 1, 8)) + 1, "round");
+    require(substr(next, SLOTS, 8) == num2bin(key, 8), "slot key");
+    require(substr(next, VALUE_AT, 32) == value, "slot value");
+    require(substr(next, HISTORY_AT, HISTORY) == substr(prev, SLOTS, HISTORY), "history");
+    continues(next);
+  }
+
+  function read() {
+    require(this.activeInputIndex == 1, "beacon is input 1");
+    bytes state = tx.packet(STATE);
+    require(state == tx.inputs[1].packet(STATE), "state carried");
+    continues(state);
+  }
+
+  function migrate(bytes32 next, signature[5] sigs) {
+    require(this.activeInputIndex == 0, "beacon is input 0");
+    quorum(sha256(domain + "migrate" + next), sigs);
+    bytes state = tx.packet(STATE);
+    require(state == tx.inputs[0].packet(STATE), "state carried");
+    require(size(state) == SIZE, "state size");
+    require(tx.outputs[0].scriptPubKey == next, "next script");
+    require(tx.outputs[0].value >= tx.input.current.value, "value");
+    require(tx.outputs[0].assets.lookup(ctrlTxid, ctrlGidx) == 1, "identity asset");
+  }
+
+  function unilateral(signature adminSig) tapscript {
+    require(older(exit));
+    require(checkSig(adminSig, adminPk));
+  }
+}
