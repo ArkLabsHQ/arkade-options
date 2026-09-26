@@ -1,5 +1,7 @@
 import { arkade } from "@arkade-os/sdk";
 
+import beaconArtifact from "../contracts/attestation_beacon.artifact.json" with { type: "json" };
+import beaconVaultArtifact from "../contracts/beacon_option_vault.artifact.json" with { type: "json" };
 import swapArtifact from "../contracts/non_interactive_swap.artifact.json" with { type: "json" };
 import intentArtifact from "../contracts/option_intent.artifact.json" with { type: "json" };
 import vaultArtifact from "../contracts/option_vault.artifact.json" with { type: "json" };
@@ -63,8 +65,26 @@ export function swapProgram() {
   return secondsExit(swapArtifact as arkade.ContractArtifact);
 }
 
+/** The committee registry the beacon vault reads. See contracts/beacon.md. */
+export function beaconProgram() {
+  return secondsExit(beaconArtifact as arkade.ContractArtifact);
+}
+
+/** OptionVault with the oracle keys replaced by the beacon's identity asset. */
+export function beaconVaultProgram() {
+  return secondsExit(beaconVaultArtifact as arkade.ContractArtifact);
+}
+
 export function rawVaultProgram() {
   return arkade.programFromArtifact(vaultArtifact as arkade.ContractArtifact);
+}
+
+export function rawBeaconProgram() {
+  return arkade.programFromArtifact(beaconArtifact as arkade.ContractArtifact);
+}
+
+export function rawBeaconVaultProgram() {
+  return arkade.programFromArtifact(beaconVaultArtifact as arkade.ContractArtifact);
 }
 
 export function rawIntentProgram() {

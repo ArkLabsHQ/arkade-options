@@ -4,7 +4,11 @@ import { arkade } from "@arkade-os/sdk";
 
 import {
   artifactLine,
+  beaconProgram,
+  beaconVaultProgram,
   intentProgram,
+  rawBeaconProgram,
+  rawBeaconVaultProgram,
   rawIntentProgram,
   rawSwapProgram,
   rawVaultProgram,
@@ -40,6 +44,8 @@ function onlySecondsDiffers(raw: ReturnType<typeof rawVaultProgram>, spent: Retu
 onlySecondsDiffers(rawVaultProgram(), vaultProgram());
 onlySecondsDiffers(rawIntentProgram(), intentProgram());
 onlySecondsDiffers(rawSwapProgram(), swapProgram());
+onlySecondsDiffers(rawBeaconProgram(), beaconProgram());
+onlySecondsDiffers(rawBeaconVaultProgram(), beaconVaultProgram());
 
 const key = (fill: number) => new Uint8Array(32).fill(fill);
 const emulatorKey = new Uint8Array(33);
@@ -148,4 +154,61 @@ if (!line.includes("9 oracle signatures") || !line.includes("30-second clock")) 
   throw new Error(line);
 }
 
-console.log("option and swap programs load through programFromArtifact");
+const beacon = beaconProgram();
+const compiledBeacon = new arkade.ArkadeProgramScript(
+  beacon,
+  {
+    ctrlTxid: key(2),
+    ctrlGidx: 0n,
+    "signers.0": key(11),
+    "signers.1": key(12),
+    "signers.2": key(13),
+    "signers.3": key(14),
+    "signers.4": key(15),
+    threshold: 3n,
+    domain: new TextEncoder().encode("BTCUSD-FIX"),
+    keyLag: 60n,
+    readFee: 100n,
+    adminPk: key(9),
+    exit: 2048n,
+    server: key(7),
+  },
+  { serverKey: key(7), emulatorKey },
+);
+if (compiledBeacon.compiled.map((fn) => fn.name).join() !== "attest,read,migrate,unilateral") {
+  throw new Error(`unexpected beacon functions ${compiledBeacon.compiled.map((fn) => fn.name).join()}`);
+}
+const attestAsm = beacon.functions.attest?.arkadeScript?.asm ?? [];
+if (attestAsm.filter((token) => token === "CHECKSIGFROMSTACK").length !== 5) throw new Error("attest does not check five signers");
+if (!attestAsm.includes("INSPECTINPUTPACKET") || !attestAsm.includes("INSPECTPACKET")) throw new Error("attest does not read both states");
+if (!(beacon.functions.read?.arkadeScript?.asm ?? []).includes("INSPECTINPUTPACKET")) throw new Error("read does not carry the state");
+
+const beaconVault = beaconVaultProgram();
+const compiledBeaconVault = new arkade.ArkadeProgramScript(
+  beaconVault,
+  {
+    kind: 0n,
+    writerPk: key(1),
+    holderPk: key(2),
+    writerScript: key(3),
+    holderScript: key(4),
+    strike: 10_000_000n,
+    collateral: 10_000_000n,
+    expiry: 1_800_000_000n,
+    beaconTxid: key(2),
+    beaconGidx: 0n,
+    exit: 512n,
+    server: key(7),
+  },
+  { serverKey: key(7), emulatorKey },
+);
+if (compiledBeaconVault.compiled.map((fn) => fn.name).join() !== "settle,close,unilateral") {
+  throw new Error(`unexpected beacon vault functions ${compiledBeaconVault.compiled.map((fn) => fn.name).join()}`);
+}
+const beaconSettle = beaconVault.functions.settle?.arkadeScript?.asm ?? [];
+if (beaconSettle.includes("CHECKSIGFROMSTACK")) throw new Error("beacon vault settle verifies signatures itself");
+if (!beaconSettle.includes("INSPECTINASSETLOOKUP") || !beaconSettle.includes("INSPECTINPUTPACKET")) {
+  throw new Error("beacon vault settle does not read the beacon");
+}
+
+console.log("option, swap, and beacon programs load through programFromArtifact");
