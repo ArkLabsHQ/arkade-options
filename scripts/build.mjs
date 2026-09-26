@@ -18,8 +18,9 @@ await esbuild.build({
   logLevel: "info",
 });
 
-mkdirSync(dist, { recursive: true });
+mkdirSync(path.join(dist, "viz"), { recursive: true });
 cpSync(path.join(root, "app/index.html"), path.join(dist, "index.html"));
 cpSync(path.join(root, "app/desk.css"), path.join(dist, "desk.css"));
+cpSync(path.join(root, "viz/index.html"), path.join(dist, "viz/index.html"));
 writeFileSync(path.join(dist, ".nojekyll"), "");
 writeFileSync(path.join(dist, "CNAME"), "arkade.trade\n");

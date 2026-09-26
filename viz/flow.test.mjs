@@ -106,6 +106,12 @@ test("the page names the live parameters and the sources", () => {
   for (const fact of ["330", "1", "3", "40,000", "2,048", "0.0"]) {
     assert.ok(html.includes(fact), fact);
   }
+  const page = readFileSync(new URL("../app/index.html", import.meta.url), "utf8");
+  assert.match(page, /href="\/viz\/"/);
+  for (const file of ["../scripts/build.mjs", "../scripts/dev.mjs"]) {
+    const source = readFileSync(new URL(file, import.meta.url), "utf8");
+    assert.match(source, /viz\/index\.html/);
+  }
   const vault = readFileSync(new URL("../contracts/option_vault.ark", import.meta.url), "utf8");
   assert.match(vault, /ph = collateral \* \(twap - strike\) \/ twap/);
   assert.match(vault, /if \(ph > collateral\)/);
