@@ -64,7 +64,7 @@ export function directPayoutKey(writerPubkey: string, writerPkScript: string): U
   return key;
 }
 
-function directPayout(key: Uint8Array): { tweakedPublicKey: Uint8Array; pkScript: Uint8Array } {
+export function directPayout(key: Uint8Array): { tweakedPublicKey: Uint8Array; pkScript: Uint8Array } {
   const tweakedPublicKey = xOnly(key);
   const pkScript = new Uint8Array(34);
   pkScript[0] = 0x51;
@@ -73,7 +73,7 @@ function directPayout(key: Uint8Array): { tweakedPublicKey: Uint8Array; pkScript
   return { tweakedPublicKey, pkScript };
 }
 
-function addressOf(script: { address: (hrp: string, server: Uint8Array) => { encode: () => string } }, serverKey: Uint8Array) {
+export function addressOf(script: { address: (hrp: string, server: Uint8Array) => { encode: () => string } }, serverKey: Uint8Array) {
   return script.address(networks.mutinynet.hrp, xOnly(serverKey)).encode();
 }
 
