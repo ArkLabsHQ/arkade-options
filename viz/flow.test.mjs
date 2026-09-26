@@ -98,7 +98,7 @@ test("scenario nets match the vault payoff", () => {
 
 test("the page names the live parameters and the sources", () => {
   assert.match(html, /lang="en"/);
-  assert.match(html, /COMMIT_PENDING/);
+  assert.match(html, /fec3f3d46f07281def0bde79c6cf3d9657b4ec04/);
   assert.match(html, /2026-09-26/);
   assert.match(html, /vtxoMinAmount/);
   assert.match(html, /maxOpReturnOutputs/);
