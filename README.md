@@ -79,7 +79,4 @@ Dokploy:
 
 ```bash
 pnpm test
-pnpm test:vm
 ```
-
-- `pnpm test:vm` runs the beacon and vault covenants in the Arkade VM. Needs Go. See `contracts/beacon.md`.

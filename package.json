@@ -11,8 +11,6 @@
     "build": "node scripts/build.mjs",
     "check": "node scripts/check.mjs",
     "test": "node --experimental-strip-types --test app/settle-math.test.mjs app/account.test.mjs protocol/protocol.test.ts protocol/lifecycle.test.ts protocol/intent-state.test.ts protocol/deribit.test.ts protocol/beacon.test.ts desk/book.test.ts viz/flow.test.mjs && pnpm check",
-    "test:vm": "cd contracts/vm && GOTOOLCHAIN=auto go test -count=1 ./...",
-    "beacon:fixture": "node --experimental-strip-types scripts/beacon-fixture.mjs",
     "desk": "node --experimental-strip-types desk/main.ts",
     "e2e": "node --experimental-strip-types scripts/e2e-mutinynet.ts"
   },
