@@ -175,7 +175,7 @@ if (compiledBeacon.compiled.map((fn) => fn.name).join() !== "attest,read,migrate
   throw new Error(`unexpected beacon functions ${compiledBeacon.compiled.map((fn) => fn.name).join()}`);
 }
 const attestAsm = beacon.functions.attest?.arkadeScript?.asm ?? [];
-if (attestAsm.filter((token) => token === "CHECKSIGFROMSTACK").length !== 5) throw new Error("attest does not check five signers");
+if (attestAsm.filter((token) => token === "CHECKSIGFROMSTACK").length !== 10) throw new Error("attest does not check ten signatures");
 if (!attestAsm.includes("INSPECTINPUTPACKET") || !attestAsm.includes("INSPECTPACKET")) throw new Error("attest does not read both states");
 if (!(beacon.functions.read?.arkadeScript?.asm ?? []).includes("INSPECTINPUTPACKET")) throw new Error("read does not carry the state");
 

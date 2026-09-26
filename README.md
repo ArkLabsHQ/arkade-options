@@ -75,6 +75,17 @@ Dokploy:
 
 `GET /` and `GET /status` return the same JSON: `commit`, `pubkey`, `address`, `balance`.
 
+## Oracle
+
+`ORACLE_KEY` is an optional 32-byte hex key and is never generated. Its x-only pubkey is the beacon admin key. `ORACLE_ADMIN` is an optional bearer token; leave it unset to disable the admin routes. `ARK_URL` defaults to `https://mutinynet.arkade.sh`. `EMULATOR_URL` defaults to the Mutinynet emulator. `DATA_DIR` is the store directory and `PORT` defaults to `8789`.
+
+```bash
+# same process shape as the desk; no separate image
+pnpm oracle
+```
+
+An oracle print is `sha256(BTCUSD || price_le64 || time_le64)`.
+
 ## Check
 
 ```bash

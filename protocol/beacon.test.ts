@@ -3,24 +3,25 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-import { arkade, asset, CSVMultisigTapscript, DefaultVtxo, Extension, SingleKey, Transaction } from "@arkade-os/sdk";
+import { arkade, asset, buildOffchainTx, CSVMultisigTapscript, DefaultVtxo, Extension, SingleKey, Transaction } from "@arkade-os/sdk";
 
 import { holderPayoff, settlementOutputs } from "../app/settle-math.js";
 
 import {
-  attestDigest,
   beaconIdOf,
   bin2num,
   bindBeacon,
   decodeState,
   encodeState,
   findFixing,
+  genesisOutputs,
   genesisState,
   migrateDigest,
   nextState,
   num2bin,
   priceOf,
   priceValue,
+  publishDigest,
   SLOT_OFFSETS,
   STATE_SIZE,
   STATE_TYPE,
@@ -29,7 +30,7 @@ import {
 } from "./beacon.ts";
 import { EXIT } from "./constants.ts";
 import { bindContracts } from "./contracts.ts";
-import { buildAttest, buildSettle, encodeWitness, statePacket } from "./cospend.ts";
+import { buildAttest, buildSettle, encodeWitness, statePacket, type AttestSlice } from "./cospend.ts";
 import { bytesToHex, hexToBytes } from "./hex.ts";
 import { beaconProgram, rawBeaconProgram, rawVaultProgram, vaultProgram } from "./programs.ts";
 
@@ -117,19 +118,24 @@ async function buildFixture() {
   };
 
   const value = priceValue(FIXTURE.price);
-  const digest = attestDigest(FIXTURE.domain, id, FIXTURE.expiry, value);
-  const sigs = await Promise.all(
-    [11, 12, 13].map((n) => key(n).signSchnorrDeterministic(digest)),
-  );
-  const allSigs = [...sigs, new Uint8Array(), new Uint8Array()];
-
   const genesis = creatingTx(beacon.pkScript, FIXTURE.beaconSats, [statePacket(genesisState())]);
   const fixed = nextState(genesisState(), FIXTURE.expiry, value);
+  const dummy = new Uint8Array(64).fill(1);
+  const sliceAt = (times: bigint[], who: bigint[]): AttestSlice => ({
+    price: [FIXTURE.price, FIXTURE.price, FIXTURE.price],
+    time: times,
+    who,
+    sig: [dummy, dummy, dummy],
+  });
   const attest = buildAttest({
     beacon: { script: beacon.script, coin: coinOf(genesis, FIXTURE.beaconSats), state: genesisState(), id: assetId },
     key: FIXTURE.expiry,
-    value,
-    sigs: allSigs,
+    slices: [
+      sliceAt([FIXTURE.expiry - 1780n, FIXTURE.expiry - 1770n, FIXTURE.expiry - 1760n], [0n, 1n, 2n]),
+      sliceAt([FIXTURE.expiry - 940n, FIXTURE.expiry - 930n, FIXTURE.expiry - 920n], [1n, 2n, 3n]),
+      sliceAt([FIXTURE.expiry + 10n, FIXTURE.expiry + 20n, FIXTURE.expiry + 30n], [2n, 3n, 4n]),
+    ],
+    opSig: dummy,
     next: fixed,
     checkpoint,
   });
@@ -189,10 +195,10 @@ test("the newest slot wins and the price is the first eight bytes", () => {
   });
   assert.equal(priceOf(findFixing(twice, 5n)!), 10_000_000n);
   assert.equal(findFixing(twice, 6n), undefined);
-  const evidence = new TextEncoder().encode("nine prints");
-  const value = priceValue(1n, evidence);
+  const value = priceValue(1n);
   assert.equal(priceOf(value), 1n);
-  assert.equal(bytesToHex(value.subarray(8)), createHash("sha256").update(evidence).digest("hex").slice(0, 48));
+  assert.deepEqual(value, num2bin(1n, 32));
+  assert.ok(value.subarray(8).every((byte) => byte === 0));
 });
 
 test("script numbers are little-endian sign-magnitude", () => {
@@ -221,17 +227,16 @@ test("slot offsets match both contract sources", () => {
 test("digests are what the contracts hash", () => {
   const id = { txid: hexToBytes("07" + "00".repeat(31)), gidx: 0n };
   const domain = new TextEncoder().encode("BTCUSD-FIX");
-  const value = priceValue(10_000_000n);
-  const expected = createHash("sha256")
-    .update(Buffer.concat([domain, id.txid, Buffer.from("00000000", "hex"), num2bin(1_700_000_000n, 8), value]))
-    .digest("hex");
-  assert.equal(bytesToHex(attestDigest(domain, id, 1_700_000_000n, value)), expected);
-  const next = new Uint8Array(32).fill(0x55);
+  const next = priceValue(10_000_000n);
+  const state = nextState(genesisState(), 1_700_000_000n, next);
+  const expected = createHash("sha256").update(Buffer.concat([id.txid, state])).digest("hex");
+  assert.equal(bytesToHex(publishDigest(id.txid, state)), expected);
+  const other = nextState(state, 1_700_086_400n, priceValue(9_000_000n));
+  assert.notEqual(bytesToHex(publishDigest(id.txid, other)), expected);
   const migrate = createHash("sha256")
-    .update(Buffer.concat([domain, Buffer.from("migrate"), id.txid, Buffer.from("00000000", "hex"), num2bin(4n, 8), next]))
+    .update(Buffer.concat([domain, Buffer.from("migrate"), id.txid, Buffer.from("00000000", "hex"), num2bin(4n, 8), new Uint8Array(32).fill(0x55)]))
     .digest("hex");
-  assert.equal(bytesToHex(migrateDigest(domain, id, 4n, next)), migrate);
-  assert.notEqual(bytesToHex(attestDigest(domain, { ...id, gidx: 1n }, 1_700_000_000n, value)), expected);
+  assert.equal(bytesToHex(migrateDigest(domain, id, 4n, new Uint8Array(32).fill(0x55))), migrate);
 });
 
 test("the asset id the vault compares is the reversed display txid", () => {
@@ -262,7 +267,7 @@ test("artifacts load and only the exit leaf changes", () => {
   const count = (asm: readonly unknown[] | undefined, name: string) => (asm ?? []).filter((token) => token === name).length;
   const beacon = beaconProgram();
   const attest = beacon.functions.attest?.arkadeScript?.asm;
-  assert.equal(count(attest, "CHECKSIGFROMSTACK"), 5);
+  assert.equal(count(attest, "CHECKSIGFROMSTACK"), 10);
   assert.equal(count(attest, "INSPECTINPUTPACKET"), 1);
   assert.equal(count(attest, "INSPECTPACKET"), 1);
   assert.equal(count(attest, "CHECKTIME"), 1);
@@ -312,35 +317,163 @@ test("bindings are deterministic Mutinynet addresses and refuse a bad committee"
   assert.throws(() => bindBeacon({ ...base, signers: signers.slice(0, 4) }), /5 signers/);
 });
 
-function genesisTx(beaconPkScript: Uint8Array, group: asset.AssetGroup, state: Uint8Array): Transaction {
+/** Mirrors AssetManager.issue when the selected coin already holds another asset: group 0 is the new unit, later groups return the other assets to the wallet output. */
+function stubWalletIssue(walletScript: Uint8Array, sats: bigint, other: { id: asset.AssetId; amount: bigint } | null): Transaction {
+  const groups = [asset.AssetGroup.create(null, null, [], [asset.AssetOutput.create(0, 1n)], [])];
+  if (other) {
+    groups.push(
+      asset.AssetGroup.create(
+        other.id,
+        null,
+        [asset.AssetInput.create(0, other.amount)],
+        [asset.AssetOutput.create(0, other.amount)],
+        [],
+      ),
+    );
+  }
   const tx = new Transaction({ version: 3, allowUnknownOutputs: true });
-  tx.addInput({ txid: new Uint8Array(32).fill(1), index: 0 });
-  tx.addOutput({ script: beaconPkScript, amount: 330n });
-  tx.addOutput(Extension.create([asset.Packet.create([group]), statePacket(state)]).txOut());
+  tx.addInput({ txid: new Uint8Array(32).fill(2), index: 0 });
+  tx.addOutput({ script: walletScript, amount: sats });
+  tx.addOutput(Extension.create([asset.Packet.create(groups)]).txOut());
   return tx;
 }
 
-test("verifyGenesis accepts one uncontrolled unit on the beacon and nothing else", async () => {
-  const built = await buildFixture();
+test("verifyGenesis accepts issue then deploy, and keeps a second asset off the beacon", async () => {
+  const serverKey = await key(1).xOnlyPublicKey();
+  const emulatorKey = await key(2).compressedPublicKey();
   const signers = await Promise.all([11, 12, 13, 14, 15].map((n) => key(n).xOnlyPublicKey()));
-  const unit = asset.AssetGroup.create(null, null, [], [asset.AssetOutput.create(0, 1n)], []);
-  const good = genesisTx(built.beacon.pkScript, unit, genesisState());
-  const id = verifyGenesis({ tx: good, gidx: 0, beaconPkScript: built.beacon.pkScript, signers, threshold: 3n });
-  assert.equal(bytesToHex(id.txid), good.id);
-  assert.equal(id.groupIndex, 0);
+  const adminPk = await key(9).xOnlyPublicKey();
+  const ownerPk = await key(4).xOnlyPublicKey();
+  const changePk = await key(5).xOnlyPublicKey();
+  const timelock = { type: "seconds" as const, value: EXIT };
+  const walletScript = new DefaultVtxo.Script({ pubKey: ownerPk, serverPubKey: serverKey, csvTimelock: timelock });
+  const changeScript = new DefaultVtxo.Script({ pubKey: changePk, serverPubKey: serverKey, csvTimelock: timelock });
+  const other = asset.AssetId.create("ab".repeat(32), 0);
+  const issued = stubWalletIssue(walletScript.pkScript, 10_000n, { id: other, amount: 7n });
+  const identity = asset.AssetId.create(issued.id, 0);
+  const args = {
+    signers,
+    threshold: 3n,
+    domain: FIXTURE.domain,
+    keyLag: FIXTURE.keyLag,
+    readFee: FIXTURE.readFee,
+    adminPk,
+    serverKey,
+    emulatorKey,
+  };
+  const beacon = bindBeacon({ ...args, id: beaconIdOf(identity) });
+  const coin = {
+    value: 10_000n,
+    assets: [
+      { assetId: identity.toString(), amount: 1n },
+      { assetId: other.toString(), amount: 7n },
+    ],
+  };
+  const outputs = genesisOutputs(coin, identity, beacon.pkScript, changeScript.pkScript);
+  assert.equal(outputs[0]!.amount, 330n);
+  assert.equal(bytesToHex(outputs[0]!.script), bytesToHex(beacon.pkScript));
+  assert.equal(outputs[1]!.amount, 9_670n);
+  assert.equal(bytesToHex(outputs[1]!.script), bytesToHex(changeScript.pkScript));
+  const extension = Extension.fromBytes(outputs[2]!.script);
+  const groups = extension.getAssetPacket()!.groups;
+  assert.equal(groups[0]!.outputs[0]!.vout, 0);
+  assert.equal(BigInt(groups[0]!.outputs[0]!.amount), 1n);
+  assert.equal(groups[1]!.assetId!.toString(), other.toString());
+  assert.equal(groups[1]!.outputs[0]!.vout, 1);
+  assert.ok(groups.every((group) => group.outputs.every((output) => output.vout !== 0 || group.assetId!.toString() === identity.toString())));
 
-  const check = (tx: Transaction, pattern: RegExp, extra: Partial<Parameters<typeof verifyGenesis>[0]> = {}) =>
-    assert.throws(() => verifyGenesis({ tx, gidx: 0, beaconPkScript: built.beacon.pkScript, signers, threshold: 3n, ...extra }), pattern);
+  const deployed = buildOffchainTx(
+    [{ txid: issued.id, vout: 0, value: 10_000, tapLeafScript: walletScript.forfeit(), tapTree: walletScript.encode() }],
+    outputs,
+    CSVMultisigTapscript.decode(hexToBytes(CHECKPOINT_HEX)),
+  );
+  const good = { issueTx: issued, deployTx: deployed.arkTx, checkpoint: deployed.checkpoints[0]!, ...args };
+  const id = verifyGenesis(good);
+  assert.equal(id.toString(), identity.toString());
+  assert.equal(bytesToHex(id.txid), issued.id);
 
-  const controlled = asset.AssetGroup.create(null, asset.AssetRef.fromId(asset.AssetId.create("11".repeat(32), 0)), [], [asset.AssetOutput.create(0, 1n)], []);
-  check(genesisTx(built.beacon.pkScript, controlled, genesisState()), /control asset/);
-  const two = asset.AssetGroup.create(null, null, [], [asset.AssetOutput.create(0, 2n)], []);
-  check(genesisTx(built.beacon.pkScript, two, genesisState()), /supply/);
-  check(genesisTx(built.vault.pkScript, unit, genesisState()), /beacon script/);
-  check(genesisTx(built.beacon.pkScript, unit, built.fixed), /genesis state/);
-  check(good, /threshold/, { threshold: 0n });
-  check(good, /duplicate/, { signers: [signers[0]!, signers[0]!, signers[2]!, signers[3]!, signers[4]!] });
-  check(good, /group 1/, { gidx: 1 });
+  const check = (pattern: RegExp, extra: Partial<Parameters<typeof verifyGenesis>[0]>) =>
+    assert.throws(() => verifyGenesis({ ...good, ...extra }), pattern);
+
+  const controlTx = new Transaction({ version: 3, allowUnknownOutputs: true });
+  controlTx.addInput({ txid: new Uint8Array(32).fill(3), index: 0 });
+  controlTx.addOutput({ script: walletScript.pkScript, amount: 10_000n });
+  controlTx.addOutput(
+    Extension.create([
+      asset.Packet.create([
+        asset.AssetGroup.create(null, asset.AssetRef.fromId(asset.AssetId.create("11".repeat(32), 0)), [], [asset.AssetOutput.create(0, 1n)], []),
+      ]),
+    ]).txOut(),
+  );
+  check(/control asset/, { issueTx: controlTx });
+
+  const minted = new Transaction({ version: 3, allowUnknownOutputs: true });
+  minted.addInput({ txid: new Uint8Array(32).fill(4), index: 0 });
+  minted.addOutput({ script: walletScript.pkScript, amount: 10_000n });
+  minted.addOutput(Extension.create([asset.Packet.create([asset.AssetGroup.create(null, null, [], [asset.AssetOutput.create(0, 2n)], [])])]).txOut());
+  check(/supply is not 1/, { issueTx: minted });
+
+  const issuedGroup = asset.AssetGroup.create(null, null, [], [asset.AssetOutput.create(0, 1n)], []);
+  issuedGroup.inputs.push(asset.AssetInput.create(0, 1n));
+  const reissued = new Transaction({ version: 3, allowUnknownOutputs: true });
+  reissued.addInput({ txid: new Uint8Array(32).fill(5), index: 0 });
+  reissued.addOutput({ script: walletScript.pkScript, amount: 10_000n });
+  reissued.addOutput(Extension.create([asset.Packet.create([issuedGroup])]).txOut());
+  check(/issuance/, { issueTx: reissued });
+
+  const wrong = buildOffchainTx(
+    [{ txid: issued.id, vout: 0, value: 10_000, tapLeafScript: walletScript.forfeit(), tapTree: walletScript.encode() }],
+    [{ script: changeScript.pkScript, amount: 10_000n }, outputs[2]!],
+    CSVMultisigTapscript.decode(hexToBytes(CHECKPOINT_HEX)),
+  );
+  check(/wrong script/, { deployTx: wrong.arkTx, checkpoint: wrong.checkpoints[0]! });
+
+  const extra = buildOffchainTx(
+    [{ txid: issued.id, vout: 0, value: 10_000, tapLeafScript: walletScript.forfeit(), tapTree: walletScript.encode() }],
+    [
+      { script: beacon.pkScript, amount: 330n },
+      { script: changeScript.pkScript, amount: 9_670n },
+      Extension.create([
+        asset.Packet.create([
+          asset.AssetGroup.create(identity, null, [asset.AssetInput.create(0, 1n)], [asset.AssetOutput.create(0, 1n)], []),
+          asset.AssetGroup.create(other, null, [asset.AssetInput.create(0, 7n)], [asset.AssetOutput.create(0, 7n)], []),
+        ]),
+        statePacket(genesisState()),
+      ]).txOut(),
+    ],
+    CSVMultisigTapscript.decode(hexToBytes(CHECKPOINT_HEX)),
+  );
+  check(/extra asset/, { deployTx: extra.arkTx, checkpoint: extra.checkpoints[0]! });
+
+  const moved = buildOffchainTx(
+    [{ txid: issued.id, vout: 0, value: 10_000, tapLeafScript: walletScript.forfeit(), tapTree: walletScript.encode() }],
+    [
+      outputs[0]!,
+      outputs[1]!,
+      Extension.create([asset.Packet.create(groups), statePacket(nextState(genesisState(), 1_700_000_000n, priceValue(1n)))]).txOut(),
+    ],
+    CSVMultisigTapscript.decode(hexToBytes(CHECKPOINT_HEX)),
+  );
+  check(/non-genesis state/, { deployTx: moved.arkTx, checkpoint: moved.checkpoints[0]! });
+
+  const elsewhere = stubWalletIssue(walletScript.pkScript, 10_000n, null);
+  const missed = buildOffchainTx(
+    [{ txid: elsewhere.id, vout: 0, value: 10_000, tapLeafScript: walletScript.forfeit(), tapTree: walletScript.encode() }],
+    outputs,
+    CSVMultisigTapscript.decode(hexToBytes(CHECKPOINT_HEX)),
+  );
+  check(/deploy does not spend the issuance/, { deployTx: missed.arkTx, checkpoint: missed.checkpoints[0]! });
+  check(/issuance tx passed as deploy/, { deployTx: issued });
+  check(/threshold/, { threshold: 0n });
+  check(/duplicate/, { signers: [signers[0]!, signers[0]!, signers[2]!, signers[3]!, signers[4]!] });
+
+  assert.throws(
+    () => genesisOutputs({ value: 659n, assets: coin.assets }, identity, beacon.pkScript, changeScript.pkScript),
+    /change cannot be paid/,
+  );
+  const folded = genesisOutputs({ value: 400n, assets: [{ assetId: identity.toString(), amount: 1n }] }, identity, beacon.pkScript, changeScript.pkScript);
+  assert.equal(folded.length, 2);
+  assert.equal(folded[0]!.amount, 400n);
 });
 
 test("the settle transaction has the documented layout", async () => {
@@ -381,8 +514,8 @@ test("the settle transaction has the documented layout", async () => {
   const attestExt = Extension.fromBytes(attest.getOutput(1)!.script!);
   assert.deepEqual(attestExt.getAssetPacket()!.groups[0]!.inputs.map((i) => i.input), [{ type: 1, vin: 0, amount: 1n }]);
   assert.equal(bytesToHex(attestExt.getPacketByType(STATE_TYPE)!.serialize()), bytesToHex(built.fixed));
-  // count, three 64-byte signatures, two empty items, the 32-byte value, the 4-byte key
-  assert.equal(attestExt.getEmulatorPacket()!.entries[0]!.witness!.length, 1 + 3 * 65 + 2 + 33 + 5);
+  assert.equal(attestExt.getEmulatorPacket()!.entries[0]!.witness![0], 38);
+  assert.deepEqual(built.beacon.script.functionByName("attest")!.def.arkadeScript?.witness?.slice(0, 4), ["opSig", "sig2.2", "sig2.1", "sig2.0"]);
 });
 
 

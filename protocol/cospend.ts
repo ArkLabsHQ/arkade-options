@@ -181,20 +181,34 @@ export function buildSettle(input: {
   return build(spends, outputs, [unitTransfer(input.beacon.id, 1, 0), statePacket(input.beacon.state)], input.checkpoint);
 }
 
+/** One slice of three oracle prints, in witness order `price`, `time`, `who`, `sig`. */
+export type AttestSlice = {
+  price: readonly bigint[];
+  time: readonly bigint[];
+  who: readonly bigint[];
+  sig: readonly Uint8Array[];
+};
+
 /** Publish a fixing: the beacon at input 0, continued at output 0 with the next state. */
 export function buildAttest(input: {
   beacon: BeaconCoin;
   key: bigint;
-  value: Uint8Array;
-  /** Five signatures in signer order; an absent signer is an empty array. */
-  sigs: readonly Uint8Array[];
+  /** Open, mid, close. Flattened as `price0.0` .. `sig2.2`. */
+  slices: readonly [AttestSlice, AttestSlice, AttestSlice];
+  opSig: Uint8Array;
   next: Uint8Array;
   checkpoint: CSVMultisigTapscript.Type;
 }): Built {
-  if (input.sigs.length !== 5) throw new Error("five signature slots");
-  const callArgs: Record<string, bigint | Uint8Array> = { key: input.key, value: input.value };
-  input.sigs.forEach((sig, i) => {
-    callArgs[`sigs.${i}`] = sig;
+  const callArgs: Record<string, bigint | Uint8Array> = { key: input.key, opSig: input.opSig };
+  const fields = ["price", "time", "who", "sig"] as const;
+  input.slices.forEach((slice, index) => {
+    for (const field of fields) {
+      const values = slice[field];
+      if (values.length !== 3) throw new Error(`${field}${index} needs 3`);
+      values.forEach((value, item) => {
+        callArgs[`${field}${index}.${item}`] = value;
+      });
+    }
   });
   return build(
     [{ script: input.beacon.script, fn: "attest", callArgs, coin: input.beacon.coin }],
