@@ -43,13 +43,13 @@ The packet is one stack element. `OP_INSPECTINPUTPACKET` rejects more than 520 b
 
 ### Leaves
 
-`attest(key, price0, time0, who0, sig0, price1, time1, who1, sig1, price2, time2, who2, sig2, opSig)`. Beacon at input 0. Each of the nine prints is `sha256(0x425443555344 || num2bin(price, 8) || num2bin(time, 8))`. That message names no beacon. Three distinct indexes in `0..4` sign each slice. The latest print of each slice lands in `[key-1800, key-1740]`, `[key-960, key-900]`, or `[key, key+60]`, and `max(time) - min(time) <= 60`. The stored value is `num2bin(twap, 32)` for `twap = (mOpen*900 + mMid*900 + mClose*60) / 1860`. `key > 1800` and the key is not in any current slot. When `keyLag ≥ 0`, the emulator clock must have reached `key + keyLag`; a price beacon sets 60 so a fixing cannot be published before its settlement minute closes. `adminPk` signs `sha256(ctrlTxid || nextPacket)` and is the only key that writes the slot. The five oracle keys cannot write a slot, but three of them can `migrate` the unit to any program. The new packet has round + 1, slot 0 = (key, twap), slots 1..7 = old slots 0..6. Output 0 keeps the script, at least the value, and the asset unit.
+`attest(key, price0, time0, who0, sig0, price1, time1, who1, sig1, price2, time2, who2, sig2, opSig)`. Beacon at input 0. Each of the nine prints is `sha256(0x425443555344 || num2bin(price, 8) || num2bin(time, 8))`. That message names no beacon. Three distinct indexes in `0..4` sign each slice. The latest print of each slice lands in `[key-1800, key-1740]`, `[key-960, key-900]`, or `[key, key+60]`, and `max(time) - min(time) <= 60`. The stored value is `num2bin(twap, 32)` for `twap = (mOpen*900 + mMid*900 + mClose*60) / 1860`. `key > 1800` and the key is not in any current slot. When `keyLag ≥ 0`, the emulator clock must have reached `key + keyLag`; a price beacon sets 60 so a fixing cannot be published before its settlement minute closes. `adminPk` signs `sha256(ctrlTxid || nextPacket)` and is the only key that writes the slot. The five oracle keys cannot write a slot, and cannot `migrate` the unit without `adminPk`. The new packet has round + 1, slot 0 = (key, twap), slots 1..7 = old slots 0..6. Output 0 keeps the script, at least the value, and the asset unit.
 
 A key that fell off the eight slots may be attested again. The oracle signatures still verify. The oracle-service signature (`adminPk`, the `ORACLE_KEY` pubkey, not the Arkade Service) covers the whole next packet, so it has to be made again for the new history.
 
 `read(selfIndex)`. `selfIndex` is the beacon's own input index. The current transaction carries a packet equal to the beacon's own. Output 0 keeps the script and the asset unit and gains `readFee` sats. No signature: anyone may read. A read pins nothing else about its transaction: not the number of inputs, not who else is in it.
 
-`migrate(next, sigs[5])`. Beacon at input 0. `threshold` signers sign `sha256(domain + "migrate" + ctrlTxid + num2bin(ctrlGidx, 4) + num2bin(round, 8) + next)`, with `round` read from the current packet, so a migrate signature is good for one state only. Output 0 pays the 32-byte program `next` with the asset unit and at least the value; the packet is carried unchanged. The consumer does not change.
+`migrate(next, sigs[5], opSig)`. Beacon at input 0. `threshold` signers and `adminPk` sign `sha256(domain + "migrate" + ctrlTxid + num2bin(ctrlGidx, 4) + num2bin(round, 8) + next)`, with `round` read from the current packet, so a migrate signature is good for one state only. Output 0 pays the 32-byte program `next` with the asset unit and at least the value; the packet is carried unchanged. The consumer does not change.
 
 `distinctSigners` requires the ten pairwise inequalities and is called from both `attest` and `migrate`. `quorum`, used by `migrate`, requires `1 ≤ threshold ≤ 5`.
 
@@ -89,7 +89,7 @@ in 2  fee coin, when readFee > 0 out 2  writer leg, when both legs are above dus
 | DVN 2-of-2 over the attested hash | nine oracle prints plus `adminPk` over `sha256(ctrlTxid \|\| next)` |
 | OApp reads the marker's previous packet | vault reads the beacon's previous packet |
 | Marker minted per message and burned by the consumer | the beacon itself is co-spent and continued |
-| DVN config change by the owner | `migrate` by the committee |
+| DVN config change by the owner | `migrate` by the committee and the oracle service |
 | inbound nonce | key |
 
 The beacon is a reusable attestation registry, not a drop-in endpoint. An OApp built on it must carry the message body on its own stack and hash-match it to the 32-byte slot value, keep its own inbound-nonce state for exactly-once consumption (the beacon consumes nothing, so two spends can read one key), and consume each key while it is in a slot. It does not replace the example's marker, which transports the body and burns once. What it gives an OApp is the same thing it gives the vault: the verifier set changes without touching the consumer.
@@ -100,7 +100,7 @@ The marker design was not taken here because a marker unit can be re-homed by wh
 
 Script, `attestation_beacon.ark`:
 
-- Nine oracle signatures over `sha256(BTCUSD || price || time)`, three distinct signers in each slice, the TWAP, and `adminPk` over `sha256(ctrlTxid || next)`. Distinct signers. Round + 1. Key above 1800 and absent from the slots. Clock past `key + keyLag` when enabled. Slot value `num2bin(twap, 32)`. History shift of 280 bytes. Continuation of script, value, and asset unit on output 0. Attest and migrate at input 0. A read carries the packet unchanged and pays `readFee`. `migrate` is still a threshold of the five signers.
+- Nine oracle signatures over `sha256(BTCUSD || price || time)`, three distinct signers in each slice, the TWAP, and `adminPk` over `sha256(ctrlTxid || next)`. Distinct signers. Round + 1. Key above 1800 and absent from the slots. Clock past `key + keyLag` when enabled. Slot value `num2bin(twap, 32)`. History shift of 280 bytes. Continuation of script, value, and asset unit on output 0. Attest and migrate at input 0. A read carries the packet unchanged and pays `readFee`. `migrate` needs a threshold of the five signers and `adminPk`.
 
 Script, `option_vault.ark`:
 
@@ -129,7 +129,7 @@ Emulator:
 | Someone reads the beacon to move it | costs `readFee` per read. Bounded, not blocked. Each read also lengthens the beacon's off-chain ancestry, which every payout that read it inherits at exit; the oracle service renews the beacon coin to keep that short. |
 | Oracle prints replayed on another beacon | not blocked: the print digest names no beacon. The oracle service's digest names `ctrlTxid` and the next packet, so the write itself does not replay. |
 | Old migrate signatures replayed | blocked: the digest names the round. |
-| Migrate to a script that lies | threshold of the committee. That is the trust a consumer accepts by committing to the asset id. |
+| Migrate to a script that lies | needs the committee threshold and the oracle service together. That is the trust a consumer accepts by committing to the asset id. |
 | Layout version bumped while vaults are open | not blocked. An old vault's `settle` fails, `close` needs both parties, and the writer's `unilateral` then takes the whole coin after the CSV. Do not bump the version while vaults bound to the old layout are open. |
 | Admin exits the coin to Bitcoin | the unit leaves Arkade. Whether an on-chain unit can re-enter as an asset claim is unverified here. |
 
