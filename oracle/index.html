@@ -7,7 +7,33 @@
   <link rel="stylesheet" href="/page.css">
 </head>
 <body>
-  <main id="app"></main>
-  <script type="module" src="/page.js"></script>
+<main>
+  <h1>Oracle</h1>
+  <section id="status"></section>
+  <section>
+    <h2>Oracle pubkeys</h2>
+    <ol id="keys"></ol>
+  </section>
+  <section>
+    <p class="muted">Admin token stays in this field. It is sent only as a bearer on keys, issue, and deploy.</p>
+    <label>Admin token <input id="token" type="password" autocomplete="off"></label>
+    <label>Five x-only pubkeys, one per line <textarea id="pubkeys" rows="5"></textarea></label>
+    <button id="save" type="button">Save keys</button>
+    <button id="issue" type="button">Issue</button>
+    <button id="deploy" type="button">Deploy</button>
+    <p id="admin-error" class="err"></p>
+  </section>
+  <section>
+    <p class="muted">The oracle secret is cleared after signing and is not sent to the server.</p>
+    <form id="print">
+      <label>Price, USD cents <input id="price" inputmode="numeric"></label>
+      <label>Time, unix seconds <input id="time" inputmode="numeric"></label>
+      <label>Oracle secret <input id="secret" type="password" autocomplete="off"></label>
+      <button type="submit">Sign and submit print</button>
+    </form>
+    <p id="print-error" class="err"></p>
+  </section>
+</main>
+<script type="module" src="/page.js"></script>
 </body>
 </html>
