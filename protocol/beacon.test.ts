@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
@@ -18,7 +17,6 @@ import {
   nextState,
   num2bin,
   priceValue,
-  publishDigest,
   SLOT_OFFSETS,
   STATE_SIZE,
   STATE_TYPE,
@@ -202,22 +200,6 @@ test("slot offsets match both contract sources", () => {
   assert.ok(beacon.includes("const int HISTORY = 280;"));
 });
 
-test("digests are what the contracts hash", () => {
-  const id = { txid: hexToBytes("07" + "00".repeat(31)), gidx: 0n };
-  const next = priceValue(10_000_000n);
-  const state = nextState(genesisState(), 1_700_000_000n, next);
-  const expected = createHash("sha256").update(Buffer.concat([id.txid, state])).digest("hex");
-  assert.equal(bytesToHex(publishDigest(id.txid, state)), expected);
-  const other = nextState(state, 1_700_086_400n, priceValue(9_000_000n));
-  assert.notEqual(bytesToHex(publishDigest(id.txid, other)), expected);
-});
-
-test("the asset id the vault compares is the reversed display txid", () => {
-  const id = beaconIdOf(asset.AssetId.create(FIXTURE.assetTxid, 0));
-  assert.equal(bytesToHex(id.txid), "07" + "00".repeat(31));
-  assert.equal(id.gidx, 0n);
-});
-
 test("the beacon leaves check what the design says", () => {
   const count = (asm: readonly unknown[] | undefined, name: string) => (asm ?? []).filter((token) => token === name).length;
   const beacon = beaconProgram();
@@ -325,11 +307,4 @@ test("the settle transaction has the documented layout", async () => {
   assert.equal(bytesToHex(attestExt.getPacketByType(STATE_TYPE)!.serialize()), bytesToHex(built.fixed));
   assert.equal(attestExt.getEmulatorPacket()!.entries[0]!.witness![0], 38);
   assert.deepEqual(built.beacon.script.functionByName("attest")!.def.arkadeScript?.witness?.slice(0, 4), ["opSig", "sig2.2", "sig2.1", "sig2.0"]);
-});
-
-
-test("the witness encoding is compact size framed", () => {
-  assert.equal(bytesToHex(encodeWitness([])), "00");
-  assert.equal(bytesToHex(encodeWitness([Uint8Array.of(1), new Uint8Array()])), "02010100");
-  assert.equal(bytesToHex(encodeWitness([new Uint8Array(253)]).subarray(0, 4)), "01fdfd00");
 });

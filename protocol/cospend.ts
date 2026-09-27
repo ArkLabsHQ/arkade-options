@@ -63,23 +63,9 @@ function isCovenant(spend: Spend): spend is CovenantSpend {
   return "script" in spend;
 }
 
-function compactSize(n: number): Uint8Array {
-  if (n < 0xfd) return Uint8Array.of(n);
-  if (n <= 0xffff) return Uint8Array.of(0xfd, n & 0xff, n >> 8);
-  return Uint8Array.of(0xfe, n & 0xff, (n >> 8) & 0xff, (n >> 16) & 0xff, (n >>> 24) & 0xff);
-}
-
-/** The witness stack as the emulator packet carries it: item count, then each item length-prefixed. */
+/** The witness stack as the emulator packet carries it, compact-size framed like a condition witness. */
 export function encodeWitness(items: Uint8Array[]): Uint8Array {
-  const parts = [compactSize(items.length)];
-  for (const item of items) parts.push(compactSize(item.length), item);
-  const out = new Uint8Array(parts.reduce((sum, part) => sum + part.length, 0));
-  let at = 0;
-  for (const part of parts) {
-    out.set(part, at);
-    at += part.length;
-  }
-  return out;
+  return ConditionWitness.encode(items)[1];
 }
 
 function anchorIndex(tx: Transaction): number {
