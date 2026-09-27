@@ -80,11 +80,26 @@ Dokploy:
 `ORACLE_KEY` is an optional 32-byte hex key and is never generated. Its x-only pubkey is the beacon admin key. `ORACLE_ADMIN` is an optional bearer token; leave it unset to disable the admin routes. `ARK_URL` defaults to `https://mutinynet.arkade.sh`. `EMULATOR_URL` defaults to the Mutinynet emulator. `DATA_DIR` is the store directory and `PORT` defaults to `8789`.
 
 ```bash
-# same process shape as the desk; no separate image
 pnpm oracle
 ```
 
-An oracle print is `sha256(BTCUSD || price_le64 || time_le64)`.
+```bash
+docker build -f oracle/Dockerfile -t arkade-options-oracle .
+docker run --rm -p 8789:8789 -e ORACLE_KEY -e ORACLE_ADMIN -v oracle-data:/data arkade-options-oracle
+```
+
+Dokploy:
+
+- Dockerfile `oracle/Dockerfile`, build context the repository root.
+- Port `8789`. The dashboard is `GET /` on the same port.
+- Set `ORACLE_KEY` and `ORACLE_ADMIN`. Keep `ORACLE_KEY`: it is the only key that writes fixings on the beacon it deploys.
+- Mount a volume at `/data`.
+
+An oracle print is `sha256(BTCUSD || price_le64 || time_le64)`. After `expiry + 60`, publish the fixing:
+
+```bash
+curl -X POST -H "Authorization: Bearer $ORACLE_ADMIN" -d '{"expiry":1790463992}' https://<oracle>/api/publish
+```
 
 ## Check
 

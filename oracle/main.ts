@@ -14,11 +14,12 @@ import { createOracle, type OracleWallet } from "./service.ts";
 
 /**
  *   ORACLE_KEY     optional 32-byte hex. Never generated. Admin pubkey and publish key.
- *   ORACLE_ADMIN   optional bearer. Unset disables /api/keys, /api/issue, and /api/deploy.
+ *   ORACLE_ADMIN   optional bearer. Unset disables /api/keys, /api/issue, /api/deploy, and /api/publish.
  *   ARK_URL        default https://mutinynet.arkade.sh
  *   EMULATOR_URL   default Mutinynet emulator
  *   DATA_DIR       oracle.json. Default ./data
  *   PORT           default 8789
+ *   HOST           default 127.0.0.1. oracle/Dockerfile sets 0.0.0.0.
  */
 
 function optionalKey(name: string): Uint8Array | undefined {
@@ -63,6 +64,7 @@ const wrapped: OracleWallet | undefined = wallet
 const oracle = await createOracle({
   dataDir,
   port,
+  host: process.env.HOST?.trim() || undefined,
   adminToken,
   oracleKey,
   emulatorKey: hexToBytes(defaultEmulatorPubkey(networks.mutinynet)),

@@ -65,6 +65,7 @@ export type OracleIndexer = {
 export type OracleDeps = {
   dataDir: string;
   port?: number;
+  host?: string;
   adminToken?: string;
   oracleKey?: Uint8Array;
   emulatorKey: Uint8Array;
@@ -400,6 +401,7 @@ export async function createOracle(deps: OracleDeps) {
         return sendJson(res, 200, await addPrint(asRecord(await readBody(req, 4096))));
       }
       if (req.method === "POST" && url === "/api/publish") {
+        requireAdmin(req);
         return sendJson(res, 200, await publish(asRecord(await readBody(req, 4096))));
       }
       sendJson(res, 404, { error: "not found" });
@@ -414,7 +416,7 @@ export async function createOracle(deps: OracleDeps) {
     void handle(req, res);
   });
   await new Promise<void>((resolve) => {
-    server.listen(deps.port ?? 0, "127.0.0.1", () => resolve());
+    server.listen(deps.port ?? 0, deps.host ?? "127.0.0.1", () => resolve());
   });
   const address = server.address();
   const port = typeof address === "object" && address ? address.port : 0;

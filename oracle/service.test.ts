@@ -209,7 +209,8 @@ test("status, admin order, deploy change, and a print that becomes a fixing", as
     assert.equal((await call(disabled.oracle.url, "/api/keys", { pubkeys }, "test-token")).status, 404);
     await disabled.close();
 
-    const incomplete = await call(ctx.oracle.url, "/api/publish", { expiry: Number(expiry - 86_400n) });
+    assert.equal((await call(ctx.oracle.url, "/api/publish", { expiry: Number(expiry) })).status, 401);
+    const incomplete = await call(ctx.oracle.url, "/api/publish", { expiry: Number(expiry - 86_400n) }, "test-token");
     assert.equal(incomplete.status, 400);
     const tooSoon = await createOracle({
       dataDir: ctx.dir,
@@ -218,15 +219,15 @@ test("status, admin order, deploy change, and a print that becomes a fixing", as
       emulatorKey: ctx.emulatorKey,
       now: () => Number(expiry + 59n),
     });
-    const early = await call(tooSoon.url, "/api/publish", { expiry: Number(expiry) });
+    const early = await call(tooSoon.url, "/api/publish", { expiry: Number(expiry) }, "test-token");
     assert.equal(early.status, 400);
     await tooSoon.close();
 
-    const published = await call(ctx.oracle.url, "/api/publish", { expiry: Number(expiry) });
+    const published = await call(ctx.oracle.url, "/api/publish", { expiry: Number(expiry) }, "test-token");
     assert.equal(published.status, 200, JSON.stringify(published.json));
     assert.equal(published.json.twap, "10000000");
     assert.equal(ctx.submitted.length, 1);
-    const again = await call(ctx.oracle.url, "/api/publish", { expiry: Number(expiry) });
+    const again = await call(ctx.oracle.url, "/api/publish", { expiry: Number(expiry) }, "test-token");
     assert.equal(again.status, 409);
     const after = await call(ctx.oracle.url, "/api/status");
     const stored = (after.json.prints as { usedFor: number[] }[]).filter((print) => print.usedFor.includes(Number(expiry)));
