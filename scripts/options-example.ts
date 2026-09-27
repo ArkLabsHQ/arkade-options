@@ -10,5 +10,6 @@ const deposit = await depositAddress({
   expiry: 1_900_000_000n,
   deadline: BigInt(Math.floor(Date.now() / 1000) + 30),
   writerHex: await writer.toHex(),
+  beaconTxidHex: process.env.BEACON_TXID,
 });
 console.log(deposit);

@@ -36,7 +36,7 @@ import { intentProgram } from "../protocol/programs.ts";
  *     spends the writer and desk keys in data/e2e-keys.json. The writer wallet
  *     funds both intents, the desk finalizes one, and the writer cancels the other.
  *
- * WRITER_KEY and DESK_KEY default to public test keys 1 and 2.
+ * WRITER_KEY and DESK_KEY default to public test keys 1 and 2. BEACON_TXID is the beacon's display txid.
  */
 
 const live = process.argv.includes("--live");
@@ -74,7 +74,8 @@ const fillDeadline = now + 600n;
 const cancelDeadline = now + 30n;
 const writerPk = await writer.xOnlyPublicKey();
 const holderPk = await desk.xOnlyPublicKey();
-const beaconDisplay = (process.env.BEACON_TXID ?? `${"00".repeat(31)}07`).trim().toLowerCase();
+const beaconDisplay = (process.env.BEACON_TXID ?? "").trim().toLowerCase();
+if (!beaconDisplay) throw new Error("BEACON_TXID is required");
 const beaconGidx = Number(process.env.BEACON_GIDX ?? "0");
 const shared = {
   kind: 0 as const,

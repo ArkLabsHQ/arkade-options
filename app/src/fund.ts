@@ -33,7 +33,7 @@ export type FundRequest = {
   /** Older positions that stored a private key. */
   writerHex?: string;
   holderPkHex?: string;
-  /** Display txid of the beacon identity asset. Omitted only when no desk answered. */
+  /** Display txid of the beacon identity asset, from the desk's quote. Required to build a vault. */
   beaconTxidHex?: string;
   beaconGidx?: number;
   exit?: bigint;
@@ -50,8 +50,6 @@ export type Deposit = {
   beaconGidx: number;
   exit: number;
 };
-
-const FALLBACK_BEACON_TXID = `${"00".repeat(31)}07`;
 
 export type WriterBinding = {
   pubkey: string;
@@ -218,7 +216,8 @@ async function build(req: FundRequest) {
   }
   const { client } = await openSession(identity);
   const holderPk = req.holderPkHex ? hexToBytes(req.holderPkHex) : await HOLDER.xOnlyPublicKey();
-  const beaconTxidHex = (req.beaconTxidHex ?? FALLBACK_BEACON_TXID).toLowerCase();
+  if (!req.beaconTxidHex) throw new Error("Selling needs a desk quote that names the beacon.");
+  const beaconTxidHex = req.beaconTxidHex.toLowerCase();
   const beaconGidx = req.beaconGidx ?? 0;
   const exit = req.exit ?? EXIT;
   const terms: Terms = {
