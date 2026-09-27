@@ -220,7 +220,6 @@ async function build(req: FundRequest) {
   const holderPk = req.holderPkHex ? hexToBytes(req.holderPkHex) : await HOLDER.xOnlyPublicKey();
   const beaconTxidHex = (req.beaconTxidHex ?? FALLBACK_BEACON_TXID).toLowerCase();
   const beaconGidx = req.beaconGidx ?? 0;
-  if (!/^[0-9a-f]{64}$/.test(beaconTxidHex)) throw new Error("The beacon txid is not 32 bytes.");
   const exit = req.exit ?? EXIT;
   const terms: Terms = {
     kind: req.kind,

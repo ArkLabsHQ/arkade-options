@@ -20,7 +20,7 @@ import { btcAmount } from "../app/src/fund.ts";
 import { ARK_URL, EMULATOR_URL, EXIT } from "../protocol/constants.ts";
 import { assertServerExit, bindContracts, bindSwap, payoutVtxo } from "../protocol/contracts.ts";
 import { bytesToHex, xOnly } from "../protocol/hex.ts";
-import { intentProgram, vaultProgram } from "../protocol/programs.ts";
+import { intentProgram } from "../protocol/programs.ts";
 
 /**
  * Happy path on Mutinynet.
@@ -29,13 +29,12 @@ import { intentProgram, vaultProgram } from "../protocol/programs.ts";
  *     connects and prints the addresses to fund.
  *
  *   pnpm e2e -- --spend
- *     finalizes an intent that already holds collateral, cancels the second
- *     intent once its deadline has passed, and settles the vault.
+ *     finalizes an intent that already holds collateral and cancels the second
+ *     intent once its deadline has passed. Settlement needs a beacon fixing.
  *
  *   pnpm e2e -- --live
  *     spends the writer and desk keys in data/e2e-keys.json. The writer wallet
- *     funds both intents, the desk finalizes one, the writer cancels the other,
- *     and the desk settles the vault.
+ *     funds both intents, the desk finalizes one, and the writer cancels the other.
  *
  * WRITER_KEY and DESK_KEY default to public test keys 1 and 2.
  */
@@ -225,18 +224,4 @@ if (cancelCoins.length === 0) {
     console.log("cancel", sent.txid);
   }
 }
-
-const vault = deskClient.contract(vaultProgram(), fill.vault);
-const vaultCoins = await vault.getUtxos();
-if (vaultCoins.length === 0) console.log("settle waiting for the vault coin");
-else {
-  console.log(
-    "settle is a co-spend of this vault with the beacon",
-    beaconDisplay,
-    "group",
-    beaconGidx,
-    "via buildSettle. This script does not broadcast that transaction.",
-  );
-}
-
 process.exit(0);

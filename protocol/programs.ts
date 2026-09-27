@@ -78,7 +78,6 @@ export function rawBeaconProgram() {
   return arkade.programFromArtifact(beaconArtifact as arkade.ContractArtifact);
 }
 
-
 export function rawIntentProgram() {
   return arkade.programFromArtifact(intentArtifact as arkade.ContractArtifact);
 }
