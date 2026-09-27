@@ -308,12 +308,16 @@ const transport = connectTransport({ relays, secretKey: secret, onMessage });
 type FloatCoin = { txid: string; vout: number; value: number };
 
 const deskScriptHex = bytesToHex(deskScript.pkScript);
-const intentByScript = new Map<string, string>();
-const scriptByQuote = new Map<string, string>();
+// ponytail: script→quote only. Scan for the reverse; add quote→script if the open book gets large.
+const quoteByScript = new Map<string, string>();
 const deskCoins = new Map<string, FloatCoin>();
 const queued = new Set<string>();
-const refreshFirst = new Set<string>();
+// ponytail: one fill at a time. Per-quote locks if two quotes must settle together.
 let filling = false;
+
+function recount() {
+  balance = [...deskCoins.values()].reduce((sum, coin) => sum + BigInt(coin.value), 0n);
+}
 
 function rememberDesk(event: { type: string; vtxos: FloatCoin[] }) {
   if (event.type === "vtxo_received") {
@@ -321,26 +325,23 @@ function rememberDesk(event: { type: string; vtxos: FloatCoin[] }) {
   } else if (event.type === "vtxo_spent") {
     for (const coin of event.vtxos) deskCoins.delete(`${coin.txid}:${coin.vout}`);
   }
-  balance = [...deskCoins.values()].reduce((sum, coin) => sum + BigInt(coin.value), 0n);
+  recount();
+}
+
+function tracked(rfqId: string): boolean {
+  for (const id of quoteByScript.values()) if (id === rfqId) return true;
+  return false;
 }
 
 async function track(row: QuoteRow) {
-  if (scriptByQuote.has(row.rfqId)) return;
+  if (tracked(row.rfqId)) return;
   const bound = bindContracts(termsFor(row));
   const intent = client.contract(intentProgram(), bound.intent);
-  const script = bytesToHex(intent.pkScript);
-  try {
-    await intent.register({ label: row.rfqId });
-  } catch (err) {
-    await contractManager.refreshVtxos({ scripts: [script], after: 0 }).catch(() => undefined);
-    throw err;
-  }
-  intentByScript.set(script, row.rfqId);
-  scriptByQuote.set(row.rfqId, script);
+  await intent.register({ label: row.rfqId });
+  quoteByScript.set(bytesToHex(intent.pkScript), row.rfqId);
 }
 
-function queueFill(rfqId: string, refresh = false) {
-  if (refresh) refreshFirst.add(rfqId);
+function queueFill(rfqId: string) {
   queued.add(rfqId);
   void pump();
 }
@@ -357,10 +358,6 @@ async function pump() {
       if (!row) continue;
       const unsettled = row.status === "open" || (row.status === "filled" && !row.fillTxid);
       if (!unsettled) continue;
-      if (refreshFirst.delete(rfqId)) {
-        const script = scriptByQuote.get(rfqId);
-        if (script) await contractManager.refreshVtxos({ scripts: [script], after: 0 });
-      }
       const now = Math.floor(Date.now() / 1000);
       try {
         const outcome = await fillQuote({
@@ -373,7 +370,7 @@ async function pump() {
         });
         if (outcome.result === "filled") {
           for (const coin of outcome.spent ?? []) deskCoins.delete(`${coin.txid}:${coin.vout}`);
-          balance = [...deskCoins.values()].reduce((sum, coin) => sum + BigInt(coin.value), 0n);
+          recount();
           book.mark(row.rfqId, "filled", outcome.txid);
           await book.save();
           console.log("filled", row.rfqId, outcome.txid ?? "");
@@ -406,7 +403,7 @@ async function housekeeping() {
     for (const row of book.list()) {
       const unsettled = row.status === "open" || (row.status === "filled" && !row.fillTxid);
       if (!unsettled) continue;
-      if (!scriptByQuote.has(row.rfqId)) {
+      if (!tracked(row.rfqId)) {
         try {
           await track(row);
         } catch (err) {
@@ -416,7 +413,7 @@ async function housekeeping() {
         queueFill(row.rfqId);
         continue;
       }
-      if (row.status === "open" && now >= row.deadline) queueFill(row.rfqId, true);
+      if (row.status === "open" && now >= row.deadline) queueFill(row.rfqId);
     }
   } finally {
     polling = false;
@@ -429,7 +426,7 @@ contractManager.onContractEvent((event) => {
     rememberDesk(event);
     return;
   }
-  const rfqId = intentByScript.get(event.contractScript);
+  const rfqId = quoteByScript.get(event.contractScript);
   if (rfqId) queueFill(rfqId);
 });
 await contractManager.watchScript(deskScriptHex, { label: "desk" });
