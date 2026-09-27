@@ -304,8 +304,7 @@ export async function createOracle(deps: OracleDeps) {
       ok = false;
     }
     if (!ok) throw new HttpError(400, "bad sig");
-    const print: StoredPrint = { pubkey, price: price.toString(), time: stamp, sig, usedFor: [] };
-    store.prints.push(print);
+    store.prints.push({ pubkey, price: price.toString(), time: stamp, sig });
     await save();
     return { ok: true };
   }
@@ -367,15 +366,7 @@ export async function createOracle(deps: OracleDeps) {
         checkpoint: deps.wallet.serverUnrollScript,
       });
       const submitted = await submit(built, deps.emulator as EmulatorProvider);
-      for (const print of chosen.flat()) {
-        if (!print.usedFor.includes(expiryN)) print.usedFor.push(expiryN);
-      }
-      store.fixings.push({
-        expiry: expiryN,
-        twap: fixed.twap.toString(),
-        txid: submitted.txid,
-        prints: chosen.flat().map((print) => ({ ...print, usedFor: [...print.usedFor] })),
-      });
+      store.fixings.push({ expiry: expiryN, twap: fixed.twap.toString(), txid: submitted.txid });
       await save();
       return { txid: submitted.txid, expiry: expiryN, twap: fixed.twap.toString() };
     } finally {

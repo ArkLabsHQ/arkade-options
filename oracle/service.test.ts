@@ -231,8 +231,7 @@ test("status, admin order, deploy change, and a print that becomes a fixing", as
     const again = await call(ctx.oracle.url, "/api/publish", { expiry: Number(expiry) }, "test-token");
     assert.equal(again.status, 409);
     const after = await call(ctx.oracle.url, "/api/status");
-    const stored = (after.json.prints as { usedFor: number[] }[]).filter((print) => print.usedFor.includes(Number(expiry)));
-    assert.equal(stored.length, 9);
+    assert.deepEqual(after.json.fixings, [{ expiry: Number(expiry), twap: "10000000", txid: published.json.txid }]);
     const tx = Transaction.fromPSBT(base64.decode(ctx.submitted[0]!));
     const next = nextState(genesisState(), expiry, priceValue(10_000_000n));
     assert.deepEqual(statePacketOf(tx), next);

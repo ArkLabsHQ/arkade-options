@@ -6,15 +6,12 @@ export type StoredPrint = {
   price: string;
   time: number;
   sig: string;
-  /** Expiries whose fixing used this print. */
-  usedFor: number[];
 };
 
 export type StoredFixing = {
   expiry: number;
   twap: string;
   txid: string;
-  prints: StoredPrint[];
 };
 
 export type OracleFile = {
@@ -33,7 +30,7 @@ export function emptyFile(): OracleFile {
 function isPrint(value: unknown): value is StoredPrint {
   if (!value || typeof value !== "object") return false;
   const print = value as StoredPrint;
-  return typeof print.pubkey === "string" && typeof print.price === "string" && typeof print.time === "number" && typeof print.sig === "string" && Array.isArray(print.usedFor);
+  return typeof print.pubkey === "string" && typeof print.price === "string" && typeof print.time === "number" && typeof print.sig === "string";
 }
 
 function parse(raw: string): OracleFile {

@@ -118,28 +118,3 @@ export function fixing(expiry, slices) {
   if (settlement <= 0n) return { error: "zero twap" };
   return { twap: settlement, medians };
 }
-
-export function settle(position, slices) {
-  if (position.collateral < Q_MIN || position.collateral > Q_MAX) {
-    return { error: "collateral" };
-  }
-  if (position.strike <= 0n || position.strike > PRICE_MAX) return { error: "strike" };
-  const names = ["open", "mid", "close"];
-  const bounds = windows(position.expiry);
-  const medians = [];
-  for (let i = 0; i < 3; i += 1) {
-    const slice = slices[i];
-    if (!distinct(slice.who)) return { error: "same oracle" };
-    const bad = sliceError(slice.time, bounds[names[i]][0], bounds[names[i]][1]);
-    if (bad) return { error: bad };
-    for (const price of slice.price) {
-      if (price <= 0n || price > PRICE_MAX) return { error: "price" };
-    }
-    medians.push(median3(slice.price[0], slice.price[1], slice.price[2]));
-  }
-  const settlement = twap(medians[0], medians[1], medians[2]);
-  if (settlement <= 0n) return { error: "zero twap" };
-  const ph = holderPayoff(position.kind, settlement, position.strike, position.collateral);
-  const outputs = settlementOutputs(ph, position.collateral);
-  return { settlement, medians, ph, outputs };
-}
