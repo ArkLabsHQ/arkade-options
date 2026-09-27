@@ -388,7 +388,14 @@ async function pump() {
           recount();
           book.mark(row.rfqId, "filled", outcome.txid);
           forgetScript(row.rfqId);
-          await book.save();
+          try {
+            await book.save();
+          } catch (err) {
+            console.error("book save", row.rfqId, err instanceof Error ? err.message : err);
+            // Keep status filled but drop the txid so housekeeping retries save / recovery.
+            const stuck = book.get(row.rfqId);
+            if (stuck) delete stuck.fillTxid;
+          }
           console.log("filled", row.rfqId, outcome.txid ?? "");
         } else if (outcome.result === "expired") {
           book.mark(row.rfqId, "expired");
