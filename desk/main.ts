@@ -1,8 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
-import { readFile, writeFile } from "node:fs/promises";
 import http from "node:http";
-import path from "node:path";
 
 import {
   ArkAddress,
@@ -69,26 +67,6 @@ function bigintEnv(name: string, fallback: bigint): bigint {
   return BigInt(raw);
 }
 
-async function oraclePubkeys(dir: string): Promise<Uint8Array[]> {
-  const file = path.join(dir, "oracles.json");
-  let hexes: string[] | undefined;
-  try {
-    const parsed = JSON.parse(await readFile(file, "utf8")) as { keys?: unknown };
-    if (!Array.isArray(parsed.keys) || !parsed.keys.every((item) => typeof item === "string")) {
-      throw new Error("oracles.json needs a keys array");
-    }
-    hexes = parsed.keys;
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
-  }
-  if (!hexes) {
-    hexes = Array.from({ length: 5 }, () => SingleKey.fromRandomBytes().toHex());
-    await writeFile(file, JSON.stringify({ keys: hexes }, null, 2));
-  }
-  if (hexes.length !== 5) throw new Error("oracles.json needs five keys");
-  return Promise.all(hexes.map((hex) => SingleKey.fromHex(hex).xOnlyPublicKey()));
-}
-
 const deskKeyHex = required("DESK_KEY");
 const secret = hexToBytes(deskKeyHex);
 if (secret.length !== 32) throw new Error("DESK_KEY must be 32 bytes");
@@ -110,7 +88,6 @@ if (!Number.isInteger(port) || port < 1) throw new Error("PORT");
 
 const identity = SingleKey.fromHex(deskKeyHex);
 const book = await Book.open(dataDir);
-const oracles = await oraclePubkeys(dataDir);
 const beaconDisplay = beaconFromEnv();
 const client = await arkade.Arkade.connect({
   arkade: new RestArkProvider(arkUrl),
@@ -173,7 +150,6 @@ function quoteMessage(row: QuoteRow): RfqQuote {
     profile: {
       holder_pubkey: row.holderPubkey,
       holder_pk_script: bytesToHex(bound.holderPkScript),
-      oracle_pubkeys: row.oraclePubkeys,
       beacon_txid: row.beaconTxid,
       beacon_gidx: row.beaconGidx,
       deadline: row.deadline,
@@ -261,7 +237,6 @@ async function onRequest(message: RfqRequest, from: string) {
     writerPubkey: message.profile.writer_pubkey,
     writerPkScript: message.profile.writer_pk_script,
     holderPubkey: bytesToHex(holderPk),
-    oraclePubkeys: oracles.map((item) => bytesToHex(item)),
     beaconTxid: beaconDisplay.txid,
     beaconGidx: beaconDisplay.gidx,
     intentAddress: "",

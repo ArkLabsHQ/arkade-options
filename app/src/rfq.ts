@@ -19,7 +19,6 @@ export type LiveQuote = {
   deadline: number;
   exit: number;
   holderPkHex: string;
-  oraclePkHex: string[];
   beaconTxid: string;
   beaconGidx: number;
   intentAddress: string;
@@ -141,7 +140,6 @@ export async function requestQuotes(input: {
       deadline: quote.profile.deadline,
       exit: quote.profile.exit,
       holderPkHex: quote.profile.holder_pubkey,
-      oraclePkHex: quote.profile.oracle_pubkeys,
       beaconTxid: quote.profile.beacon_txid,
       beaconGidx: quote.profile.beacon_gidx,
       intentAddress: quote.profile.intent_address,

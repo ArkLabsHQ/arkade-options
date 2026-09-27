@@ -20,9 +20,6 @@ export const NETWORK_NAME = "Mutinynet";
 export const WALLET_URL = "https://mutinynet.arkade.money";
 
 const HOLDER = SingleKey.fromHex("0000000000000000000000000000000000000000000000000000000000000021");
-const ORACLES = [0x31, 0x32, 0x33, 0x34, 0x35].map((n) =>
-  SingleKey.fromHex(n.toString(16).padStart(64, "0")),
-);
 
 export type FundRequest = {
   kind: 0 | 1;
@@ -36,7 +33,6 @@ export type FundRequest = {
   /** Older positions that stored a private key. */
   writerHex?: string;
   holderPkHex?: string;
-  oraclePkHex?: string[];
   /** Display txid of the beacon identity asset. Omitted only when no desk answered. */
   beaconTxidHex?: string;
   beaconGidx?: number;
@@ -50,7 +46,6 @@ export type Deposit = {
   amountSats: bigint;
   uri: string;
   holderPkHex: string;
-  oraclePkHex: string[];
   beaconTxidHex: string;
   beaconGidx: number;
   exit: number;
@@ -223,9 +218,6 @@ async function build(req: FundRequest) {
   }
   const { client } = await openSession(identity);
   const holderPk = req.holderPkHex ? hexToBytes(req.holderPkHex) : await HOLDER.xOnlyPublicKey();
-  const oraclePks = req.oraclePkHex
-    ? req.oraclePkHex.map((hex) => hexToBytes(hex))
-    : await Promise.all(ORACLES.map((key) => key.xOnlyPublicKey()));
   const beaconTxidHex = (req.beaconTxidHex ?? FALLBACK_BEACON_TXID).toLowerCase();
   const beaconGidx = req.beaconGidx ?? 0;
   if (!/^[0-9a-f]{64}$/.test(beaconTxidHex)) throw new Error("The beacon txid is not 32 bytes.");
@@ -251,12 +243,12 @@ async function build(req: FundRequest) {
   if (intent.address !== bound.intentAddress || vault.address !== bound.vaultAddress) {
     throw new Error("The contract address does not match the local derivation.");
   }
-  return { bound, intent, vault, holderPk, oraclePks, beaconTxidHex, beaconGidx, exit };
+  return { bound, intent, vault, holderPk, beaconTxidHex, beaconGidx, exit };
 }
 
 /** Mutinynet address the seller funds. Collateral stays with the seller until finalize. */
 export async function depositAddress(req: FundRequest): Promise<Deposit> {
-  const { bound, holderPk, oraclePks, beaconTxidHex, beaconGidx, exit } = await build(req);
+  const { bound, holderPk, beaconTxidHex, beaconGidx, exit } = await build(req);
   return {
     network: NETWORK_NAME,
     address: bound.intentAddress,
@@ -264,7 +256,6 @@ export async function depositAddress(req: FundRequest): Promise<Deposit> {
     amountSats: req.collateral,
     uri: paymentUri(bound.intentAddress, req.collateral),
     holderPkHex: bytesToHex(holderPk),
-    oraclePkHex: oraclePks.map((pk) => bytesToHex(pk)),
     beaconTxidHex,
     beaconGidx,
     exit: Number(exit),

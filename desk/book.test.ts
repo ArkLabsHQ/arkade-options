@@ -20,7 +20,6 @@ function row(patch: Partial<QuoteRow> = {}): QuoteRow {
     writerPubkey: "11".repeat(32),
     writerPkScript: "5120" + "22".repeat(32),
     holderPubkey: "33".repeat(32),
-    oraclePubkeys: ["44", "55", "66", "77", "88"].map((byte) => byte.repeat(32)),
     beaconTxid: "07".repeat(32),
     beaconGidx: 0,
     intentAddress: "tark1intent",

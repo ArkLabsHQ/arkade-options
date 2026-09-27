@@ -37,7 +37,7 @@ import { intentProgram, vaultProgram } from "../protocol/programs.ts";
  *     funds both intents, the desk finalizes one, the writer cancels the other,
  *     and the desk settles the vault.
  *
- * WRITER_KEY and DESK_KEY default to public test keys 1 and 2. Oracle keys are 3..7.
+ * WRITER_KEY and DESK_KEY default to public test keys 1 and 2.
  */
 
 const live = process.argv.includes("--live");
@@ -50,9 +50,6 @@ const deskHex = saved?.desk ?? process.env.DESK_KEY ?? "2".padStart(64, "0");
 const collateral = 50_000n;
 const premium = 1_000n;
 const strike = 9_700_000n;
-function key(n: number) {
-  return SingleKey.fromHex(n.toString(16).padStart(64, "0"));
-}
 
 async function connect(identity: SingleKey) {
   return arkade.Arkade.connect({
@@ -66,7 +63,6 @@ async function connect(identity: SingleKey) {
 
 const writer = SingleKey.fromHex(writerHex);
 const desk = SingleKey.fromHex(deskHex);
-const oracles = [3, 4, 5, 6, 7].map(key);
 const writerClient = await connect(writer);
 const deskClient = await connect(desk);
 if (!writerClient.emulatorKey || !deskClient.emulatorKey) {
@@ -79,7 +75,6 @@ const fillDeadline = now + 600n;
 const cancelDeadline = now + 30n;
 const writerPk = await writer.xOnlyPublicKey();
 const holderPk = await desk.xOnlyPublicKey();
-const oraclePks = await Promise.all(oracles.map((item) => item.xOnlyPublicKey()));
 const beaconDisplay = (process.env.BEACON_TXID ?? `${"00".repeat(31)}07`).trim().toLowerCase();
 const beaconGidx = Number(process.env.BEACON_GIDX ?? "0");
 const shared = {
@@ -142,7 +137,6 @@ function row(bound: typeof fill, deadline: bigint): QuoteRow {
     writerPubkey: bytesToHex(writerPk),
     writerPkScript: bytesToHex(bound.writerPkScript),
     holderPubkey: bytesToHex(holderPk),
-    oraclePubkeys: oraclePks.map((item) => bytesToHex(item)),
     beaconTxid: beaconDisplay,
     beaconGidx,
     intentAddress: bound.intentAddress,

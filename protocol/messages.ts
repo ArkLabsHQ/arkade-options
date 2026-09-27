@@ -15,7 +15,6 @@ export type RequestProfile = {
 export type QuoteProfile = {
   holder_pubkey: string;
   holder_pk_script: string;
-  oracle_pubkeys: string[];
   /** Display txid of the beacon identity asset. The vault compares it reversed. */
   beacon_txid: string;
   beacon_gidx: number;
@@ -137,8 +136,6 @@ function parseQuote(body: Record<string, unknown>): RfqQuote | null {
   if (!hex64(body.rfq_id) || body.pair !== PAIR || !amount(body.from_amount) || !amount(body.to_amount)) return null;
   if (!hex64(body.solver_pubkey) || !int(body.valid_until, 4_000_000_000)) return null;
   if (!hex64(profile.holder_pubkey) || !script(profile.holder_pk_script)) return null;
-  if (!Array.isArray(profile.oracle_pubkeys) || profile.oracle_pubkeys.length !== 5) return null;
-  if (!profile.oracle_pubkeys.every(hex64)) return null;
   if (!hex64(profile.beacon_txid) || !int(profile.beacon_gidx, 65_535)) return null;
   if (!int(profile.deadline, 4_000_000_000) || profile.exit !== Number(EXIT)) return null;
   if (!address(profile.intent_address) || !address(profile.vault_address)) return null;
@@ -154,7 +151,6 @@ function parseQuote(body: Record<string, unknown>): RfqQuote | null {
     profile: {
       holder_pubkey: profile.holder_pubkey,
       holder_pk_script: profile.holder_pk_script,
-      oracle_pubkeys: profile.oracle_pubkeys,
       beacon_txid: profile.beacon_txid,
       beacon_gidx: profile.beacon_gidx,
       deadline: profile.deadline,
