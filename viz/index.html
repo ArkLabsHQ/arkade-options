@@ -146,7 +146,7 @@
 <body>
 <header>
   <h1>Where the option contracts move sats</h1>
-  <p class="lede">Two coins. The oracle service deploys a beacon that holds one identity unit and stores the TWAP of blind oracle prints. The writer’s coin locks in OptionIntent, the desk pays the premium, and OptionVault later spends that collateral together with the beacon. A solid green border is a gain, a dashed red border the matching loss, and party colour is the owner. The main path ran on Mutinynet; the other outcomes are the same scripts at other prices.</p>
+  <p class="lede">Two coins. The oracle service deploys a beacon that holds one identity unit and stores the TWAP of blind oracle prints. The writer’s coin locks in OptionIntent, the desk pays the premium, and OptionVault later spends that collateral together with the beacon. A solid green border is a gain, a dashed red border the matching loss, and party colour is the owner. The main path ran on Mutinynet; everything else is drawn from the scripts and was not run.</p>
   <div class="legend" aria-label="Parties">
     <span class="swatch"><i class="dot writer"></i>Writer</span>
     <span class="swatch"><i class="dot desk"></i>Desk</span>
@@ -216,7 +216,7 @@
 
 <section class="panel" id="run">
   <h2>The run on Mutinynet</h2>
-  <p class="prose">One test wallet played the oracle service, the writer, the desk, the holder, and the fee payer. The five oracle keys were test keys. The expiry had already passed when the option was sold, so it settled right after the fill. Beacon: <a href="https://explorer.mutinynet.arkade.sh/address/tark1qqcpq7yq3e8hhsx6ml3fud93m7827qggaurtzu3zwsr4a0qs0gf85464wvxsje00w96lq7ts8j3rmcurhlnvt7rkq5gvfh6pgzyapxkh37psvr">tark1qqcp…xkh37psvr</a>. Identity asset: <a href="https://explorer.mutinynet.arkade.sh/asset/9b183c624d85056479de2f12af3af403288249de040468c343ec04a6ea9550e00000">9b183c…50e0, group 0</a>, supply 1.</p>
+  <p class="prose">One test wallet played the oracle service, the writer, the holder, and the fee payer. A script played the desk, with a 600-second fill deadline, because the desk refuses an expiry that has passed. The five oracle keys were test keys; they signed their prints after the expiry, for times inside each window. The option was opened after its expiry, so it settled right after the fill. Beacon: <a href="https://explorer.mutinynet.arkade.sh/address/tark1qqcpq7yq3e8hhsx6ml3fud93m7827qggaurtzu3zwsr4a0qs0gf85464wvxsje00w96lq7ts8j3rmcurhlnvt7rkq5gvfh6pgzyapxkh37psvr">tark1qqcp…xkh37psvr</a>. Identity asset: <a href="https://explorer.mutinynet.arkade.sh/asset/9b183c624d85056479de2f12af3af403288249de040468c343ec04a6ea9550e00000">9b183c…50e0, group 0</a>, supply 1.</p>
   <div class="wide">
     <table>
       <thead><tr><th>Step</th><th>Transaction</th><th>Sats</th></tr></thead>
@@ -371,7 +371,7 @@
     </div>
   </section>
   <p>Same chapter, second shape. The desk’s vtxos sum to 1,330. The 330 above the premium is at or under dust, so <code>selectFloat</code> folds it into the writer’s output. A surplus above 330 would be <code>spend.change</code> back to the desk.</p>
-  <p>On Mutinynet the vault committed to asset 9b183c…50e0, group 0. The writer’s coin was 99,670, so the deposit returned 79,670 as change (<a href="https://explorer.mutinynet.arkade.sh/tx/4d64941bd1ece418c7b6fa3d5e8b7ba377bdd17fc285a22a43954f68e56a96ec">4d6494…</a>). The desk’s coin was 79,670, so finalize had a third output, that <code>spend.change</code> of 78,670 (<a href="https://explorer.mutinynet.arkade.sh/tx/7d59dca80b0bc00f192f9910259083d7d763c35983e0c80809931f6ba8fa1a8a">7d59dc…</a>). Who is paid does not change.</p>
+  <p>On Mutinynet the vault committed to asset 9b183c…50e0, group 0. The writer’s coin was 99,670, so the deposit returned 79,670 as change (<a href="https://explorer.mutinynet.arkade.sh/tx/4d64941bd1ece418c7b6fa3d5e8b7ba377bdd17fc285a22a43954f68e56a96ec">4d6494…</a>). The desk’s coin was 79,670, so finalize had a third output of 78,670, change to the desk script (<a href="https://explorer.mutinynet.arkade.sh/tx/7d59dca80b0bc00f192f9910259083d7d763c35983e0c80809931f6ba8fa1a8a">7d59dc…</a>). Who is paid does not change.</p>
 </article>
 
 <article class="scenario" id="fill-dust" data-writer="730" data-desk="-730">
@@ -825,7 +825,7 @@
 
 <article class="scenario" id="migrate">
   <h2>7. The beacon can move without touching open vaults</h2>
-  <p><code>migrate</code> pays the identity unit to a new 32-byte program, for example one with other oracle keys. Three of the five oracle keys sign the migrate digest. The digest includes the round, so a signature is good for one state. The state packet is copied. Vaults commit to the asset id, not to the beacon script, so they keep reading after the move.</p>
+  <p><code>migrate</code> pays the identity unit to a new 32-byte program, for example one with other oracle keys. Three of the five oracle keys sign the migrate digest, and nothing limits the next program: those three could move the unit to one they control, and vaults would read whatever it writes. The digest includes the round, so a signature is good for one state. The state packet is copied. Vaults commit to the asset id, not to the beacon script, so they keep reading after the move.</p>
   <section class="tx" data-name="migrate">
     <div class="col inputs">
       <div class="coin beacon covenant loss" data-sat="330" data-asset="unit:1" data-party="beacon">
@@ -1042,11 +1042,11 @@
     <li>The premium output exists before the vault output. Finalize will not pay the vault without paying the writer at least the premium.</li>
     <li>Settle pays from one slot whose key equals the expiry, newest first, using the integer formula above, and folds a leg of 330 sats or less.</li>
     <li>Settle sees that price only by spending the identity unit. The beacon’s read leaf carries the packet unchanged and adds the read fee on output 0.</li>
-    <li>Attest stores only the TWAP of the nine prints it checks: three distinct oracles per slice, inside the windows, medians weighted 900, 900, and 60. It needs the oracle service’s signature over the new packet.</li>
+    <li>Attest stores only the TWAP of the nine prints it checks: three distinct oracles per slice, the latest print of each slice inside its window and all three within 60 seconds, medians weighted 900, 900, and 60. It needs the oracle service’s signature over the new packet.</li>
     <li>Attest moves the round by one, refuses a key already in a slot, and continues the same script and the same unit.</li>
     <li>Migrate continues the unit and the packet onto the signed next program. The vault’s constructor does not contain the beacon script or the committee keys.</li>
     <li>Cancel after the deadline returns the intent coin to the writer program. Unilateral leaves wait 2,048 seconds.</li>
-    <li>arkd, not a script: the identity asset has one unit. The issue named no control asset, so arkd refuses a reissue.</li>
+    <li>arkd, not a script: no second unit can be minted, because the issue named no control asset. A burn is not blocked: the beacon’s own leaves cannot burn the unit, but a program reached through <code>migrate</code> could, and every vault would then have no fixing.</li>
   </ul>
   <h2>Not claimed</h2>
   <ul class="checks">
@@ -1054,7 +1054,8 @@
     <li>Which valid prints are used. When more than three oracles sign inside a slice, the oracle service picks the three. The script accepts any valid three.</li>
     <li>A print names no beacon, so an oracle’s signature is valid on every beacon that lists its key. That is the design.</li>
     <li>The oracle service publishes the expiry key before it falls out of the eight slots, and someone pays the read fee and submits the settle. Lateness of a fixing is not bounded. A version byte other than 0x01 fails settle and leaves the coin to the writer’s unilateral leaf after the delay.</li>
-    <li>The emulator binds each input’s previous transaction to that input. The script cannot see a forged previous packet. That binding was not re-checked here.</li>
+    <li>Three of the five oracle keys can migrate the unit to any program, including one they control. Vaults then settle from whatever packet that program writes.</li>
+    <li>The server and the emulator sign every covenant leaf, and the scripts hold only if the emulator runs them before it signs. The emulator binds each input’s previous transaction to that input; the script cannot see a forged previous packet, and that binding was not re-checked here.</li>
     <li>Close, every unilateral leaf, and side 1 have no caller. Unpinned outputs are drawn at the input amount so the picture balances.</li>
     <li>The desk’s 10,000-sat collateral floor, the 30-second quote validity, and the refusal to quote a 330-sat premium are client policy. The script’s premium and collateral floor is 330, and its cap is 1,000,000,000.</li>
     <li>No script sees the issue or the deploy. The desk takes <code>BEACON_TXID</code> as given.</li>

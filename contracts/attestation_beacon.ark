@@ -18,10 +18,11 @@ pragma arkade ^0.1.0;
 // num2bin(twap, 32). The vault reads the first 8 bytes. A key that is in a
 // slot cannot be attested again while it is there.
 //
-// Five oracle keys sign blinded prices. They cannot move the coin. Each print
-// is sha256(0x425443555344 || num2bin(price, 8) || num2bin(time, 8)). That
+// Five oracle keys sign blinded prices. They cannot write a slot, but three
+// of them can migrate the unit to any program. Each print is
+// sha256(0x425443555344 || num2bin(price, 8) || num2bin(time, 8)). That
 // message names no beacon. Three distinct oracles of the five sign each slice.
-// Slices, relative to the expiry key:
+// Windows for the latest print of each slice, relative to the expiry key:
 //   open   [key-1800, key-1740]
 //   mid    [key-960,  key-900]
 //   close  [key,      key+60]
