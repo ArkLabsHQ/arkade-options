@@ -183,7 +183,9 @@ async function refuse(to: string, rfqId: string, reason: string) {
 async function onRequest(message: RfqRequest, from: string) {
   const now = Math.floor(Date.now() / 1000);
   const existing = book.get(message.rfq_id);
-  if (existing && existing.clientPubkey === from && existing.deadline > now) {
+  // Only replay open quotes. Expired (register-fail) and filled rows must not
+  // block a retry while the old deadline is still in the future.
+  if (existing && existing.status === "open" && existing.clientPubkey === from && existing.deadline > now) {
     await transport.publish(from, quoteMessage(existing));
     return;
   }

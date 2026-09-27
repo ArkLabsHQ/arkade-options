@@ -90,7 +90,7 @@ export async function fillQuote(opts: {
 }
 
 /** If finalize already landed but the book never saved, classify the spend as filled. */
-async function recoverFilled(
+export async function recoverFilled(
   client: Client,
   writerPkScript: Uint8Array,
   intentScriptHex: string,
