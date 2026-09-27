@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-import { holderPayoff, settlementOutputs } from "../app/settle-math.js";
+import { fixing, holderPayoff, settlementOutputs } from "../app/settle-math.js";
 
 const html = readFileSync(new URL("./index.html", import.meta.url), "utf8");
 const Q = 20_000n;
@@ -64,6 +64,8 @@ test("every drawn bitcoin transaction conserves sats", () => {
     const block = tx(name);
     if (block.includes("data-asset=")) {
       const left = assets(column(block, "inputs"));
+      const minted = block.match(/data-mint="([a-z]+):(\d+)"/);
+      if (minted) left.set(minted[1], (left.get(minted[1]) ?? 0) + Number(minted[2]));
       const right = assets(column(block, "outputs"));
       assert.deepEqual(order(left), order(right), name);
     }
@@ -98,8 +100,8 @@ test("scenario nets match the vault payoff", () => {
 
 test("the page names the live parameters and the sources", () => {
   assert.match(html, /lang="en"/);
-  assert.match(html, /fec3f3d46f07281def0bde79c6cf3d9657b4ec04/);
-  assert.match(html, /2026-09-26/);
+  assert.match(html, /73caee072bafd98a0dd05d96a9303d26b0c3a562/);
+  assert.match(html, /2026-09-27/);
   assert.match(html, /vtxoMinAmount/);
   assert.match(html, /maxOpReturnOutputs/);
   assert.match(html, /unilateralExitDelay/);
@@ -127,4 +129,25 @@ test("the page names the live parameters and the sources", () => {
   assert.match(html, /settlementOutputs/);
   assert.match(html, /Enforced/);
   assert.match(html, /Not claimed/);
+  const links = [...html.matchAll(/explorer\.mutinynet\.arkade\.sh\/tx\/([0-9a-f]+)"/g)].map((match) => match[1]);
+  assert.ok(links.length >= 7);
+  for (const id of links) assert.equal(id.length, 64, id);
+});
+
+test("the prints table is the TWAP attest computes", () => {
+  const table = html.match(/<table id="prints" data-expiry="(\d+)" data-twap="(\d+)">/);
+  assert.ok(table);
+  const expiry = BigInt(table[1]);
+  const slices = [0, 1, 2].map(() => ({ price: [], time: [], who: [] }));
+  for (const [, slice, who, price, offset] of html.matchAll(/data-print="(\d):(\d):(\d+):(-?\d+)"/g)) {
+    slices[Number(slice)].price.push(BigInt(price));
+    slices[Number(slice)].time.push(expiry + BigInt(offset));
+    slices[Number(slice)].who.push(BigInt(who));
+  }
+  assert.equal(fixing(expiry, slices).twap, BigInt(table[2]));
+  assert.equal(fixing(expiry - 10n, slices).error, undefined);
+  assert.equal(fixing(expiry + 30n, slices).error, undefined);
+  assert.ok(fixing(expiry - 11n, slices).error);
+  assert.ok(fixing(expiry + 31n, slices).error);
+  assert.match(html, /1,790,463,982 to 1,790,464,022/);
 });
