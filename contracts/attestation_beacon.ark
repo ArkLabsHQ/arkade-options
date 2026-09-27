@@ -18,8 +18,8 @@ pragma arkade ^0.1.0;
 // num2bin(twap, 32). The vault reads the first 8 bytes. A key that is in a
 // slot cannot be attested again while it is there.
 //
-// Five oracle keys sign blinded prices. They cannot write a slot, but three
-// of them can migrate the unit to any program. Each print is
+// Five oracle keys sign blinded prices. They cannot write a slot or migrate
+// the unit without adminPk. Each print is
 // sha256(0x425443555344 || num2bin(price, 8) || num2bin(time, 8)). That
 // message names no beacon. Three distinct oracles of the five sign each slice.
 // Windows for the latest print of each slice, relative to the expiry key:
@@ -31,7 +31,7 @@ pragma arkade ^0.1.0;
 //
 // adminPk, the oracle service, is the only key that writes a fixing. It signs
 // sha256(ctrlTxid || nextPacket). It cannot invent a price the prints do not
-// support. `migrate` is still a threshold of the five signers over
+// support. `migrate` needs a threshold of the five signers and adminPk, all over
 // sha256(domain + "migrate" + ctrlTxid + num2bin(ctrlGidx, 4) + num2bin(round, 8) + next).
 //
 // Every cooperative leaf continues the coin at output 0: same script (or
@@ -217,14 +217,16 @@ contract AttestationBeacon(
     continues(state);
   }
 
-  function migrate(bytes32 next, signature[5] sigs) {
+  function migrate(bytes32 next, signature[5] sigs, signature opSig) {
     require(this.activeInputIndex == 0, "beacon is input 0");
     distinctSigners();
     bytes state = tx.packet(STATE);
     require(state == tx.inputs[0].packet(STATE), "state carried");
     require(size(state) == SIZE, "state size");
     int round = bin2num(substr(state, 1, 8));
-    quorum(sha256(domain + "migrate" + ctrlTxid + num2bin(ctrlGidx, 4) + num2bin(round, 8) + next), sigs);
+    let msg = sha256(domain + "migrate" + ctrlTxid + num2bin(ctrlGidx, 4) + num2bin(round, 8) + next);
+    quorum(msg, sigs);
+    require(checkSigFromStack(opSig, adminPk, msg), "oracle service");
     require(tx.outputs[0].scriptPubKey == next, "next script");
     require(tx.outputs[0].value >= tx.input.current.value, "value");
     require(tx.outputs[0].assets.lookup(ctrlTxid, ctrlGidx) == 1, "identity asset");

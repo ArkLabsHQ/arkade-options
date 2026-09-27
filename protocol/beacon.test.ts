@@ -230,7 +230,8 @@ test("the beacon leaves check what the design says", () => {
   const read = beacon.functions.read?.arkadeScript?.asm;
   assert.equal(count(read, "INSPECTINPUTPACKET"), 1);
   assert.equal(count(read, "CHECKSIGFROMSTACK"), 0);
-  assert.equal(count(beacon.functions.migrate?.arkadeScript?.asm, "CHECKSIGFROMSTACK"), 5);
+  assert.equal(count(beacon.functions.migrate?.arkadeScript?.asm, "CHECKSIGFROMSTACK"), 6);
+  assert.equal(beacon.functions.migrate?.arkadeScript?.witness?.[0], "opSig");
   assert.deepEqual(Object.keys(beacon.functions), ["attest", "read", "migrate", "unilateral"]);
 });
 
