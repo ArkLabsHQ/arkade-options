@@ -47,6 +47,8 @@ import { spotCents } from "./spot.ts";
  * One process: Nostr RFQ, the quote book, and fills from the contract manager.
  *
  *   DESK_KEY        32-byte hex. Nostr pubkey and the option holder key.
+ *   BEACON_TXID     required 64-hex display txid of the oracle's identity asset
+ *   BEACON_GIDX     optional vout index of that asset. Default 0
  *   RELAYS          comma-separated websocket URLs
  *   ARK_URL         default Mutinynet arkd
  *   EMULATOR_URL    default Mutinynet emulator
@@ -94,7 +96,7 @@ const book = await Book.open(dataDir);
 const beaconDisplay = beaconFromEnv();
 const indexer = new RestIndexerProvider(arkUrl);
 if (typeof EventSource === "undefined") {
-  console.warn("Contract events need Node's EventSource. Start the desk with --experimental-eventsource.");
+  throw new Error("Contract events need Node's EventSource. Start the desk with --experimental-eventsource.");
 }
 const contractManager = await ContractManager.create({
   indexerProvider: indexer,
@@ -275,6 +277,10 @@ async function onRequest(message: RfqRequest, from: string) {
     await track(row);
   } catch (err) {
     console.error("register", row.rfqId, err instanceof Error ? err.message : err);
+    book.mark(row.rfqId, "expired");
+    await book.save();
+    await refuse(from, message.rfq_id, "register");
+    return;
   }
   await transport.publish(from, quoteMessage(row));
   console.log("quote", row.rfqId, row.premium, row.intentAddress);
@@ -420,10 +426,18 @@ async function housekeeping() {
   }
 }
 
+function queueOpenFills() {
+  for (const row of book.list()) {
+    const unsettled = row.status === "open" || (row.status === "filled" && !row.fillTxid);
+    if (unsettled) queueFill(row.rfqId);
+  }
+}
+
 contractManager.onContractEvent((event) => {
   if (event.type !== "vtxo_received" && event.type !== "vtxo_spent") return;
   if (event.contractScript === deskScriptHex) {
     rememberDesk(event);
+    if (event.type === "vtxo_received") queueOpenFills();
     return;
   }
   const rfqId = quoteByScript.get(event.contractScript);
@@ -456,6 +470,8 @@ function statusBody() {
     pubkey,
     address,
     balance: balance.toString(),
+    beaconTxid: beaconDisplay.txid,
+    beaconGidx: beaconDisplay.gidx,
     spotCents: spot ? spot.cents.toString() : null,
     spotSources: spot?.sources ?? [],
     pricing: volOverride != null
@@ -491,6 +507,7 @@ server.listen(port, () => {
   console.log(`commit ${revision()}`);
   console.log(`desk ${pubkey}`);
   console.log(`address ${address}`);
+  console.log(`beacon ${beaconDisplay.txid}:${beaconDisplay.gidx}`);
   console.log(`status http://127.0.0.1:${port}/status`);
 });
 

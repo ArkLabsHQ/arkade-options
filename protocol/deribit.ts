@@ -198,9 +198,3 @@ export async function fetchSurface(now = Date.now()): Promise<SurfacePoint[]> {
 export function surfaceStatus(): { points: number; at: number | null; error: string | null } {
   return { points: cache?.points.length ?? 0, at: cache?.at ?? null, error: lastError };
 }
-
-export function resetSurfaceCache(): void {
-  cache = null;
-  inflight = null;
-  lastError = null;
-}
