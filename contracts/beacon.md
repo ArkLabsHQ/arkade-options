@@ -25,7 +25,7 @@ Identity is an asset unit, state is a packet, and the covenant holding the unit 
 
 `AttestationBeacon(ctrlTxid, ctrlGidx, signers[5], threshold, domain, keyLag, readFee, adminPk, exit)`. The beacon coin carries one unit of the asset `(ctrlTxid, ctrlGidx)`. The vault commits to `(beaconTxid, beaconGidx)` and to nothing else about the oracle.
 
-The script cannot see the issuance. A consumer must check it once, when it binds the asset id (see §4, genesis).
+The script cannot see the issuance. The desk trusts the asset id it is given (see §4, a second identity unit).
 
 ### State
 
@@ -120,57 +120,41 @@ Emulator:
 | --- | --- |
 | Consumer supplies a packet with a different price | blocked: `read` requires `tx.packet(32) == tx.inputs[selfIndex].packet(32)`; the vault reads the input packet anyway. |
 | Consumer claims a different asset is the beacon | blocked: vault `tx.inputs[1].assets.lookup(beaconTxid, beaconGidx) == 1`; arkd checks the claim against the prevout. |
-| A second identity unit | blocked by arkd only if the issuance was uncontrolled with supply 1. The script cannot see the issuance. The binder checks two transactions: issuance group 0 with no control asset, no inputs, and one output of amount 1; then a deploy that spends the checkpoint of that output, pays the recomputed beacon script, carries the genesis state, and puts only that one unit on the beacon output. Five distinct signers, threshold 3. |
+| A second identity unit | blocked by arkd only if the issuance was uncontrolled with supply 1. The oracle service issues with `assetManager.issue({ amount: 1n })` and no control asset. The script cannot see the issuance, and the desk trusts `BEACON_TXID` as given. |
 | Committee attests the same expiry twice while it is in a slot | blocked: `absent`. |
 | A fixing is evicted before a vault settles | recoverable: after it falls off, anyone may re-attest it with the original signatures. A vault has no fallback of its own until then. |
 | Fixing published before the settlement minute closes | blocked when `keyLag ≥ 0`: `checkTime(key + keyLag)`. Lateness is not bounded. |
 | Consumer attaches a forged previous transaction for input 1 | not blocked by any script. The VM's `OP_INSPECTINPUTPACKET` takes the previous transaction from its fetcher without comparing a hash; the compiler's test harness maps it by outpoint with no check, and a probe against that harness accepted a forged previous transaction. Whether the emulator service binds the attached transaction to the input, through the checkpoint hop, is unverified here. Everything that reads a previous packet, this design and the LayerZero example alike, rests on it. |
 | Two settlements race for the beacon | one is rejected and rebuilt on the new outpoint. Bounded, not impossible. |
-| Someone reads the beacon to move it | costs `readFee` per read. Bounded, not blocked. Each read also lengthens the beacon's off-chain ancestry, which every payout that read it inherits at exit; the operator refreshes the beacon coin to keep that short. |
-| Oracle prints replayed on another beacon | not blocked: the print digest names no beacon. The operator digest names `ctrlTxid` and the next packet, so the write itself does not replay. |
+| Someone reads the beacon to move it | costs `readFee` per read. Bounded, not blocked. Each read also lengthens the beacon's off-chain ancestry, which every payout that read it inherits at exit; the oracle service renews the beacon coin to keep that short. |
+| Oracle prints replayed on another beacon | not blocked: the print digest names no beacon. The oracle service's digest names `ctrlTxid` and the next packet, so the write itself does not replay. |
 | Old migrate signatures replayed | blocked: the digest names the round. |
 | Migrate to a script that lies | threshold of the committee. That is the trust a consumer accepts by committing to the asset id. |
 | Layout version bumped while vaults are open | not blocked. An old vault's `settle` fails, `close` needs both parties, and the writer's `unilateral` then takes the whole coin after the CSV. Do not bump the version while vaults bound to the old layout are open. |
 | Admin exits the coin to Bitcoin | the unit leaves Arkade. Whether an on-chain unit can re-enter as an asset claim is unverified here. |
 
-Not claimed: committee honesty, committee liveness, hidden prices, settlement without the operator, any bound on how late a fixing is published.
+Not claimed: committee honesty, committee liveness, hidden prices, settlement without arkd, any bound on how late a fixing is published.
 
-The nine prints are checked again inside `attest`. The operator cannot store a TWAP the prints do not support. What stays off-chain is whether those prints match the market.
+The nine prints are checked again inside `attest`. The oracle service cannot store a TWAP the prints do not support. What stays off-chain is whether those prints match the market.
 
 ## 5. Checked
 
 Both contracts compile with `arkadec` from `arkade-os/compiler` at `5786b2f` with no warnings. The artifacts are committed. `AttestationBeacon.attest` has 10 `CHECKSIGFROMSTACK`. `OptionVault.settle` is unchanged: no `CHECKSIGFROMSTACK`, one `INSPECTINASSETLOOKUP`, one `INSPECTINPUTPACKET`.
 
-`pnpm test` passed on 2026-09-26. It covers the state codec, `publishDigest`, the artifacts, the bindings, two-step `verifyGenesis` (including a funding coin that already holds another asset), `fixing`, the oracle service, and the layout of the transactions `cospend.ts` builds.
+`pnpm test` covers the state codec, `publishDigest`, the artifacts, the bindings, the deploy outputs, `fixing`, the oracle service, and the layout of the transactions `cospend.ts` builds.
 
-The compiler's Go harness `/tmp/arkade-compiler/tests/e2e/zz_beacon_spike_test.go` was run once, outside this repository, with `ARKADEC` set to the release binary of `5786b2f`:
-
-```
-go test -run TestBeaconSpike -count=1
---- FAIL: TestBeaconSpike (0.01s)
-    zz_beacon_spike_test.go:80: compile /workspace/contracts/beacon_option_vault.ark: exit status 1
-        cannot read '/workspace/contracts/beacon_option_vault.ark': No such file or directory
-```
-
-The script engine was not reached. That file is not in this repository, and the harness still builds the previous `attest(key, value, sigs[5])` witness, so it would not exercise this leaf even if the path existed. The harness is not committed here.
-
-Not run: anything against the emulator service or arkd, and nothing was broadcast to Mutinynet. See §7.
+On Mutinynet, 2026-09-26 and 2026-09-27, the oracle service issued the unit (`9b183c62…50e0`), deployed the beacon (`291705fc…36ca`), and published a fixing from nine prints (`2fb520f0…0636`). A covered call then settled against it with the vault at input 0 and the beacon read at input 1 (`ff7dfad4…0206`): holder 600, writer 19,400. The five oracle keys were test keys.
 
 ## 6. Implementation
 
-- `contracts/attestation_beacon.ark`, `contracts/option_vault.ark` and their `*.artifact.json`.
-- `protocol/beacon.ts`: state codec (`genesisState`, `nextState`, `decodeState`, `findFixing`), `priceValue` (`num2bin(twap, 32)`), `publishDigest` (`sha256(ctrlTxid || next)`), `migrateDigest`, `beaconIdOf` (the script compares the display txid reversed), `genesisOutputs`, `verifyGenesis` (issue, then the deploy that spends the checkpoint of that issuance), `bindBeacon`. `bindContracts` in `protocol/contracts.ts` passes `beaconTxid` and `beaconGidx` into `OptionVault`. Programs load through `secondsExit` in `protocol/programs.ts`.
-- `protocol/cospend.ts`: Arkade transactions with more than one covenant input. One checkpoint per input through `buildOffchainTx`, one emulator entry per covenant, the previous transaction on every input, one extension with the asset packet, the state packet and the emulator packet ahead of the anchor. `buildSettle`, `buildAttest` (nine prints and `opSig`), `buildMigrate`, `submit`. The SDK's builder and `attachExtension` are single-covenant and private; everything else is exported. Deploy of the beacon is not a covenant spend: it uses the wallet's `buildAndSubmitOffchainTx`.
-- `protocol/beacon.test.ts`: the tests above.
+An Arkade transaction's inputs spend checkpoint outputs, not the coins themselves. `tx.input.current.scriptPubKey` and `tx.inputs[i].packet` reach the coin through the previous Arkade transaction attached to the input, which is what the continuation and the packet read rely on. The deploy is not a covenant spend; it goes through the wallet's `buildAndSubmitOffchainTx`.
 
-An Arkade transaction's inputs spend checkpoint outputs, not the coins themselves. `tx.input.current.scriptPubKey` and `tx.inputs[i].packet` reach the coin through the previous Arkade transaction attached to the input, which is what the continuation and the packet read rely on.
-
-Out of scope for this change: issuing the identity asset on Mutinynet and running the committee. The desk and the page bind `OptionVault` to the beacon id they are given (`BEACON_TXID` on the desk, `beacon_txid` on the quote). `messages.ts` does not yet refuse expiries off the daily 08:00 UTC grid, so one-off expiries can fill the eight slots.
+The desk and the page bind `OptionVault` to the beacon id they are given (`BEACON_TXID` on the desk, `beacon_txid` on the quote). `messages.ts` does not yet refuse expiries off the daily 08:00 UTC grid, so one-off expiries can fill the eight slots.
 
 ## 7. Verify before mainnet
 
 - The emulator service binds the attached previous transaction of each input to that input, across the checkpoint hop. Submit a settle with a forged previous transaction to Mutinynet and require rejection.
 - Asset claims are rejected on boarding inputs and on any input whose prevout is not an Arkade transaction output.
 - An asset-bearing coin survives a batch refresh, and which spend does it. `read` at input 0 is the intended renewal shape. Server key rotation (`deprecatedSigners` in `/v1/info`) needs a `migrate` to a script with the new server key before each cutoff.
-- A two-covenant transaction with no user signature is accepted by `RestEmulatorProvider.submitTx`.
+- A two-covenant settle with no user-signed input is accepted by `RestEmulatorProvider.submitTx`. The Mutinynet settle had one, the fee coin.
 - Operator rate limits on `read`, and the measured exit chain length after N reads.
