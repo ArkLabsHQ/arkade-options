@@ -72,7 +72,7 @@ export async function requestQuotes(input: {
   };
   const secret = generateSecretKey();
   const acceptId = request.rfq_id;
-  let replies = await collectReplies({
+  const ask = () => collectReplies({
     relays: input.relays,
     secretKey: secret,
     recipients: input.desks.map((desk) => desk.pubkey),
@@ -80,16 +80,8 @@ export async function requestQuotes(input: {
     timeoutMs: 8_000,
     accept: (incoming) => messageId(incoming.message) === acceptId,
   });
-  if (replies.length === 0) {
-    replies = await collectReplies({
-      relays: input.relays,
-      secretKey: secret,
-      recipients: input.desks.map((desk) => desk.pubkey),
-      payload: request,
-      timeoutMs: 8_000,
-      accept: (incoming) => messageId(incoming.message) === acceptId,
-    });
-  }
+  let replies = await ask();
+  if (replies.length === 0) replies = await ask();
   const now = Math.floor(Date.now() / 1000);
   const quotes: LiveQuote[] = [];
   const reasons: string[] = [];

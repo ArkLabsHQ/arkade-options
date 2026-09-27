@@ -3,7 +3,6 @@ import { readFileSync } from "node:fs";
 import http from "node:http";
 
 import {
-  ArkAddress,
   arkade,
   asset,
   DefaultVtxo,
@@ -47,7 +46,7 @@ import { spotCents } from "./spot.ts";
  *   RELAYS          comma-separated websocket URLs
  *   ARK_URL         default Mutinynet arkd
  *   EMULATOR_URL    default Mutinynet emulator
- *   DATA_DIR        quote book and oracle keys. Default ./data
+ *   DATA_DIR        quote book. Default ./data
  *   PORT            status HTTP. Default 8788
  *   DESK_STRIKE_CAP per-strike collateral cap in sats. Default 1 BTC
  *   DESK_TOTAL_CAP  total collateral cap in sats. Default 5 BTC
@@ -259,7 +258,6 @@ async function onRequest(message: RfqRequest, from: string) {
   await book.save();
   await transport.publish(from, quoteMessage(row));
   console.log("quote", row.rfqId, row.premium, row.intentAddress);
-  void followIntent(row.intentAddress);
 }
 
 async function onStatus(rfqId: string, from: string) {
@@ -388,40 +386,6 @@ const server = http.createServer((req, res) => {
   res.end(statusBody());
 });
 
-const watched = new Set<string>();
-let intentSub = "";
-let listening = false;
-const intentAbort = new AbortController();
-
-async function followIntent(address: string) {
-  if (!client.indexer || !address) return;
-  let script = "";
-  try {
-    script = bytesToHex(ArkAddress.decode(address).pkScript);
-  } catch {
-    return;
-  }
-  if (watched.has(script)) return;
-  watched.add(script);
-  intentSub = await client.indexer.subscribeForScripts([script], intentSub || undefined);
-  if (listening) return;
-  listening = true;
-  const indexer = client.indexer;
-  void (async () => {
-    try {
-      for await (const event of indexer.getSubscription(intentSub, intentAbort.signal)) {
-        if (event.newVtxos.length || event.spentVtxos.length) void poll();
-      }
-    } catch (err) {
-      if (!intentAbort.signal.aborted) console.error("intent", err instanceof Error ? err.message : err);
-    }
-  })();
-}
-
-for (const row of book.list()) {
-  if (row.status === "open" || (row.status === "filled" && !row.fillTxid)) void followIntent(row.intentAddress);
-}
-
 server.listen(port, () => {
   console.log(`commit ${revision()}`);
   console.log(`desk ${pubkey}`);
@@ -436,7 +400,6 @@ void poll();
 
 function shutdown() {
   clearInterval(timer);
-  intentAbort.abort();
   transport.close();
   server.close();
   process.exit(0);

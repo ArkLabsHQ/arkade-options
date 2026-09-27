@@ -10,7 +10,6 @@ type Status = {
   deployTxid: string | null;
   wallet: string | null;
   address: string | null;
-  beaconTxid: string | null;
   args: { ctrlTxid: string | null; threshold: number; domain: string; keyLag: number; readFee: number; adminPk: string | null; exit: number };
   fixings: unknown[];
   prints: unknown[];
@@ -43,10 +42,9 @@ async function refresh(): Promise<void> {
     `Admin ${args.adminPk ?? "unset"}`,
     `Fund ${body.wallet ?? "unset"}`,
     `Asset ${body.assetId ?? "unset"}`,
-    `Issue ${body.issueTxid ?? "unset"}`,
     `Deploy ${body.deployTxid ?? "unset"}`,
     `Beacon ${body.address ?? "unset"}`,
-    `BEACON_TXID ${body.beaconTxid ?? "unset"}`,
+    `BEACON_TXID ${body.issueTxid ?? "unset"}`,
     `ctrlTxid ${args.ctrlTxid ?? "unset"}`,
     `Fixings ${body.fixings.length}. Prints ${body.prints.length}.`,
   ]);

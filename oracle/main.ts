@@ -50,17 +50,6 @@ const wallet = oracleKey
     })
   : undefined;
 
-const wrapped: OracleWallet | undefined = wallet
-  ? {
-      assetManager: { issue: (params) => wallet.assetManager.issue(params) },
-      getAddress: () => wallet.getAddress(),
-      getVtxos: () => wallet.getVtxos(),
-      buildAndSubmitOffchainTx: (inputs, outputs) => wallet.buildAndSubmitOffchainTx(inputs as never, outputs),
-      arkServerPublicKey: wallet.arkServerPublicKey,
-      serverUnrollScript: wallet.serverUnrollScript,
-    }
-  : undefined;
-
 const oracle = await createOracle({
   dataDir,
   port,
@@ -68,7 +57,7 @@ const oracle = await createOracle({
   adminToken,
   oracleKey,
   emulatorKey: hexToBytes(defaultEmulatorPubkey(networks.mutinynet)),
-  wallet: wrapped,
+  wallet: wallet as unknown as OracleWallet | undefined,
   indexer: wallet?.indexerProvider,
   emulator: new RestEmulatorProvider(emulatorUrl),
 });

@@ -18,7 +18,7 @@ import { fillQuote } from "../desk/fill.ts";
 import type { QuoteRow } from "../desk/book.ts";
 import { btcAmount } from "../app/src/fund.ts";
 import { ARK_URL, EMULATOR_URL, EXIT } from "../protocol/constants.ts";
-import { assertServerExit, bindContracts, bindSwap, payoutVtxo } from "../protocol/contracts.ts";
+import { assertServerExit, bindContracts, payoutVtxo } from "../protocol/contracts.ts";
 import { bytesToHex, xOnly } from "../protocol/hex.ts";
 import { intentProgram } from "../protocol/programs.ts";
 
@@ -96,19 +96,6 @@ const cancel = bindContracts({ ...shared, deadline: cancelDeadline });
 await assertServerExit();
 const deskScript = payoutVtxo(holderPk, deskClient.serverKey, EXIT);
 const deskAddress = deskScript.address(networks.mutinynet.hrp, xOnly(deskClient.serverKey)).encode();
-const swap = bindSwap({
-  makerPk: writerPk,
-  serverKey: writerClient.serverKey,
-  emulatorKey: writerClient.emulatorKey,
-  offerAssetIdTxid: writerPk,
-  offerAssetIdGidx: 0n,
-  offerAmount: 1n,
-  wantAssetIdTxid: holderPk,
-  wantAssetIdGidx: 0n,
-  wantAmount: 1n,
-  expirationTime: expiry,
-  makerProgram: fill.writerProgram,
-});
 
 console.log("writer", bytesToHex(writerPk));
 console.log("desk", bytesToHex(holderPk));
@@ -116,7 +103,6 @@ console.log("desk address", deskAddress, `(fund at least ${btcAmount(premium)} B
 console.log("fill intent", fill.intentAddress, `(fund ${btcAmount(collateral)} BTC of collateral)`);
 console.log("fill vault", fill.vaultAddress);
 console.log("cancel intent", cancel.intentAddress, `(fund ${btcAmount(collateral)} BTC, refunds after ${cancelDeadline})`);
-console.log("reference swap", swap.address);
 
 if (!spend) {
   console.log("Fund those addresses, then re-run with --spend.");
@@ -177,12 +163,10 @@ async function waitForCoin(label: string, read: () => Promise<{ value: number }[
   throw new Error(`${label} was not indexed`);
 }
 
-if (spend) {
-  const fillIntent = deskClient.contract(intentProgram(), fill.intent);
-  const cancelIntent = writerClient.contract(intentProgram(), cancel.intent);
-  await waitForCoin("fill intent", () => fillIntent.getUtxos(), collateral);
-  await waitForCoin("cancel intent", () => cancelIntent.getUtxos(), collateral);
-}
+const fillIntent = deskClient.contract(intentProgram(), fill.intent);
+const cancelIntent = writerClient.contract(intentProgram(), cancel.intent);
+await waitForCoin("fill intent", () => fillIntent.getUtxos(), collateral);
+await waitForCoin("cancel intent", () => cancelIntent.getUtxos(), collateral);
 
 const filled = await fillQuote({
   client: deskClient,

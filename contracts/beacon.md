@@ -2,7 +2,7 @@
 
 A committee-signed registry that a covenant reads by spending it in the same transaction. The option vault is the first consumer. The shape is the LayerZero endpoint from the compiler examples: a verifier coin identified by an asset, consumers that read its packet.
 
-Contracts: `attestation_beacon.ark`, `option_vault.ark`. This document was reviewed against the code once; the review's findings are folded in below and the open ones are listed at the end.
+Contracts: `attestation_beacon.ark`, `option_vault.ark`. Open checks are at the end.
 
 ## 1. What an oracle has to give a covenant
 

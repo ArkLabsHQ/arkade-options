@@ -19,8 +19,6 @@ import { intentProgram, vaultProgram } from "./program.ts";
 export const NETWORK_NAME = "Mutinynet";
 export const WALLET_URL = "https://mutinynet.arkade.money";
 
-const HOLDER = SingleKey.fromHex("0000000000000000000000000000000000000000000000000000000000000021");
-
 export type FundRequest = {
   kind: 0 | 1;
   strike: bigint;
@@ -191,6 +189,9 @@ export async function writerPayoutAddress(writerHex: string): Promise<string> {
 }
 
 async function build(req: FundRequest) {
+  if (!req.holderPkHex || !req.beaconTxidHex) {
+    throw new Error("Selling needs a desk quote that names the beacon.");
+  }
   let writerPk: Uint8Array;
   let payoutKey: Uint8Array | undefined;
   let serverKey: Uint8Array;
@@ -215,8 +216,7 @@ async function build(req: FundRequest) {
     throw new Error("Paste your Arkade address first.");
   }
   const { client } = await openSession(identity);
-  const holderPk = req.holderPkHex ? hexToBytes(req.holderPkHex) : await HOLDER.xOnlyPublicKey();
-  if (!req.beaconTxidHex) throw new Error("Selling needs a desk quote that names the beacon.");
+  const holderPk = hexToBytes(req.holderPkHex);
   const beaconTxidHex = req.beaconTxidHex.toLowerCase();
   const beaconGidx = req.beaconGidx ?? 0;
   const exit = req.exit ?? EXIT;

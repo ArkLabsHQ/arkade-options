@@ -179,7 +179,7 @@ test("status, admin order, deploy change, and a print that becomes a fixing", as
     assert.equal(groups[1]!.assetId!.toString(), ctx.other.toString());
 
     const status = await call(ctx.oracle.url, "/api/status");
-    assert.equal(status.json.beaconTxid, "ee".repeat(32));
+    assert.equal(status.json.issueTxid, "ee".repeat(32));
     assert.equal((status.json.args as { ctrlTxid: string }).ctrlTxid, bytesToHex(beaconIdOf(asset.AssetId.create("ee".repeat(32), 0)).txid));
     const bound = bindBeacon({
       id: beaconIdOf(asset.AssetId.create("ee".repeat(32), 0)),

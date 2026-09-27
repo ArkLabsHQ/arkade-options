@@ -13,7 +13,7 @@ import { beaconIdOf, bindBeacon, decodeState, genesisOutputs, nextState, priceVa
 import { EXIT, PRICE_MAX } from "../protocol/constants.ts";
 import { buildAttest, submit, type AttestSlice } from "../protocol/cospend.ts";
 import { bytesToHex, hexToBytes } from "../protocol/hex.ts";
-import { loadStore, saveStore, type OracleFile, type StoredPrint } from "./store.ts";
+import { loadStore, saveStore, type StoredPrint } from "./store.ts";
 
 /**
  * Oracle desk. The process never stores a private key. ORACLE_KEY, when
@@ -221,11 +221,8 @@ export async function createOracle(deps: OracleDeps) {
       deployTxid: store.deployTxid,
       wallet: deps.wallet ? await deps.wallet.getAddress() : null,
       address: script?.address ?? null,
-      beaconTxid: store.issueTxid,
       args: {
         ctrlTxid: beacon ? bytesToHex(beacon.txid) : null,
-        ctrlGidx: beacon ? Number(beacon.gidx) : null,
-        signers: store.pubkeys,
         threshold: Number(THRESHOLD),
         domain: bytesToHex(DOMAIN),
         keyLag: Number(KEY_LAG),
@@ -444,5 +441,3 @@ async function sendFile(res: http.ServerResponse, name: string, type: string) {
     else throw err;
   }
 }
-
-export type { OracleFile };
