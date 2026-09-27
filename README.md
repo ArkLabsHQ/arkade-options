@@ -6,12 +6,12 @@ Cash-settled covered calls and limited puts on Mutinynet. The desk pays the prem
 
 - Page: <https://arkade.trade/>
 - Fund flow: <https://arkade.trade/viz/>
-- Desk: <https://prod-mutinynet-optionsdesk-gk1vzy-1e84a5-138-199-218-130.traefik.me/>
+- Desk: <https://arkadeoptions-desk-jxdh3j-37969b-138-199-218-130.traefik.me/>
 
 ## Fund the desk
 
 ```bash
-curl -k https://prod-mutinynet-optionsdesk-gk1vzy-1e84a5-138-199-218-130.traefik.me/
+curl -k https://arkadeoptions-desk-jxdh3j-37969b-138-199-218-130.traefik.me/
 ```
 
 - Send Mutinynet sats to `address`. That is the float.

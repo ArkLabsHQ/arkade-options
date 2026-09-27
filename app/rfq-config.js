@@ -7,11 +7,11 @@ export const RELAYS = ["wss://nostr.arkade.sh"];
  * Deribit mark directly.
  *
  * Temporary Mutinynet desk. Its pubkey is `GET /` on
- * https://prod-mutinynet-optionsdesk-gk1vzy-1e84a5-138-199-218-130.traefik.me/
+ * https://arkadeoptions-desk-jxdh3j-37969b-138-199-218-130.traefik.me/
  */
 export const PINNED_DESKS = [
   {
     name: "Mutinynet",
-    pubkey: "688e2b847d04fea9e7ba817104ab3f2c590cfe486965a309a087e025172094c9",
+    pubkey: "eb36be79b231beeecbea9609767139974137d1f5dbaab56f19396bda3f07edc9",
   },
 ];
