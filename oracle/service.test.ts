@@ -85,10 +85,15 @@ async function boot(extra: Partial<OracleDeps> & { adminToken?: string } = {}) {
     indexer: {
       async getVtxos(opts) {
         const script = hex.decode(opts.scripts[0]!);
-        creating = new Transaction({ version: 3, allowUnknownOutputs: true });
-        creating.addInput({ txid: new Uint8Array(32).fill(8), index: 1 });
-        creating.addOutput({ script, amount: 330n });
-        creating.addOutput(Extension.create([statePacket(genesisState())]).txOut());
+        const last = submitted.at(-1);
+        if (last) {
+          creating = Transaction.fromPSBT(base64.decode(last));
+        } else {
+          creating = new Transaction({ version: 3, allowUnknownOutputs: true });
+          creating.addInput({ txid: new Uint8Array(32).fill(8), index: 1 });
+          creating.addOutput({ script, amount: 330n });
+          creating.addOutput(Extension.create([statePacket(genesisState())]).txOut());
+        }
         return { vtxos: [{ txid: creating.id, vout: 0, value: 330 }] };
       },
       async getVirtualTxs(txids) {

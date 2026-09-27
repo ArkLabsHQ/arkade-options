@@ -321,7 +321,6 @@ export async function createOracle(deps: OracleDeps) {
       if (!Number.isSafeInteger(Number(expiry))) throw new HttpError(400, "expiry");
       const expiryN = Number(expiry);
       if (BigInt(now()) < expiry + KEY_LAG) throw new HttpError(400, "before key time");
-      if (store.fixings.some((item) => item.expiry === expiryN)) throw new HttpError(409, "already a fixing");
       if (!deps.wallet || !deps.indexer || !deps.emulator) throw new HttpError(400, "indexer required");
       const script = await bound();
       if (!script) throw new HttpError(400, "ORACLE_KEY is required");
