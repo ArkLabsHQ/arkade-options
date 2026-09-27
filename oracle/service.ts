@@ -98,6 +98,7 @@ function readBody(req: http.IncomingMessage, limit: number): Promise<unknown> {
       if (size > limit) {
         if (!failed) {
           failed = true;
+          req.pause();
           reject(new HttpError(413, "body too large"));
         }
       } else {
@@ -305,7 +306,10 @@ export async function createOracle(deps: OracleDeps) {
     if (!ok) throw new HttpError(400, "bad sig");
     store.prints.push({ pubkey, price: price.toString(), time: stamp, sig });
     const mine = store.prints.filter((item) => item.pubkey === pubkey);
-    if (mine.length > PRINTS_PER_ORACLE) store.prints.splice(store.prints.indexOf(mine[0]!), 1);
+    if (mine.length > PRINTS_PER_ORACLE) {
+      const oldest = mine.reduce((a, b) => (a.time <= b.time ? a : b));
+      store.prints.splice(store.prints.indexOf(oldest), 1);
+    }
     await save();
     return { ok: true };
   }
@@ -347,6 +351,21 @@ export async function createOracle(deps: OracleDeps) {
         who: slice.map((print) => BigInt(store.pubkeys!.indexOf(print.pubkey))),
         sig: slice.map((print) => hexToBytes(print.sig)),
       }));
+      for (const slice of chosen) {
+        for (const print of slice) {
+          let ok = false;
+          try {
+            ok = schnorr.verify(
+              hexToBytes(print.sig),
+              printHash(BigInt(print.price), BigInt(print.time)),
+              hexToBytes(print.pubkey),
+            );
+          } catch {
+            ok = false;
+          }
+          if (!ok) throw new HttpError(400, "bad stored sig");
+        }
+      }
       const fixed = fixing(expiry, slices);
       if (fixed.error || fixed.twap == null) throw new HttpError(400, fixed.error ?? "twap");
       const next = nextState(state, expiry, priceValue(fixed.twap));
@@ -401,6 +420,7 @@ export async function createOracle(deps: OracleDeps) {
       const statusCode = err instanceof HttpError ? err.status : 500;
       const message = err instanceof HttpError ? err.message : "error";
       if (!res.headersSent) sendJson(res, statusCode, { error: message });
+      if (statusCode === 413) req.destroy();
     }
   }
 

@@ -21,7 +21,7 @@ function median(values: bigint[]): bigint {
   return (sorted[mid - 1]! + sorted[mid]!) / 2n;
 }
 
-/** Median BTCUSD from Coinbase, Kraken, and Binance. A missing venue is dropped. Cached for 10 seconds. */
+/** Median BTCUSD from Coinbase, Kraken, and Binance. Needs two live venues. Cached for 10 seconds. */
 export async function spotCents(now = Date.now()): Promise<Tick> {
   if (cache && now - cache.at < 10_000) return cache;
   const reads = await Promise.all([
@@ -39,7 +39,7 @@ export async function spotCents(now = Date.now()): Promise<Tick> {
     }).then((price) => (price == null ? null : { name: "Binance", price })).catch(() => null),
   ]);
   const live = reads.filter((item): item is { name: string; price: number } => item != null);
-  if (live.length === 0) {
+  if (live.length < 2) {
     if (cache && now - cache.at < 60_000) return cache;
     throw new Error("spot unavailable");
   }

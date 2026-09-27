@@ -1,4 +1,4 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, open, readFile, rename } from "node:fs/promises";
 import path from "node:path";
 
 export type QuoteStatus = "open" | "filled" | "expired";
@@ -111,7 +111,13 @@ export class Book {
 
   async save(): Promise<void> {
     const tmp = `${this.file}.tmp`;
-    await writeFile(tmp, JSON.stringify({ quotes: this.rows }, null, 2));
+    const handle = await open(tmp, "w");
+    try {
+      await handle.writeFile(JSON.stringify({ quotes: this.rows }, null, 2));
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
     await rename(tmp, this.file);
   }
 }

@@ -79,6 +79,7 @@ export async function requestQuotes(input: {
     payload: request,
     timeoutMs: 8_000,
     accept: (incoming) => messageId(incoming.message) === acceptId,
+    done: (incoming) => isQuote(incoming.message),
   });
   let replies = await ask();
   if (replies.length === 0) replies = await ask();
