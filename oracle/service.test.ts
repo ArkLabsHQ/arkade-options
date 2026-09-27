@@ -94,7 +94,8 @@ async function boot(extra: Partial<OracleDeps> & { adminToken?: string } = {}) {
           creating.addOutput({ script, amount: 330n });
           creating.addOutput(Extension.create([statePacket(genesisState())]).txOut());
         }
-        return { vtxos: [{ txid: creating.id, vout: 0, value: 330 }] };
+        const dust = { txid: "11".repeat(32), vout: 0, value: 1 };
+        return { vtxos: [dust, { txid: creating.id, vout: 0, value: 330, assets: [{ assetId, amount: 1n }] }] };
       },
       async getVirtualTxs(txids) {
         if (!creating || txids[0] !== creating.id) return { txs: [] };

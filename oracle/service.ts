@@ -24,6 +24,8 @@ const DOMAIN = new TextEncoder().encode("BTCUSD-FIX");
 const THRESHOLD = 3n;
 const KEY_LAG = 60n;
 const READ_FEE = 100n;
+// About a year of daily expiries at three prints each. The oldest print of that oracle goes first.
+const PRINTS_PER_ORACLE = 1_000;
 const CSP = "default-src 'none'; script-src 'self'; connect-src 'self'; style-src 'self'; frame-ancestors 'none'";
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -305,6 +307,8 @@ export async function createOracle(deps: OracleDeps) {
     }
     if (!ok) throw new HttpError(400, "bad sig");
     store.prints.push({ pubkey, price: price.toString(), time: stamp, sig });
+    const mine = store.prints.filter((item) => item.pubkey === pubkey);
+    if (mine.length > PRINTS_PER_ORACLE) store.prints.splice(store.prints.indexOf(mine[0]!), 1);
     await save();
     return { ok: true };
   }
@@ -325,8 +329,8 @@ export async function createOracle(deps: OracleDeps) {
       const script = await bound();
       if (!script) throw new HttpError(400, "ORACLE_KEY is required");
       const found = await deps.indexer.getVtxos({ scripts: [bytesToHex(script.pkScript)], spendableOnly: true });
-      if (found.vtxos.length !== 1) throw new HttpError(400, "beacon coin");
-      const coin = found.vtxos[0]!;
+      const coin = found.vtxos.find((vtxo) => vtxo.assets?.some((item) => item.assetId === store.assetId && BigInt(item.amount) === 1n));
+      if (!coin) throw new HttpError(400, "beacon coin");
       const fetched = await deps.indexer.getVirtualTxs([coin.txid]);
       const prev = fetched.txs.map((raw) => Transaction.fromPSBT(base64.decode(raw))).find((tx) => tx.id === coin.txid);
       if (!prev) throw new HttpError(400, "creating tx missing");
