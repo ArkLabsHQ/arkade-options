@@ -3,11 +3,15 @@ import {
   BIP21,
   arkade,
   asset,
+  ContractManager,
+  InMemoryContractRepository,
+  InMemoryWalletRepository,
   networks,
   RestArkProvider,
   RestEmulatorProvider,
   RestIndexerProvider,
   SingleKey,
+  type ContractEvent,
 } from "@arkade-os/sdk";
 
 import { beaconIdOf } from "../../protocol/beacon-id.ts";
@@ -62,7 +66,19 @@ type Session = {
   client: Awaited<ReturnType<typeof arkade.Arkade.connect>>;
 };
 
+const indexer = new RestIndexerProvider(ARK_URL);
 const sessions = new Map<string, Promise<Session>>();
+let managerPromise: Promise<ContractManager> | null = null;
+
+function contracts(): Promise<ContractManager> {
+  managerPromise ??= ContractManager.create({
+    indexerProvider: indexer,
+    contractRepository: new InMemoryContractRepository(),
+    walletRepository: new InMemoryWalletRepository(),
+    vtxoSyncMaxAgeMs: 60_000,
+  });
+  return managerPromise;
+}
 const ADDRESS_KEY = "arkade-options-address-v1";
 const SESSION_KEY = "arkade-options-session-v1";
 const LEGACY_WRITER_KEY = "arkade-options-writer-v1";
@@ -72,11 +88,13 @@ function openSession(identity: SingleKey): Promise<Session> {
   let pending = sessions.get(id);
   if (!pending) {
     pending = (async () => {
+      const contractManager = await contracts();
       const client = await arkade.Arkade.connect({
         arkade: new RestArkProvider(ARK_URL),
-        indexer: new RestIndexerProvider(ARK_URL),
+        indexer,
         emulator: new RestEmulatorProvider(EMULATOR_URL),
         identity,
+        contractManager,
         network: networks.mutinynet,
       });
       return { client };
@@ -260,9 +278,48 @@ export async function depositAddress(req: FundRequest): Promise<Deposit> {
   };
 }
 
+/** Store the intent with the contract manager and return its pkScript. */
+export async function registerIntent(req: FundRequest): Promise<string> {
+  const { intent } = await build(req);
+  const script = bytesToHex(intent.pkScript);
+  const manager = await contracts();
+  try {
+    await intent.register();
+  } catch (err) {
+    await manager.refreshVtxos({ scripts: [script], after: 0 }).catch(() => undefined);
+    throw err;
+  }
+  return script;
+}
+
+export async function intentCoins(script: string): Promise<{ value: bigint; spent: boolean; spentBy: string }[] | null> {
+  const manager = await contracts();
+  const [found] = await manager.getContracts({ script });
+  if (!found) return null;
+  const [row] = await manager.getContractsWithVtxos({ script });
+  return (row?.vtxos ?? []).map((coin) => ({
+    value: BigInt(coin.value),
+    spent: Boolean(coin.isSpent || coin.spentBy),
+    spentBy: coin.arkTxId || coin.spentBy || "",
+  }));
+}
+
+export async function onContractEvent(cb: (event: ContractEvent) => void): Promise<() => void> {
+  const manager = await contracts();
+  return manager.onContractEvent(cb);
+}
+
 /** After the deadline, cancel pays the whole coin back to the writer address. */
 export async function cancelIntent(req: FundRequest): Promise<string> {
   const { intent, bound } = await build(req);
+  const script = bytesToHex(intent.pkScript);
+  const manager = await contracts();
+  try {
+    await intent.register();
+  } catch {
+    await manager.refreshVtxos({ scripts: [script], after: 0 });
+  }
+  await manager.refreshVtxos({ scripts: [script], after: 0 });
   const coins = await intent.getUtxos();
   const coin = coins[0];
   if (!coin) throw new Error("No coin on this address.");

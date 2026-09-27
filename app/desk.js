@@ -6,6 +6,7 @@ import {
   legacyWriterHex,
   paymentUri,
   readAddress,
+  registerIntent,
   saveAddress,
   writerPayoutAddress,
 } from "./src/fund.ts";
@@ -39,7 +40,7 @@ const state = {
 
 let quoteGen = 0;
 let quoteTimer = 0;
-let lastPoll = 0;
+const expiring = new Set();
 
 const $ = (id) => document.getElementById(id);
 
@@ -1045,19 +1046,6 @@ function watchRow(position) {
   };
 }
 
-async function pollDeposits() {
-  for (const position of state.positions) {
-    if (!position.address || !position.writerAddress) continue;
-    if (["refunded", "settled"].includes(position.status)) continue;
-    try {
-      const phase = await readIntent(watchRow(position));
-      applyChain(position, { phase: phase.phase, refundable: phase.refundable });
-    } catch {
-      // The subscription retries. This address stays as it was.
-    }
-  }
-}
-
 let watchAbort = null;
 let watchKey = "";
 
@@ -1070,7 +1058,14 @@ function startWatch() {
   if (!rows.length) return;
   const ctrl = new AbortController();
   watchAbort = ctrl;
-  void watchIntents(rows.map(watchRow), (update) => {
+  const watched = rows.map((position) => ({
+    ...watchRow(position),
+    register: async () => {
+      if (!position.holderPkHex || !position.beaconTxid) return "";
+      return registerIntent(await fundRequest(position));
+    },
+  }));
+  void watchIntents(watched, (update) => {
     const position = state.positions.find((item) => item.address === update.address);
     if (position) applyChain(position, update);
   }, ctrl.signal).catch(() => {
@@ -1112,12 +1107,14 @@ async function refreshPositionMarkets() {
 
 function tick() {
   const now = Math.floor(Date.now() / 1000);
-  const due = state.positions.some((position) => (
-    position.status === "deposited" && position.deadline && now >= Number(position.deadline)
-  ));
-  if (!due && now - lastPoll < 20) return;
-  lastPoll = now;
-  void pollDeposits();
+  for (const position of state.positions) {
+    if (position.status !== "deposited" || !position.deadline || now < Number(position.deadline)) continue;
+    if (!position.address || expiring.has(position.address)) continue;
+    expiring.add(position.address);
+    void readIntent(watchRow(position)).then((phase) => {
+      applyChain(position, { phase: phase.phase, refundable: phase.refundable });
+    }).catch(() => undefined).finally(() => expiring.delete(position.address));
+  }
 }
 
 function listen(id, type, fn) {

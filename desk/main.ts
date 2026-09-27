@@ -5,7 +5,10 @@ import http from "node:http";
 import {
   arkade,
   asset,
+  ContractManager,
   DefaultVtxo,
+  InMemoryContractRepository,
+  InMemoryWalletRepository,
   networks,
   RestArkProvider,
   RestEmulatorProvider,
@@ -24,7 +27,8 @@ import {
   QUOTE_TTL_S,
 } from "../protocol/constants.ts";
 import { assertServerExit, bindContracts, directPayoutKey, payoutVtxo, type Terms } from "../protocol/contracts.ts";
-import { bytesToHex, hexToBytes, xOnly } from "../protocol/hex.ts";
+import { bytesToHex, hexToBytes } from "../protocol/hex.ts";
+import { intentProgram } from "../protocol/programs.ts";
 import {
   premiumRefusal,
   requestRefusal,
@@ -40,7 +44,7 @@ import { fillQuote } from "./fill.ts";
 import { spotCents } from "./spot.ts";
 
 /**
- * One process: Nostr RFQ, the quote book, and the fill loop.
+ * One process: Nostr RFQ, the quote book, and fills from the contract manager.
  *
  *   DESK_KEY        32-byte hex. Nostr pubkey and the option holder key.
  *   RELAYS          comma-separated websocket URLs
@@ -88,11 +92,22 @@ if (!Number.isInteger(port) || port < 1) throw new Error("PORT");
 const identity = SingleKey.fromHex(deskKeyHex);
 const book = await Book.open(dataDir);
 const beaconDisplay = beaconFromEnv();
+const indexer = new RestIndexerProvider(arkUrl);
+if (typeof EventSource === "undefined") {
+  console.warn("Contract events need Node's EventSource. Start the desk with --experimental-eventsource.");
+}
+const contractManager = await ContractManager.create({
+  indexerProvider: indexer,
+  contractRepository: new InMemoryContractRepository(),
+  walletRepository: new InMemoryWalletRepository(),
+  vtxoSyncMaxAgeMs: 60_000,
+});
 const client = await arkade.Arkade.connect({
   arkade: new RestArkProvider(arkUrl),
-  indexer: new RestIndexerProvider(arkUrl),
+  indexer,
   emulator: new RestEmulatorProvider(emulatorUrl),
   identity,
+  contractManager,
   network: networks.mutinynet,
 });
 if (!client.emulatorKey) throw new Error("emulator key missing");
@@ -256,6 +271,11 @@ async function onRequest(message: RfqRequest, from: string) {
     return;
   }
   await book.save();
+  try {
+    await track(row);
+  } catch (err) {
+    console.error("register", row.rfqId, err instanceof Error ? err.message : err);
+  }
   await transport.publish(from, quoteMessage(row));
   console.log("quote", row.rfqId, row.premium, row.intentAddress);
 }
@@ -285,33 +305,75 @@ async function onMessage({ from, message }: Incoming) {
 
 const transport = connectTransport({ relays, secretKey: secret, onMessage });
 
-async function poll() {
-  if (polling) return;
-  polling = true;
+type FloatCoin = { txid: string; vout: number; value: number };
+
+const deskScriptHex = bytesToHex(deskScript.pkScript);
+const intentByScript = new Map<string, string>();
+const scriptByQuote = new Map<string, string>();
+const deskCoins = new Map<string, FloatCoin>();
+const queued = new Set<string>();
+const refreshFirst = new Set<string>();
+let filling = false;
+
+function rememberDesk(event: { type: string; vtxos: FloatCoin[] }) {
+  if (event.type === "vtxo_received") {
+    for (const coin of event.vtxos) deskCoins.set(`${coin.txid}:${coin.vout}`, coin);
+  } else if (event.type === "vtxo_spent") {
+    for (const coin of event.vtxos) deskCoins.delete(`${coin.txid}:${coin.vout}`);
+  }
+  balance = [...deskCoins.values()].reduce((sum, coin) => sum + BigInt(coin.value), 0n);
+}
+
+async function track(row: QuoteRow) {
+  if (scriptByQuote.has(row.rfqId)) return;
+  const bound = bindContracts(termsFor(row));
+  const intent = client.contract(intentProgram(), bound.intent);
+  const script = bytesToHex(intent.pkScript);
   try {
-    const now = Math.floor(Date.now() / 1000);
-    try {
-      spot = await spotCents();
-    } catch (err) {
-      console.error("spot", err instanceof Error ? err.message : err);
-    }
-    if (client.indexer) {
-      try {
-        const page = await client.indexer.getVtxos({
-          scripts: [bytesToHex(deskScript.pkScript)],
-          spendableOnly: true,
-        });
-        balance = page.vtxos.reduce((sum, coin) => sum + BigInt(coin.value), 0n);
-      } catch (err) {
-        console.error("balance", err instanceof Error ? err.message : err);
-      }
-    }
-    for (const row of book.list()) {
+    await intent.register({ label: row.rfqId });
+  } catch (err) {
+    await contractManager.refreshVtxos({ scripts: [script], after: 0 }).catch(() => undefined);
+    throw err;
+  }
+  intentByScript.set(script, row.rfqId);
+  scriptByQuote.set(row.rfqId, script);
+}
+
+function queueFill(rfqId: string, refresh = false) {
+  if (refresh) refreshFirst.add(rfqId);
+  queued.add(rfqId);
+  void pump();
+}
+
+async function pump() {
+  if (filling) return;
+  filling = true;
+  try {
+    while (queued.size) {
+      const rfqId = queued.values().next().value;
+      if (!rfqId) break;
+      queued.delete(rfqId);
+      const row = book.get(rfqId);
+      if (!row) continue;
       const unsettled = row.status === "open" || (row.status === "filled" && !row.fillTxid);
       if (!unsettled) continue;
+      if (refreshFirst.delete(rfqId)) {
+        const script = scriptByQuote.get(rfqId);
+        if (script) await contractManager.refreshVtxos({ scripts: [script], after: 0 });
+      }
+      const now = Math.floor(Date.now() / 1000);
       try {
-        const outcome = await fillQuote({ client, termsFor, deskScript, row, now });
+        const outcome = await fillQuote({
+          client,
+          termsFor,
+          deskScript,
+          row,
+          now,
+          float: [...deskCoins.values()],
+        });
         if (outcome.result === "filled") {
+          for (const coin of outcome.spent ?? []) deskCoins.delete(`${coin.txid}:${coin.vout}`);
+          balance = [...deskCoins.values()].reduce((sum, coin) => sum + BigInt(coin.value), 0n);
           book.mark(row.rfqId, "filled", outcome.txid);
           await book.save();
           console.log("filled", row.rfqId, outcome.txid ?? "");
@@ -326,9 +388,51 @@ async function poll() {
       }
     }
   } finally {
+    filling = false;
+    if (queued.size) void pump();
+  }
+}
+
+async function housekeeping() {
+  if (polling) return;
+  polling = true;
+  try {
+    try {
+      spot = await spotCents();
+    } catch (err) {
+      console.error("spot", err instanceof Error ? err.message : err);
+    }
+    const now = Math.floor(Date.now() / 1000);
+    for (const row of book.list()) {
+      const unsettled = row.status === "open" || (row.status === "filled" && !row.fillTxid);
+      if (!unsettled) continue;
+      if (!scriptByQuote.has(row.rfqId)) {
+        try {
+          await track(row);
+        } catch (err) {
+          console.error("register", row.rfqId, err instanceof Error ? err.message : err);
+          continue;
+        }
+        queueFill(row.rfqId);
+        continue;
+      }
+      if (row.status === "open" && now >= row.deadline) queueFill(row.rfqId, true);
+    }
+  } finally {
     polling = false;
   }
 }
+
+contractManager.onContractEvent((event) => {
+  if (event.type !== "vtxo_received" && event.type !== "vtxo_spent") return;
+  if (event.contractScript === deskScriptHex) {
+    rememberDesk(event);
+    return;
+  }
+  const rfqId = intentByScript.get(event.contractScript);
+  if (rfqId) queueFill(rfqId);
+});
+await contractManager.watchScript(deskScriptHex, { label: "desk" });
 
 function revision(): string {
   const baked = process.env.GIT_COMMIT?.trim();
@@ -394,12 +498,13 @@ server.listen(port, () => {
 });
 
 const timer = setInterval(() => {
-  void poll();
+  void housekeeping();
 }, 2_000);
-void poll();
+void housekeeping();
 
 function shutdown() {
   clearInterval(timer);
+  contractManager.dispose();
   transport.close();
   server.close();
   process.exit(0);

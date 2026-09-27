@@ -14,4 +14,4 @@ ENV DATA_DIR=/data
 VOLUME /data
 EXPOSE 8788
 HEALTHCHECK CMD node -e "fetch('http://127.0.0.1:8788/status').then((res)=>process.exit(res.ok?0:1)).catch(()=>process.exit(1))"
-CMD ["node", "--experimental-strip-types", "desk/main.ts"]
+CMD ["node", "--experimental-strip-types", "--experimental-eventsource", "desk/main.ts"]

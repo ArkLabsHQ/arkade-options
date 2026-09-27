@@ -3,6 +3,7 @@ import { ArkAddress, RestIndexerProvider } from "@arkade-os/sdk";
 import { ARK_URL } from "../../protocol/constants.ts";
 import { bytesToHex } from "../../protocol/hex.ts";
 import { classifyIntent, psbtView, type CoinView, type IntentPhase, type TxOutput } from "../../protocol/intent-state.ts";
+import { intentCoins, onContractEvent } from "./fund.ts";
 
 export type WatchRow = {
   address: string;
@@ -11,6 +12,8 @@ export type WatchRow = {
   premium: bigint;
   deadline: number;
   since?: number;
+  /** Register this intent with the contract manager. Returns its pkScript. */
+  register?: () => Promise<string>;
 };
 
 export type PhaseUpdate = {
@@ -77,15 +80,21 @@ async function payoutEvidence(writerScript: string, intentScript: string, since:
 export async function readIntent(row: WatchRow, now = Math.floor(Date.now() / 1000)): Promise<Omit<PhaseUpdate, "address">> {
   const intentScript = scriptOf(row.address).toLowerCase();
   const writerScript = row.writerAddress ? scriptOf(row.writerAddress) : "";
-  const [live, spent] = await Promise.all([
-    indexer.getVtxos({ scripts: [intentScript], spendableOnly: true }),
-    indexer.getVtxos({ scripts: [intentScript], spentOnly: true }),
-  ]);
-  const coins: CoinView[] = [...live.vtxos, ...spent.vtxos].map((coin) => ({
-    value: BigInt(coin.value),
-    spent: Boolean(coin.spentBy),
-    spentBy: coin.arkTxId || coin.spentBy || "",
-  }));
+  const managed = await intentCoins(intentScript);
+  let coins: CoinView[];
+  if (managed) {
+    coins = managed;
+  } else {
+    const [live, spent] = await Promise.all([
+      indexer.getVtxos({ scripts: [intentScript], spendableOnly: true }),
+      indexer.getVtxos({ scripts: [intentScript], spentOnly: true }),
+    ]);
+    coins = [...live.vtxos, ...spent.vtxos].map((coin) => ({
+      value: BigInt(coin.value),
+      spent: Boolean(coin.spentBy),
+      spentBy: coin.arkTxId || coin.spentBy || "",
+    }));
+  }
   const ids = [...new Set(coins.flatMap((coin) => coin.spent && coin.spentBy ? [coin.spentBy] : []))];
   const spends: Record<string, TxOutput[]> = {};
   if (ids.length && writerScript) {
@@ -130,42 +139,66 @@ function addRow(owners: Map<string, WatchRow[]>, script: string, row: WatchRow) 
   owners.set(script, list);
 }
 
+let generation = 0;
+let hooking: Promise<void> | null = null;
+let owners = new Map<string, WatchRow[]>();
+let listener: ((update: PhaseUpdate) => void) | null = null;
+
+async function publish(rows: WatchRow[], gen: number) {
+  await Promise.all(rows.map(async (row) => {
+    if (gen !== generation) return;
+    try {
+      const phase = await readIntent(row);
+      if (gen === generation) listener?.({ address: row.address, ...phase });
+    } catch {
+      // The manager's subscription retries. This row stays as it was.
+    }
+  }));
+}
+
+function hook(): Promise<void> {
+  if (!hooking) {
+    hooking = onContractEvent((event) => {
+      if (event.type !== "vtxo_received" && event.type !== "vtxo_spent") return;
+      const rows = owners.get(event.contractScript);
+      if (rows?.length) void publish(rows, generation);
+    }).then(() => undefined);
+    hooking.catch(() => {
+      hooking = null;
+    });
+  }
+  return hooking;
+}
+
 export async function watchIntents(
   rows: WatchRow[],
   onUpdate: (update: PhaseUpdate) => void,
   signal: AbortSignal,
 ): Promise<void> {
   if (!rows.length || signal.aborted) return;
-  const owners = new Map<string, WatchRow[]>();
+  const gen = ++generation;
+  listener = onUpdate;
+  owners = new Map();
+  for (const row of rows) addRow(owners, scriptOf(row.address), row);
+  await hook();
+  if (gen !== generation || signal.aborted) return;
+  let failed = false;
   for (const row of rows) {
-    addRow(owners, scriptOf(row.address), row);
-    if (row.writerAddress) addRow(owners, scriptOf(row.writerAddress), row);
-  }
-  const publish = async (scripts?: string[]) => {
-    const todo = scripts
-      ? [...new Set(scripts.flatMap((script) => owners.get(script) ?? []))]
-      : rows;
-    await Promise.all(todo.map(async (row) => {
-      if (signal.aborted) return;
-      const phase = await readIntent(row);
-      if (!signal.aborted) onUpdate({ address: row.address, ...phase });
-    }));
-  };
-  await publish();
-  const id = await indexer.subscribeForScripts([...owners.keys()]);
-  try {
-    for await (const event of indexer.getSubscription(id, signal)) {
-      if (signal.aborted) break;
-      const touched = new Set<string>();
-      for (const script of event.scripts ?? []) {
-        if (owners.has(script)) touched.add(script);
-      }
-      for (const coin of [...event.newVtxos, ...event.spentVtxos, ...event.sweptVtxos]) {
-        if (owners.has(coin.script)) touched.add(coin.script);
-      }
-      if (touched.size) await publish([...touched]);
+    if (!row.register) continue;
+    try {
+      const script = await row.register();
+      if (gen !== generation || signal.aborted) return;
+      if (script) addRow(owners, script, row);
+    } catch (err) {
+      failed = true;
+      console.error(err);
     }
-  } finally {
-    await indexer.unsubscribeForScripts(id).catch(() => undefined);
   }
+  if (gen !== generation || signal.aborted) return;
+  await publish(rows, gen);
+  if (failed) throw new Error("contract register failed");
+  await new Promise<void>((resolve) => {
+    if (signal.aborted) resolve();
+    else signal.addEventListener("abort", () => resolve(), { once: true });
+  });
 }
