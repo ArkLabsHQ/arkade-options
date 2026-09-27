@@ -1,13 +1,14 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
-import { readFile, writeFile } from "node:fs/promises";
 import http from "node:http";
-import path from "node:path";
 
 import {
-  ArkAddress,
   arkade,
+  asset,
+  ContractManager,
   DefaultVtxo,
+  InMemoryContractRepository,
+  InMemoryWalletRepository,
   networks,
   RestArkProvider,
   RestEmulatorProvider,
@@ -15,6 +16,7 @@ import {
   SingleKey,
 } from "@arkade-os/sdk";
 
+import { beaconIdOf } from "../protocol/beacon-id.ts";
 import {
   ARK_URL,
   DEFAULT_RELAYS,
@@ -25,7 +27,8 @@ import {
   QUOTE_TTL_S,
 } from "../protocol/constants.ts";
 import { assertServerExit, bindContracts, directPayoutKey, payoutVtxo, type Terms } from "../protocol/contracts.ts";
-import { bytesToHex, hexToBytes, xOnly } from "../protocol/hex.ts";
+import { bytesToHex, hexToBytes } from "../protocol/hex.ts";
+import { intentProgram } from "../protocol/programs.ts";
 import {
   premiumRefusal,
   requestRefusal,
@@ -41,13 +44,13 @@ import { fillQuote } from "./fill.ts";
 import { spotCents } from "./spot.ts";
 
 /**
- * One process: Nostr RFQ, the quote book, and the fill loop.
+ * One process: Nostr RFQ, the quote book, and fills from the contract manager.
  *
  *   DESK_KEY        32-byte hex. Nostr pubkey and the option holder key.
  *   RELAYS          comma-separated websocket URLs
  *   ARK_URL         default Mutinynet arkd
  *   EMULATOR_URL    default Mutinynet emulator
- *   DATA_DIR        quote book and oracle keys. Default ./data
+ *   DATA_DIR        quote book. Default ./data
  *   PORT            status HTTP. Default 8788
  *   DESK_STRIKE_CAP per-strike collateral cap in sats. Default 1 BTC
  *   DESK_TOTAL_CAP  total collateral cap in sats. Default 5 BTC
@@ -65,26 +68,6 @@ function bigintEnv(name: string, fallback: bigint): bigint {
   if (!raw) return fallback;
   if (!/^[1-9][0-9]*$/.test(raw)) throw new Error(`${name} must be a positive integer`);
   return BigInt(raw);
-}
-
-async function oraclePubkeys(dir: string): Promise<Uint8Array[]> {
-  const file = path.join(dir, "oracles.json");
-  let hexes: string[] | undefined;
-  try {
-    const parsed = JSON.parse(await readFile(file, "utf8")) as { keys?: unknown };
-    if (!Array.isArray(parsed.keys) || !parsed.keys.every((item) => typeof item === "string")) {
-      throw new Error("oracles.json needs a keys array");
-    }
-    hexes = parsed.keys;
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
-  }
-  if (!hexes) {
-    hexes = Array.from({ length: 5 }, () => SingleKey.fromRandomBytes().toHex());
-    await writeFile(file, JSON.stringify({ keys: hexes }, null, 2));
-  }
-  if (hexes.length !== 5) throw new Error("oracles.json needs five keys");
-  return Promise.all(hexes.map((hex) => SingleKey.fromHex(hex).xOnlyPublicKey()));
 }
 
 const deskKeyHex = required("DESK_KEY");
@@ -108,12 +91,23 @@ if (!Number.isInteger(port) || port < 1) throw new Error("PORT");
 
 const identity = SingleKey.fromHex(deskKeyHex);
 const book = await Book.open(dataDir);
-const oracles = await oraclePubkeys(dataDir);
+const beaconDisplay = beaconFromEnv();
+const indexer = new RestIndexerProvider(arkUrl);
+if (typeof EventSource === "undefined") {
+  console.warn("Contract events need Node's EventSource. Start the desk with --experimental-eventsource.");
+}
+const contractManager = await ContractManager.create({
+  indexerProvider: indexer,
+  contractRepository: new InMemoryContractRepository(),
+  walletRepository: new InMemoryWalletRepository(),
+  vtxoSyncMaxAgeMs: 60_000,
+});
 const client = await arkade.Arkade.connect({
   arkade: new RestArkProvider(arkUrl),
-  indexer: new RestIndexerProvider(arkUrl),
+  indexer,
   emulator: new RestEmulatorProvider(emulatorUrl),
   identity,
+  contractManager,
   network: networks.mutinynet,
 });
 if (!client.emulatorKey) throw new Error("emulator key missing");
@@ -128,6 +122,16 @@ let balance = 0n;
 let spot: { cents: bigint; sources: string[] } | null = null;
 let polling = false;
 
+function beaconFromEnv() {
+  const txid = (process.env.BEACON_TXID ?? "").trim().toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(txid)) {
+    throw new Error("BEACON_TXID must be the 64-hex display txid of the identity asset");
+  }
+  const gidx = (process.env.BEACON_GIDX ?? "0").trim();
+  if (!/^\d+$/.test(gidx) || Number(gidx) > 65_535) throw new Error("BEACON_GIDX must be an integer from 0 to 65535");
+  return { txid, gidx: Number(gidx) };
+}
+
 function termsFor(row: QuoteRow): Terms {
   return {
     kind: row.kind,
@@ -140,7 +144,7 @@ function termsFor(row: QuoteRow): Terms {
     writerPk: hexToBytes(row.writerPubkey),
     payoutKey: directPayoutKey(row.writerPubkey, row.writerPkScript),
     holderPk: hexToBytes(row.holderPubkey),
-    oraclePks: row.oraclePubkeys.map((item) => hexToBytes(item)),
+    beacon: beaconIdOf(asset.AssetId.create(row.beaconTxid, row.beaconGidx)),
     serverKey: client.serverKey,
     emulatorKey: client.emulatorKey!,
   };
@@ -160,7 +164,8 @@ function quoteMessage(row: QuoteRow): RfqQuote {
     profile: {
       holder_pubkey: row.holderPubkey,
       holder_pk_script: bytesToHex(bound.holderPkScript),
-      oracle_pubkeys: row.oraclePubkeys,
+      beacon_txid: row.beaconTxid,
+      beacon_gidx: row.beaconGidx,
       deadline: row.deadline,
       exit: row.exit,
       intent_address: row.intentAddress,
@@ -246,7 +251,8 @@ async function onRequest(message: RfqRequest, from: string) {
     writerPubkey: message.profile.writer_pubkey,
     writerPkScript: message.profile.writer_pk_script,
     holderPubkey: bytesToHex(holderPk),
-    oraclePubkeys: oracles.map((item) => bytesToHex(item)),
+    beaconTxid: beaconDisplay.txid,
+    beaconGidx: beaconDisplay.gidx,
     intentAddress: "",
     vaultAddress: "",
     status: "open",
@@ -265,9 +271,13 @@ async function onRequest(message: RfqRequest, from: string) {
     return;
   }
   await book.save();
+  try {
+    await track(row);
+  } catch (err) {
+    console.error("register", row.rfqId, err instanceof Error ? err.message : err);
+  }
   await transport.publish(from, quoteMessage(row));
   console.log("quote", row.rfqId, row.premium, row.intentAddress);
-  void followIntent(row.intentAddress);
 }
 
 async function onStatus(rfqId: string, from: string) {
@@ -295,33 +305,72 @@ async function onMessage({ from, message }: Incoming) {
 
 const transport = connectTransport({ relays, secretKey: secret, onMessage });
 
-async function poll() {
-  if (polling) return;
-  polling = true;
+type FloatCoin = { txid: string; vout: number; value: number };
+
+const deskScriptHex = bytesToHex(deskScript.pkScript);
+// ponytail: script→quote only. Scan for the reverse; add quote→script if the open book gets large.
+const quoteByScript = new Map<string, string>();
+const deskCoins = new Map<string, FloatCoin>();
+const queued = new Set<string>();
+// ponytail: one fill at a time. Per-quote locks if two quotes must settle together.
+let filling = false;
+
+function recount() {
+  balance = [...deskCoins.values()].reduce((sum, coin) => sum + BigInt(coin.value), 0n);
+}
+
+function rememberDesk(event: { type: string; vtxos: FloatCoin[] }) {
+  if (event.type === "vtxo_received") {
+    for (const coin of event.vtxos) deskCoins.set(`${coin.txid}:${coin.vout}`, coin);
+  } else if (event.type === "vtxo_spent") {
+    for (const coin of event.vtxos) deskCoins.delete(`${coin.txid}:${coin.vout}`);
+  }
+  recount();
+}
+
+function tracked(rfqId: string): boolean {
+  for (const id of quoteByScript.values()) if (id === rfqId) return true;
+  return false;
+}
+
+async function track(row: QuoteRow) {
+  if (tracked(row.rfqId)) return;
+  const bound = bindContracts(termsFor(row));
+  const intent = client.contract(intentProgram(), bound.intent);
+  await intent.register({ label: row.rfqId });
+  quoteByScript.set(bytesToHex(intent.pkScript), row.rfqId);
+}
+
+function queueFill(rfqId: string) {
+  queued.add(rfqId);
+  void pump();
+}
+
+async function pump() {
+  if (filling) return;
+  filling = true;
   try {
-    const now = Math.floor(Date.now() / 1000);
-    try {
-      spot = await spotCents();
-    } catch (err) {
-      console.error("spot", err instanceof Error ? err.message : err);
-    }
-    if (client.indexer) {
-      try {
-        const page = await client.indexer.getVtxos({
-          scripts: [bytesToHex(deskScript.pkScript)],
-          spendableOnly: true,
-        });
-        balance = page.vtxos.reduce((sum, coin) => sum + BigInt(coin.value), 0n);
-      } catch (err) {
-        console.error("balance", err instanceof Error ? err.message : err);
-      }
-    }
-    for (const row of book.list()) {
+    while (queued.size) {
+      const rfqId = queued.values().next().value;
+      if (!rfqId) break;
+      queued.delete(rfqId);
+      const row = book.get(rfqId);
+      if (!row) continue;
       const unsettled = row.status === "open" || (row.status === "filled" && !row.fillTxid);
       if (!unsettled) continue;
+      const now = Math.floor(Date.now() / 1000);
       try {
-        const outcome = await fillQuote({ client, termsFor, deskScript, row, now });
+        const outcome = await fillQuote({
+          client,
+          termsFor,
+          deskScript,
+          row,
+          now,
+          float: [...deskCoins.values()],
+        });
         if (outcome.result === "filled") {
+          for (const coin of outcome.spent ?? []) deskCoins.delete(`${coin.txid}:${coin.vout}`);
+          recount();
           book.mark(row.rfqId, "filled", outcome.txid);
           await book.save();
           console.log("filled", row.rfqId, outcome.txid ?? "");
@@ -336,9 +385,51 @@ async function poll() {
       }
     }
   } finally {
+    filling = false;
+    if (queued.size) void pump();
+  }
+}
+
+async function housekeeping() {
+  if (polling) return;
+  polling = true;
+  try {
+    try {
+      spot = await spotCents();
+    } catch (err) {
+      console.error("spot", err instanceof Error ? err.message : err);
+    }
+    const now = Math.floor(Date.now() / 1000);
+    for (const row of book.list()) {
+      const unsettled = row.status === "open" || (row.status === "filled" && !row.fillTxid);
+      if (!unsettled) continue;
+      if (!tracked(row.rfqId)) {
+        try {
+          await track(row);
+        } catch (err) {
+          console.error("register", row.rfqId, err instanceof Error ? err.message : err);
+          continue;
+        }
+        queueFill(row.rfqId);
+        continue;
+      }
+      if (row.status === "open" && now >= row.deadline) queueFill(row.rfqId);
+    }
+  } finally {
     polling = false;
   }
 }
+
+contractManager.onContractEvent((event) => {
+  if (event.type !== "vtxo_received" && event.type !== "vtxo_spent") return;
+  if (event.contractScript === deskScriptHex) {
+    rememberDesk(event);
+    return;
+  }
+  const rfqId = quoteByScript.get(event.contractScript);
+  if (rfqId) queueFill(rfqId);
+});
+await contractManager.watchScript(deskScriptHex, { label: "desk" });
 
 function revision(): string {
   const baked = process.env.GIT_COMMIT?.trim();
@@ -396,40 +487,6 @@ const server = http.createServer((req, res) => {
   res.end(statusBody());
 });
 
-const watched = new Set<string>();
-let intentSub = "";
-let listening = false;
-const intentAbort = new AbortController();
-
-async function followIntent(address: string) {
-  if (!client.indexer || !address) return;
-  let script = "";
-  try {
-    script = bytesToHex(ArkAddress.decode(address).pkScript);
-  } catch {
-    return;
-  }
-  if (watched.has(script)) return;
-  watched.add(script);
-  intentSub = await client.indexer.subscribeForScripts([script], intentSub || undefined);
-  if (listening) return;
-  listening = true;
-  const indexer = client.indexer;
-  void (async () => {
-    try {
-      for await (const event of indexer.getSubscription(intentSub, intentAbort.signal)) {
-        if (event.newVtxos.length || event.spentVtxos.length) void poll();
-      }
-    } catch (err) {
-      if (!intentAbort.signal.aborted) console.error("intent", err instanceof Error ? err.message : err);
-    }
-  })();
-}
-
-for (const row of book.list()) {
-  if (row.status === "open" || (row.status === "filled" && !row.fillTxid)) void followIntent(row.intentAddress);
-}
-
 server.listen(port, () => {
   console.log(`commit ${revision()}`);
   console.log(`desk ${pubkey}`);
@@ -438,13 +495,13 @@ server.listen(port, () => {
 });
 
 const timer = setInterval(() => {
-  void poll();
+  void housekeeping();
 }, 2_000);
-void poll();
+void housekeeping();
 
 function shutdown() {
   clearInterval(timer);
-  intentAbort.abort();
+  contractManager.dispose();
   transport.close();
   server.close();
   process.exit(0);

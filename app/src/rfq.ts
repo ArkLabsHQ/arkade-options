@@ -1,5 +1,8 @@
 import { generateSecretKey } from "nostr-tools/pure";
 
+import { asset } from "@arkade-os/sdk";
+
+import { beaconIdOf } from "../../protocol/beacon-id.ts";
 import { DUST_SATS, EXIT, PAIR } from "../../protocol/constants.ts";
 import { bindContracts } from "../../protocol/contracts.ts";
 import { bytesToHex, hexToBytes } from "../../protocol/hex.ts";
@@ -16,7 +19,8 @@ export type LiveQuote = {
   deadline: number;
   exit: number;
   holderPkHex: string;
-  oraclePkHex: string[];
+  beaconTxid: string;
+  beaconGidx: number;
   intentAddress: string;
   vaultAddress: string;
 };
@@ -68,7 +72,7 @@ export async function requestQuotes(input: {
   };
   const secret = generateSecretKey();
   const acceptId = request.rfq_id;
-  let replies = await collectReplies({
+  const ask = () => collectReplies({
     relays: input.relays,
     secretKey: secret,
     recipients: input.desks.map((desk) => desk.pubkey),
@@ -76,16 +80,8 @@ export async function requestQuotes(input: {
     timeoutMs: 8_000,
     accept: (incoming) => messageId(incoming.message) === acceptId,
   });
-  if (replies.length === 0) {
-    replies = await collectReplies({
-      relays: input.relays,
-      secretKey: secret,
-      recipients: input.desks.map((desk) => desk.pubkey),
-      payload: request,
-      timeoutMs: 8_000,
-      accept: (incoming) => messageId(incoming.message) === acceptId,
-    });
-  }
+  let replies = await ask();
+  if (replies.length === 0) replies = await ask();
   const now = Math.floor(Date.now() / 1000);
   const quotes: LiveQuote[] = [];
   const reasons: string[] = [];
@@ -116,7 +112,7 @@ export async function requestQuotes(input: {
         writerPk: hexToBytes(profile.pubkey),
         payoutKey: profile.payoutKey,
         holderPk: hexToBytes(quote.profile.holder_pubkey),
-        oraclePks: quote.profile.oracle_pubkeys.map((pk) => hexToBytes(pk)),
+        beacon: beaconIdOf(asset.AssetId.create(quote.profile.beacon_txid, quote.profile.beacon_gidx)),
         serverKey: profile.serverKey,
         emulatorKey: profile.emulatorKey,
       });
@@ -136,7 +132,8 @@ export async function requestQuotes(input: {
       deadline: quote.profile.deadline,
       exit: quote.profile.exit,
       holderPkHex: quote.profile.holder_pubkey,
-      oraclePkHex: quote.profile.oracle_pubkeys,
+      beaconTxid: quote.profile.beacon_txid,
+      beaconGidx: quote.profile.beacon_gidx,
       intentAddress: quote.profile.intent_address,
       vaultAddress: quote.profile.vault_address,
     });

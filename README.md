@@ -29,7 +29,7 @@ export const PINNED_DESKS = [
 ];
 ```
 
-Leave `PINNED_DESKS` empty to price from Deribit in the browser instead.
+Leave `PINNED_DESKS` empty to see Deribit prices in the browser. Selling needs a desk: its quote names the beacon.
 
 ## Page
 
@@ -74,6 +74,34 @@ Dokploy:
 - `commit` in `GET /` must change. A cached image can stay on `16d579f`.
 
 `GET /` and `GET /status` return the same JSON: `commit`, `pubkey`, `address`, `balance`.
+
+## Oracle
+
+`ORACLE_KEY` is an optional 32-byte hex key and is never generated. Its x-only pubkey is the beacon admin key. `ORACLE_ADMIN` is an optional bearer token; leave it unset to disable the admin routes. `ARK_URL` defaults to `https://mutinynet.arkade.sh`. `EMULATOR_URL` defaults to the Mutinynet emulator. `DATA_DIR` is the store directory and `PORT` defaults to `8789`.
+
+```bash
+pnpm oracle
+```
+
+```bash
+docker build -f oracle/Dockerfile -t arkade-options-oracle .
+docker run --rm -p 8789:8789 -e ORACLE_KEY -e ORACLE_ADMIN -v oracle-data:/data arkade-options-oracle
+```
+
+Dokploy:
+
+- Dockerfile `oracle/Dockerfile`, build context the repository root.
+- Port `8789` behind the Dokploy HTTPS domain. The dashboard is `GET /`; browsers only let it sign over HTTPS or localhost.
+- Set `ORACLE_KEY` and `ORACLE_ADMIN`. Keep `ORACLE_KEY`: it is the only key that writes fixings on the beacon it deploys.
+- Mount a volume at `/data`.
+
+An oracle print is `sha256(BTCUSD || price_le64 || time_le64)`. After `expiry + 60`, publish the fixing:
+
+```bash
+curl -X POST -H "Authorization: Bearer $ORACLE_ADMIN" -d '{"expiry":1790463992}' https://<oracle>/api/publish
+```
+
+The beacon keeps the eight newest fixings. Settle a vault before eight later expiries are published, or publish its expiry again.
 
 ## Check
 

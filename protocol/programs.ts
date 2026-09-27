@@ -1,10 +1,11 @@
 import { arkade } from "@arkade-os/sdk";
 
+import beaconArtifact from "../contracts/attestation_beacon.artifact.json" with { type: "json" };
 import swapArtifact from "../contracts/non_interactive_swap.artifact.json" with { type: "json" };
 import intentArtifact from "../contracts/option_intent.artifact.json" with { type: "json" };
 import vaultArtifact from "../contracts/option_vault.artifact.json" with { type: "json" };
 
-// CHECKTIME (0xdc) is in the SDK. The vault median still compiles to OP_PUT
+// CHECKTIME (0xdc) is in the SDK. The vault's slot loop still compiles to OP_PUT
 // (0xbb), which that table does not list, so the spent program cannot load
 // without this entry.
 const ops = arkade.ARKADE_OPS as Record<string, number>;
@@ -64,8 +65,17 @@ export function swapProgram() {
   return secondsExit(swapArtifact as arkade.ContractArtifact);
 }
 
+/** The committee registry the beacon vault reads. See contracts/beacon.md. */
+export function beaconProgram() {
+  return secondsExit(beaconArtifact as arkade.ContractArtifact);
+}
+
 export function rawVaultProgram() {
   return arkade.programFromArtifact(vaultArtifact as arkade.ContractArtifact);
+}
+
+export function rawBeaconProgram() {
+  return arkade.programFromArtifact(beaconArtifact as arkade.ContractArtifact);
 }
 
 export function rawIntentProgram() {
@@ -84,12 +94,11 @@ function count(asm: readonly unknown[] | undefined, name: string) {
 export function artifactLine() {
   const vault = vaultProgram();
   const intent = intentProgram();
-  const settle = vault.functions.settle?.arkadeScript?.asm;
+  const settle = vault.functions.settle?.arkadeScript?.asm ?? [];
   const finalize = intent.functions.finalize?.arkadeScript?.asm ?? [];
-  const sigs = count(settle, "CHECKSIGFROMSTACK");
-  const hashes = count(settle, "SHA256");
-  const muls = count(settle, "MUL");
-  const divs = count(settle, "DIV");
   if (!finalize.includes("CHECKTIME")) throw new Error("OptionIntent finalize is missing CHECKTIME");
-  return `OptionVault settle · ${sigs} oracle signatures · ${muls} multiplies · ${divs} divides · ${hashes} hashes. OptionIntent finalize checks the deadline with CHECKTIME.`;
+  if (!settle.includes("INSPECTINASSETLOOKUP") || !settle.includes("INSPECTINPUTPACKET")) {
+    throw new Error("OptionVault settle is missing the beacon read");
+  }
+  return `OptionVault settle reads the beacon identity asset and its state packet. It checks ${count(settle, "MUL")} multiplies and ${count(settle, "DIV")} divides, and no oracle signatures. OptionIntent finalize gates the fill with CHECKTIME(deadline).`;
 }

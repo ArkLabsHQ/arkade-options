@@ -4,7 +4,9 @@ import { arkade } from "@arkade-os/sdk";
 
 import {
   artifactLine,
+  beaconProgram,
   intentProgram,
+  rawBeaconProgram,
   rawIntentProgram,
   rawSwapProgram,
   rawVaultProgram,
@@ -40,6 +42,7 @@ function onlySecondsDiffers(raw: ReturnType<typeof rawVaultProgram>, spent: Retu
 onlySecondsDiffers(rawVaultProgram(), vaultProgram());
 onlySecondsDiffers(rawIntentProgram(), intentProgram());
 onlySecondsDiffers(rawSwapProgram(), swapProgram());
+onlySecondsDiffers(rawBeaconProgram(), beaconProgram());
 
 const key = (fill: number) => new Uint8Array(32).fill(fill);
 const emulatorKey = new Uint8Array(33);
@@ -58,11 +61,8 @@ const compiledVault = new arkade.ArkadeProgramScript(
     strike: 10_000_000n,
     collateral: 10_000_000n,
     expiry: 1_800_000_000n,
-    "oracles.0": key(11),
-    "oracles.1": key(12),
-    "oracles.2": key(13),
-    "oracles.3": key(14),
-    "oracles.4": key(15),
+    beaconTxid: key(2),
+    beaconGidx: 0n,
     exit: 512n,
     server: key(7),
   },
@@ -76,10 +76,12 @@ if (vaultNames.join() !== "settle,close,unilateral") {
 const settleAsm = vault.functions.settle?.arkadeScript?.asm ?? [];
 const count = (name: string) => settleAsm.filter((token) => token === name).length;
 for (const [name, n] of [
-  ["CHECKSIGFROMSTACK", 9],
-  ["SHA256", 9],
-  ["MUL", 5],
-  ["DIV", 3],
+  ["CHECKSIGFROMSTACK", 0],
+  ["MUL", 2],
+  ["DIV", 2],
+  ["CHECKTIME", 1],
+  ["INSPECTINASSETLOOKUP", 1],
+  ["INSPECTINPUTPACKET", 1],
 ] as const) {
   if (count(name) !== n) throw new Error(`settle has ${count(name)} ${name}, expected ${n}`);
 }
@@ -144,8 +146,8 @@ if (!(swap.functions.cancel?.arkadeScript?.asm ?? []).includes("INSPECTLOCKTIME"
 }
 
 const line = artifactLine();
-if (!line.includes("9 oracle signatures") || !line.includes("CHECKTIME")) {
+if (!line.includes("no oracle signatures") || !line.includes("CHECKTIME(deadline)")) {
   throw new Error(line);
 }
 
-console.log("option and swap programs load through programFromArtifact");
+console.log("option, swap, and beacon programs load through programFromArtifact");

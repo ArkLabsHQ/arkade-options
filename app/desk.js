@@ -6,6 +6,7 @@ import {
   legacyWriterHex,
   paymentUri,
   readAddress,
+  registerIntent,
   saveAddress,
   writerPayoutAddress,
 } from "./src/fund.ts";
@@ -39,7 +40,7 @@ const state = {
 
 let quoteGen = 0;
 let quoteTimer = 0;
-let lastPoll = 0;
+const expiring = new Set();
 
 const $ = (id) => document.getElementById(id);
 
@@ -79,7 +80,8 @@ function persist() {
     address: p.address,
     deadline: p.deadline,
     holderPkHex: p.holderPkHex,
-    oraclePkHex: p.oraclePkHex,
+    beaconTxid: p.beaconTxid,
+    beaconGidx: p.beaconGidx,
     exit: p.exit,
     vaultAddress: p.vaultAddress,
     writerHex: p.writerHex,
@@ -867,7 +869,8 @@ async function confirm() {
       deadline: BigInt(deadline),
       writerAddress: state.address,
       holderPkHex: quote.holderPkHex,
-      oraclePkHex: quote.oraclePkHex,
+      beaconTxidHex: quote.beaconTxid,
+      beaconGidx: quote.beaconGidx,
       exit: quote.exit != null ? BigInt(quote.exit) : undefined,
     });
     if (quote.intentAddress && (deposit.address !== quote.intentAddress || deposit.vaultAddress !== quote.vaultAddress)) {
@@ -890,7 +893,8 @@ async function confirm() {
         deadline,
         address: deposit.address,
         holderPkHex: deposit.holderPkHex,
-        oraclePkHex: deposit.oraclePkHex,
+        beaconTxid: deposit.beaconTxidHex,
+        beaconGidx: deposit.beaconGidx,
         exit: deposit.exit,
         vaultAddress: deposit.vaultAddress,
         writerAddress: state.address,
@@ -976,7 +980,8 @@ async function fundRequest(position) {
     expiry: position.expiry,
     deadline: BigInt(position.deadline),
     holderPkHex: position.holderPkHex,
-    oraclePkHex: position.oraclePkHex,
+    beaconTxidHex: position.beaconTxid,
+    beaconGidx: position.beaconGidx,
     exit: position.exit != null ? BigInt(position.exit) : undefined,
   };
   if (position.writerAddress) return { ...base, writerAddress: position.writerAddress };
@@ -1041,19 +1046,6 @@ function watchRow(position) {
   };
 }
 
-async function pollDeposits() {
-  for (const position of state.positions) {
-    if (!position.address || !position.writerAddress) continue;
-    if (["refunded", "settled"].includes(position.status)) continue;
-    try {
-      const phase = await readIntent(watchRow(position));
-      applyChain(position, { phase: phase.phase, refundable: phase.refundable });
-    } catch {
-      // The subscription retries. This address stays as it was.
-    }
-  }
-}
-
 let watchAbort = null;
 let watchKey = "";
 
@@ -1066,7 +1058,14 @@ function startWatch() {
   if (!rows.length) return;
   const ctrl = new AbortController();
   watchAbort = ctrl;
-  void watchIntents(rows.map(watchRow), (update) => {
+  const watched = rows.map((position) => ({
+    ...watchRow(position),
+    register: async () => {
+      if (!position.holderPkHex || !position.beaconTxid) return "";
+      return registerIntent(await fundRequest(position));
+    },
+  }));
+  void watchIntents(watched, (update) => {
     const position = state.positions.find((item) => item.address === update.address);
     if (position) applyChain(position, update);
   }, ctrl.signal).catch(() => {
@@ -1108,12 +1107,14 @@ async function refreshPositionMarkets() {
 
 function tick() {
   const now = Math.floor(Date.now() / 1000);
-  const due = state.positions.some((position) => (
-    position.status === "deposited" && position.deadline && now >= Number(position.deadline)
-  ));
-  if (!due && now - lastPoll < 20) return;
-  lastPoll = now;
-  void pollDeposits();
+  for (const position of state.positions) {
+    if (position.status !== "deposited" || !position.deadline || now < Number(position.deadline)) continue;
+    if (!position.address || expiring.has(position.address)) continue;
+    expiring.add(position.address);
+    void readIntent(watchRow(position)).then((phase) => {
+      applyChain(position, { phase: phase.phase, refundable: phase.refundable });
+    }).catch(() => undefined).finally(() => expiring.delete(position.address));
+  }
 }
 
 function listen(id, type, fn) {

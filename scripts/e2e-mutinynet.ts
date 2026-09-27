@@ -1,8 +1,8 @@
-import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 
 import {
   arkade,
+  asset,
   InMemoryContractRepository,
   InMemoryWalletRepository,
   networks,
@@ -13,14 +13,14 @@ import {
   Wallet,
 } from "@arkade-os/sdk";
 
-import { holderPayoff, oraclePreimage, settlementOutputs, twap, windows } from "../app/settle-math.js";
+import { beaconIdOf } from "../protocol/beacon.ts";
 import { fillQuote } from "../desk/fill.ts";
 import type { QuoteRow } from "../desk/book.ts";
 import { btcAmount } from "../app/src/fund.ts";
 import { ARK_URL, EMULATOR_URL, EXIT } from "../protocol/constants.ts";
-import { assertServerExit, bindContracts, bindSwap, payoutVtxo } from "../protocol/contracts.ts";
+import { assertServerExit, bindContracts, payoutVtxo } from "../protocol/contracts.ts";
 import { bytesToHex, xOnly } from "../protocol/hex.ts";
-import { intentProgram, vaultProgram } from "../protocol/programs.ts";
+import { intentProgram } from "../protocol/programs.ts";
 
 /**
  * Happy path on Mutinynet.
@@ -29,15 +29,14 @@ import { intentProgram, vaultProgram } from "../protocol/programs.ts";
  *     connects and prints the addresses to fund.
  *
  *   pnpm e2e -- --spend
- *     finalizes an intent that already holds collateral, cancels the second
- *     intent once its deadline has passed, and settles the vault.
+ *     finalizes an intent that already holds collateral and cancels the second
+ *     intent once its deadline has passed. Settlement needs a beacon fixing.
  *
  *   pnpm e2e -- --live
  *     spends the writer and desk keys in data/e2e-keys.json. The writer wallet
- *     funds both intents, the desk finalizes one, the writer cancels the other,
- *     and the desk settles the vault.
+ *     funds both intents, the desk finalizes one, and the writer cancels the other.
  *
- * WRITER_KEY and DESK_KEY default to public test keys 1 and 2. Oracle keys are 3..7.
+ * WRITER_KEY and DESK_KEY default to public test keys 1 and 2. BEACON_TXID is the beacon's display txid.
  */
 
 const live = process.argv.includes("--live");
@@ -50,11 +49,6 @@ const deskHex = saved?.desk ?? process.env.DESK_KEY ?? "2".padStart(64, "0");
 const collateral = 50_000n;
 const premium = 1_000n;
 const strike = 9_700_000n;
-const price = 10_000_000n;
-
-function key(n: number) {
-  return SingleKey.fromHex(n.toString(16).padStart(64, "0"));
-}
 
 async function connect(identity: SingleKey) {
   return arkade.Arkade.connect({
@@ -68,7 +62,6 @@ async function connect(identity: SingleKey) {
 
 const writer = SingleKey.fromHex(writerHex);
 const desk = SingleKey.fromHex(deskHex);
-const oracles = [3, 4, 5, 6, 7].map(key);
 const writerClient = await connect(writer);
 const deskClient = await connect(desk);
 if (!writerClient.emulatorKey || !deskClient.emulatorKey) {
@@ -81,7 +74,9 @@ const fillDeadline = now + 600n;
 const cancelDeadline = now + 30n;
 const writerPk = await writer.xOnlyPublicKey();
 const holderPk = await desk.xOnlyPublicKey();
-const oraclePks = await Promise.all(oracles.map((item) => item.xOnlyPublicKey()));
+const beaconDisplay = (process.env.BEACON_TXID ?? "").trim().toLowerCase();
+if (!beaconDisplay) throw new Error("BEACON_TXID is required");
+const beaconGidx = Number(process.env.BEACON_GIDX ?? "0");
 const shared = {
   kind: 0 as const,
   strike,
@@ -91,7 +86,7 @@ const shared = {
   exit: EXIT,
   writerPk,
   holderPk,
-  oraclePks,
+  beacon: beaconIdOf(asset.AssetId.create(beaconDisplay, beaconGidx)),
   serverKey: writerClient.serverKey,
   emulatorKey: writerClient.emulatorKey,
 };
@@ -101,19 +96,6 @@ const cancel = bindContracts({ ...shared, deadline: cancelDeadline });
 await assertServerExit();
 const deskScript = payoutVtxo(holderPk, deskClient.serverKey, EXIT);
 const deskAddress = deskScript.address(networks.mutinynet.hrp, xOnly(deskClient.serverKey)).encode();
-const swap = bindSwap({
-  makerPk: writerPk,
-  serverKey: writerClient.serverKey,
-  emulatorKey: writerClient.emulatorKey,
-  offerAssetIdTxid: writerPk,
-  offerAssetIdGidx: 0n,
-  offerAmount: 1n,
-  wantAssetIdTxid: holderPk,
-  wantAssetIdGidx: 0n,
-  wantAmount: 1n,
-  expirationTime: expiry,
-  makerProgram: fill.writerProgram,
-});
 
 console.log("writer", bytesToHex(writerPk));
 console.log("desk", bytesToHex(holderPk));
@@ -121,7 +103,6 @@ console.log("desk address", deskAddress, `(fund at least ${btcAmount(premium)} B
 console.log("fill intent", fill.intentAddress, `(fund ${btcAmount(collateral)} BTC of collateral)`);
 console.log("fill vault", fill.vaultAddress);
 console.log("cancel intent", cancel.intentAddress, `(fund ${btcAmount(collateral)} BTC, refunds after ${cancelDeadline})`);
-console.log("reference swap", swap.address);
 
 if (!spend) {
   console.log("Fund those addresses, then re-run with --spend.");
@@ -142,7 +123,8 @@ function row(bound: typeof fill, deadline: bigint): QuoteRow {
     writerPubkey: bytesToHex(writerPk),
     writerPkScript: bytesToHex(bound.writerPkScript),
     holderPubkey: bytesToHex(holderPk),
-    oraclePubkeys: oraclePks.map((item) => bytesToHex(item)),
+    beaconTxid: beaconDisplay,
+    beaconGidx,
     intentAddress: bound.intentAddress,
     vaultAddress: bound.vaultAddress,
     status: "open",
@@ -181,12 +163,10 @@ async function waitForCoin(label: string, read: () => Promise<{ value: number }[
   throw new Error(`${label} was not indexed`);
 }
 
-if (spend) {
-  const fillIntent = deskClient.contract(intentProgram(), fill.intent);
-  const cancelIntent = writerClient.contract(intentProgram(), cancel.intent);
-  await waitForCoin("fill intent", () => fillIntent.getUtxos(), collateral);
-  await waitForCoin("cancel intent", () => cancelIntent.getUtxos(), collateral);
-}
+const fillIntent = deskClient.contract(intentProgram(), fill.intent);
+const cancelIntent = writerClient.contract(intentProgram(), cancel.intent);
+await waitForCoin("fill intent", () => fillIntent.getUtxos(), collateral);
+await waitForCoin("cancel intent", () => cancelIntent.getUtxos(), collateral);
 
 const filled = await fillQuote({
   client: deskClient,
@@ -203,7 +183,7 @@ const filled = await fillQuote({
     exit: EXIT,
     writerPk,
     holderPk,
-    oraclePks,
+    beacon: beaconIdOf(asset.AssetId.create(beaconDisplay, beaconGidx)),
     serverKey: deskClient.serverKey,
     emulatorKey: deskClient.emulatorKey!,
   }),
@@ -229,52 +209,4 @@ if (cancelCoins.length === 0) {
     console.log("cancel", sent.txid);
   }
 }
-
-const vault = deskClient.contract(vaultProgram(), fill.vault);
-const vaultCoins = await vault.getUtxos();
-const vaultCoin = vaultCoins[0];
-if (!vaultCoin) {
-  console.log("settle waiting for the vault");
-} else {
-  const locked = BigInt(vaultCoin.value);
-  const slices = (["open", "mid", "close"] as const).map((name) => {
-    const [lo] = windows(expiry)[name];
-    return {
-      price: [price, price, price],
-      time: [lo, lo + 20n, lo + 40n],
-      who: [0n, 1n, 2n],
-    };
-  });
-  const medians = slices.map((slice) => slice.price[1]!);
-  const ph = holderPayoff(0, twap(medians[0]!, medians[1]!, medians[2]!), strike, collateral);
-  const outputs = settlementOutputs(ph, locked);
-  const args: (bigint | Uint8Array)[] = [];
-  for (const slice of slices) {
-    const sigs = await Promise.all(slice.who.map((who, index) => signOracle(oracles[Number(who)]!, slice.price[index]!, slice.time[index]!)));
-    args.push(...slice.price, ...slice.time, ...slice.who, ...sigs);
-  }
-  const settle = vault.functions.settle as (...input: (bigint | Uint8Array)[]) => {
-    from(coin: typeof vaultCoin): {
-      to(script: Uint8Array, amount: bigint): { send(): Promise<{ txid: string }> };
-      to(outputs: { script: Uint8Array; amount: bigint }[]): { send(): Promise<{ txid: string }> };
-    };
-  };
-  const builder = settle(...args).from(vaultCoin);
-  const sent = outputs.mode === "split"
-    ? await builder.to([
-      { script: payoutVtxo(holderPk, deskClient.serverKey, EXIT).pkScript, amount: outputs.holder },
-      { script: payoutVtxo(writerPk, deskClient.serverKey, EXIT).pkScript, amount: outputs.writer },
-    ]).send()
-    : await builder.to(
-      payoutVtxo(outputs.mode === "holder" ? holderPk : writerPk, deskClient.serverKey, EXIT).pkScript,
-      outputs.mode === "holder" ? outputs.holder : outputs.writer,
-    ).send();
-  console.log("settle", sent.txid, outputs.mode);
-}
-
 process.exit(0);
-
-async function signOracle(oracle: SingleKey, px: bigint, time: bigint) {
-  const hash = createHash("sha256").update(oraclePreimage(px, time)).digest();
-  return oracle.signSchnorrDeterministic(hash);
-}

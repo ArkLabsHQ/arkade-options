@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-import { holderPayoff, settlementOutputs } from "../app/settle-math.js";
+import { fixing, holderPayoff, settlementOutputs } from "../app/settle-math.js";
 
 const html = readFileSync(new URL("./index.html", import.meta.url), "utf8");
 const Q = 20_000n;
@@ -59,15 +59,17 @@ function optionNet(kind, settlement) {
 test("every drawn bitcoin transaction conserves sats", () => {
   const names = [...html.matchAll(/data-name="([^"]+)"/g)].map((match) => match[1]);
   assert.ok(names.length >= 16);
+  const order = (map) => [...map].sort(([a], [b]) => a.localeCompare(b));
   for (const name of names) {
     const block = tx(name);
-    if (block.includes('data-assets="1"')) {
+    if (block.includes("data-asset=")) {
       const left = assets(column(block, "inputs"));
+      const minted = block.match(/data-mint="([a-z]+):(\d+)"/);
+      if (minted) left.set(minted[1], (left.get(minted[1]) ?? 0) + Number(minted[2]));
       const right = assets(column(block, "outputs"));
-      const order = (map) => [...map].sort(([a], [b]) => a.localeCompare(b));
       assert.deepEqual(order(left), order(right), name);
-      continue;
     }
+    if (block.includes('data-assets="1"') && !block.includes('data-sat="')) continue;
     const inn = sumSat(column(block, "inputs"));
     const out = sumSat(column(block, "outputs"));
     if (block.includes('data-reject="short"')) {
@@ -98,8 +100,8 @@ test("scenario nets match the vault payoff", () => {
 
 test("the page names the live parameters and the sources", () => {
   assert.match(html, /lang="en"/);
-  assert.match(html, /5027bc786c7e0c313e2d4409fe629a0cc4af9882/);
-  assert.match(html, /2026-09-26/);
+  assert.match(html, /1f38cc34c3064c2e3fb03068c69586952d772d0f/);
+  assert.match(html, /2026-09-27/);
   assert.match(html, /vtxoMinAmount/);
   assert.match(html, /maxOpReturnOutputs/);
   assert.match(html, /unilateralExitDelay/);
@@ -111,11 +113,41 @@ test("the page names the live parameters and the sources", () => {
   for (const file of ["../scripts/build.mjs", "../scripts/dev.mjs"]) {
     const source = readFileSync(new URL(file, import.meta.url), "utf8");
     assert.match(source, /viz\/index\.html/);
+    assert.match(source, /settle-math\.js/);
   }
   const vault = readFileSync(new URL("../contracts/option_vault.ark", import.meta.url), "utf8");
-  assert.match(vault, /ph = collateral \* \(twap - strike\) \/ twap/);
+  assert.match(vault, /ph = collateral \* \(st - strike\) \/ st/);
   assert.match(vault, /if \(ph > collateral\)/);
+  assert.match(vault, /beaconTxid/);
+  assert.doesNotMatch(vault, /twap/);
   const intent = readFileSync(new URL("../contracts/option_intent.ark", import.meta.url), "utf8");
   assert.match(intent, /premium \+ change/);
   assert.match(intent, /checkTime\(deadline\)/);
+  const beacon = readFileSync(new URL("../contracts/attestation_beacon.ark", import.meta.url), "utf8");
+  assert.match(beacon, /readFee/);
+  assert.match(html, /holderPayoff/);
+  assert.match(html, /settlementOutputs/);
+  assert.match(html, /Enforced/);
+  assert.match(html, /Not claimed/);
+  const links = [...html.matchAll(/explorer\.mutinynet\.arkade\.sh\/tx\/([0-9a-f]+)"/g)].map((match) => match[1]);
+  assert.ok(links.length >= 7);
+  for (const id of links) assert.equal(id.length, 64, id);
+});
+
+test("the prints table is the TWAP attest computes", () => {
+  const table = html.match(/<table id="prints" data-expiry="(\d+)" data-twap="(\d+)">/);
+  assert.ok(table);
+  const expiry = BigInt(table[1]);
+  const slices = [0, 1, 2].map(() => ({ price: [], time: [], who: [] }));
+  for (const [, slice, who, price, offset] of html.matchAll(/data-print="(\d):(\d):(\d+):(-?\d+)"/g)) {
+    slices[Number(slice)].price.push(BigInt(price));
+    slices[Number(slice)].time.push(expiry + BigInt(offset));
+    slices[Number(slice)].who.push(BigInt(who));
+  }
+  assert.equal(fixing(expiry, slices).twap, BigInt(table[2]));
+  assert.equal(fixing(expiry - 10n, slices).error, undefined);
+  assert.equal(fixing(expiry + 30n, slices).error, undefined);
+  assert.ok(fixing(expiry - 11n, slices).error);
+  assert.ok(fixing(expiry + 31n, slices).error);
+  assert.match(html, /1,790,463,982 to 1,790,464,022/);
 });

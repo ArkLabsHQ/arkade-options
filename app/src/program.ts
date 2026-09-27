@@ -1,6 +1,8 @@
 export {
   artifactLine,
+  beaconProgram,
   intentProgram,
+  rawBeaconProgram,
   rawIntentProgram,
   rawSwapProgram,
   rawVaultProgram,

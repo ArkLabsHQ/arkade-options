@@ -1,5 +1,6 @@
 import { arkade, DefaultVtxo, networks, RestArkProvider } from "@arkade-os/sdk";
 
+import type { BeaconId } from "./beacon-id.ts";
 import { ARK_URL, EXIT } from "./constants.ts";
 import { bytesToHex, hexToBytes, xOnly } from "./hex.ts";
 import { intentProgram, swapProgram, vaultProgram } from "./programs.ts";
@@ -16,7 +17,8 @@ export type Terms = {
   /** Taproot output key of the writer's Arkade address. Premium and settlement pay this key. */
   payoutKey?: Uint8Array;
   holderPk: Uint8Array;
-  oraclePks: readonly Uint8Array[];
+  /** Identity asset of the AttestationBeacon that settle reads. */
+  beacon: BeaconId;
   serverKey: Uint8Array;
   emulatorKey: Uint8Array;
 };
@@ -64,7 +66,7 @@ export function directPayoutKey(writerPubkey: string, writerPkScript: string): U
   return key;
 }
 
-function directPayout(key: Uint8Array): { tweakedPublicKey: Uint8Array; pkScript: Uint8Array } {
+export function directPayout(key: Uint8Array): { tweakedPublicKey: Uint8Array; pkScript: Uint8Array } {
   const tweakedPublicKey = xOnly(key);
   const pkScript = new Uint8Array(34);
   pkScript[0] = 0x51;
@@ -73,7 +75,7 @@ function directPayout(key: Uint8Array): { tweakedPublicKey: Uint8Array; pkScript
   return { tweakedPublicKey, pkScript };
 }
 
-function addressOf(script: { address: (hrp: string, server: Uint8Array) => { encode: () => string } }, serverKey: Uint8Array) {
+export function addressOf(script: { address: (hrp: string, server: Uint8Array) => { encode: () => string } }, serverKey: Uint8Array) {
   return script.address(networks.mutinynet.hrp, xOnly(serverKey)).encode();
 }
 
@@ -88,13 +90,11 @@ export function bindContracts(terms: Terms): Bound {
   if (terms.emulatorKey.length !== 33) {
     throw new Error("emulator key must be 33 bytes");
   }
-  if (terms.oraclePks.length !== 5) throw new Error("five oracle keys");
-  const oraclePks = terms.oraclePks.map((pk) => xOnly(pk));
+  if (terms.beacon.txid.length !== 32) throw new Error("beacon txid must be 32 bytes");
 
   const writer = terms.payoutKey ? directPayout(terms.payoutKey) : payoutVtxo(writerPk, serverKey, terms.exit);
   const holder = payoutVtxo(holderPk, serverKey, terms.exit);
   const keys = { serverKey, emulatorKey: terms.emulatorKey };
-  const oracles = Object.fromEntries(oraclePks.map((pk, index) => [`oracles.${index}`, pk]));
 
   const vaultArgs: Record<string, bigint | Uint8Array> = {
     kind: BigInt(terms.kind),
@@ -105,7 +105,8 @@ export function bindContracts(terms: Terms): Bound {
     strike: terms.strike,
     collateral: terms.collateral,
     expiry: terms.expiry,
-    ...oracles,
+    beaconTxid: terms.beacon.txid,
+    beaconGidx: terms.beacon.gidx,
     exit: terms.exit,
     server: serverKey,
   };

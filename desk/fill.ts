@@ -45,7 +45,9 @@ export async function fillQuote(opts: {
   deskScript: DefaultVtxo.Script;
   row: QuoteRow;
   now: number;
-}): Promise<{ result: FillResult; txid?: string }> {
+  /** Desk float already reported by the contract manager. Omit it and the indexer is asked once. */
+  float?: Coin[];
+}): Promise<{ result: FillResult; txid?: string; spent?: Coin[] }> {
   const bound = bindContracts(opts.termsFor(opts.row));
   const intent = opts.client.contract(intentProgram(), bound.intent);
   const coins = await intent.getUtxos();
@@ -55,12 +57,8 @@ export async function fillQuote(opts: {
   if (!coin) return { result: opts.now >= opts.row.deadline ? "expired" : "waiting" };
   if (opts.now >= opts.row.deadline) return { result: "expired" };
 
-  if (!opts.client.indexer) throw new Error("indexer missing");
-  const desk = await opts.client.indexer.getVtxos({
-    scripts: [bytesToHex(opts.deskScript.pkScript)],
-    spendableOnly: true,
-  });
-  const picked = selectFloat(desk.vtxos, premium);
+  const float = opts.float ?? await deskFloat(opts.client, opts.deskScript);
+  const picked = selectFloat(float, premium);
   if (!picked) return { result: "short" };
 
   const locked = BigInt(coin.value);
@@ -77,5 +75,14 @@ export async function fillQuote(opts: {
   ]);
   if (surplus > 0n) spend.change(opts.deskScript.pkScript);
   const sent = await spend.send();
-  return { result: "filled", txid: sent.txid };
+  return { result: "filled", txid: sent.txid, spent: picked };
+}
+
+async function deskFloat(client: Client, deskScript: DefaultVtxo.Script): Promise<Coin[]> {
+  if (!client.indexer) throw new Error("indexer missing");
+  const desk = await client.indexer.getVtxos({
+    scripts: [bytesToHex(deskScript.pkScript)],
+    spendableOnly: true,
+  });
+  return desk.vtxos;
 }

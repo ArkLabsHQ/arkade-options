@@ -14,6 +14,7 @@ const publish = () => {
   cpSync(path.join(root, "app/index.html"), path.join(dist, "index.html"));
   cpSync(path.join(root, "app/desk.css"), path.join(dist, "desk.css"));
   cpSync(path.join(root, "viz/index.html"), path.join(dist, "viz/index.html"));
+  cpSync(path.join(root, "app/settle-math.js"), path.join(dist, "viz/settle-math.js"));
   writeFileSync(path.join(dist, ".nojekyll"), "");
 };
 
