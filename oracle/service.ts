@@ -217,6 +217,7 @@ export async function createOracle(deps: OracleDeps) {
       assetId: store.assetId,
       issueTxid: store.issueTxid,
       deployTxid: store.deployTxid,
+      wallet: deps.wallet ? await deps.wallet.getAddress() : null,
       address: script?.address ?? null,
       beaconTxid: store.issueTxid,
       args: {

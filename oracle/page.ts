@@ -7,6 +7,7 @@ type Status = {
   assetId: string | null;
   issueTxid: string | null;
   deployTxid: string | null;
+  wallet: string | null;
   address: string | null;
   beaconTxid: string | null;
   args: {
@@ -141,6 +142,7 @@ async function refresh(): Promise<void> {
   line(statusText, `Threshold ${body.args.threshold}. Key lag ${body.args.keyLag}. Read fee ${body.args.readFee}. Exit ${body.args.exit}.`);
   line(statusText, `Domain ${body.args.domain}`);
   line(statusText, `Admin ${body.args.adminPk ?? "unset"}`, "mono");
+  line(statusText, `Fund ${body.wallet ?? "unset"}`, "mono");
   line(statusText, `Asset ${body.assetId ?? "unset"}`, "mono");
   line(statusText, `Issue ${body.issueTxid ?? "unset"}`, "mono");
   line(statusText, `Deploy ${body.deployTxid ?? "unset"}`, "mono");

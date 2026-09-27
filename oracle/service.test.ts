@@ -142,6 +142,7 @@ test("status, admin order, deploy change, and a print that becomes a fixing", as
     assert.equal((open.json.args as { readFee: number }).readFee, 100);
     assert.equal((open.json.args as { exit: number }).exit, 2048);
     assert.equal((open.json.args as { adminPk: string }).adminPk, hex.encode(schnorr.getPublicKey(secret(9))));
+    assert.match(String(open.json.wallet), /^tark1/);
 
     assert.equal((await call(ctx.oracle.url, "/api/issue", {}, "nope")).status, 401);
     assert.equal((await call(ctx.oracle.url, "/api/issue", {})).status, 401);
