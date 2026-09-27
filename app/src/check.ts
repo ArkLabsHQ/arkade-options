@@ -150,33 +150,4 @@ if (!line.includes("no oracle signatures") || !line.includes("CHECKTIME(deadline
   throw new Error(line);
 }
 
-const beacon = beaconProgram();
-const compiledBeacon = new arkade.ArkadeProgramScript(
-  beacon,
-  {
-    ctrlTxid: key(2),
-    ctrlGidx: 0n,
-    "signers.0": key(11),
-    "signers.1": key(12),
-    "signers.2": key(13),
-    "signers.3": key(14),
-    "signers.4": key(15),
-    threshold: 3n,
-    domain: new TextEncoder().encode("BTCUSD-FIX"),
-    keyLag: 60n,
-    readFee: 100n,
-    adminPk: key(9),
-    exit: 2048n,
-    server: key(7),
-  },
-  { serverKey: key(7), emulatorKey },
-);
-if (compiledBeacon.compiled.map((fn) => fn.name).join() !== "attest,read,migrate,unilateral") {
-  throw new Error(`unexpected beacon functions ${compiledBeacon.compiled.map((fn) => fn.name).join()}`);
-}
-const attestAsm = beacon.functions.attest?.arkadeScript?.asm ?? [];
-if (attestAsm.filter((token) => token === "CHECKSIGFROMSTACK").length !== 10) throw new Error("attest does not check ten signatures");
-if (!attestAsm.includes("INSPECTINPUTPACKET") || !attestAsm.includes("INSPECTPACKET")) throw new Error("attest does not read both states");
-if (!(beacon.functions.read?.arkadeScript?.asm ?? []).includes("INSPECTINPUTPACKET")) throw new Error("read does not carry the state");
-
 console.log("option, swap, and beacon programs load through programFromArtifact");

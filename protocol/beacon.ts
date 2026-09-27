@@ -2,13 +2,13 @@ import { createHash } from "node:crypto";
 
 import { arkade, asset, Extension, Transaction, UnknownPacket } from "@arkade-os/sdk";
 
-import { beaconIdOf, scriptTxid, type BeaconId } from "./beacon-id.ts";
+import { beaconIdOf, type BeaconId } from "./beacon-id.ts";
 import { DUST_SATS, EXIT } from "./constants.ts";
 import { addressOf } from "./contracts.ts";
 import { bytesToHex, xOnly } from "./hex.ts";
 import { beaconProgram } from "./programs.ts";
 
-export { beaconIdOf, scriptTxid, type BeaconId };
+export { beaconIdOf, type BeaconId };
 
 /**
  * AttestationBeacon state and bindings. Layout and digests follow
@@ -104,22 +104,9 @@ export function nextState(prev: Uint8Array, key: bigint, value: Uint8Array): Uin
   });
 }
 
-/** The value of the newest slot whose key matches, as the vault reads it. */
-export function findFixing(stateBytes: Uint8Array, key: bigint): Uint8Array | undefined {
-  return decodeState(stateBytes).slots.find((slot) => slot.key === key)?.value;
-}
-
 /** Slot value `num2bin(cents, 32)`. The vault reads the first 8 bytes. */
 export function priceValue(cents: bigint): Uint8Array {
   return num2bin(cents, 32);
-}
-
-export function priceOf(value: Uint8Array): bigint {
-  return bin2num(value.subarray(0, 8));
-}
-
-function idBytes(id: BeaconId): Uint8Array {
-  return concat(id.txid, num2bin(id.gidx, 4));
 }
 
 /** Operator digest: `sha256(ctrlTxid || nextState)`. `ctrlTxid` is the reversed display txid. */
@@ -127,10 +114,6 @@ export function publishDigest(ctrlTxid: Uint8Array, next: Uint8Array): Uint8Arra
   if (ctrlTxid.length !== 32) throw new Error("ctrlTxid must be 32 bytes");
   if (next.length !== STATE_SIZE) throw new Error("next state size");
   return sha256(ctrlTxid, next);
-}
-
-export function migrateDigest(domain: Uint8Array, id: BeaconId, round: bigint, next: Uint8Array): Uint8Array {
-  return sha256(domain, new TextEncoder().encode("migrate"), idBytes(id), num2bin(round, 8), next);
 }
 
 export type BeaconArgs = {
@@ -161,9 +144,10 @@ function checkCommittee(signers: readonly Uint8Array[], threshold: bigint) {
   if (seen.size !== SIGNER_COUNT) throw new Error("duplicate signer");
 }
 
-export function beaconArgs(input: BeaconArgs): Record<string, bigint | Uint8Array> {
+export function bindBeacon(input: BeaconArgs): Bound {
   checkCommittee(input.signers, input.threshold);
   if (input.emulatorKey.length !== 33) throw new Error("emulator key must be 33 bytes");
+  const serverKey = xOnly(input.serverKey);
   const args: Record<string, bigint | Uint8Array> = {
     ctrlTxid: input.id.txid,
     ctrlGidx: input.id.gidx,
@@ -173,17 +157,11 @@ export function beaconArgs(input: BeaconArgs): Record<string, bigint | Uint8Arra
     readFee: input.readFee,
     adminPk: xOnly(input.adminPk),
     exit: input.exit ?? EXIT,
-    server: xOnly(input.serverKey),
+    server: serverKey,
   };
   input.signers.forEach((key, index) => {
     args[`signers.${index}`] = xOnly(key);
   });
-  return args;
-}
-
-export function bindBeacon(input: BeaconArgs): Bound {
-  const args = beaconArgs(input);
-  const serverKey = xOnly(input.serverKey);
   const script = new arkade.ArkadeProgramScript(beaconProgram(), args, {
     serverKey,
     emulatorKey: input.emulatorKey,
@@ -258,70 +236,6 @@ export function genesisOutputs(
   ]).txOut();
   outputs.push({ script: extension.script!, amount: BigInt(extension.amount ?? 0n) });
   return outputs;
-}
-
-export type GenesisCheck = {
-  issueTx: Transaction;
-  deployTx: Transaction;
-  checkpoint: Transaction;
-} & Omit<BeaconArgs, "id">;
-
-function spentOutpoint(tx: Transaction, index: number): { txid: string; vout: number } {
-  const input = tx.getInput(index);
-  if (!input?.txid || input.index == null) throw new Error("deploy does not spend the issuance");
-  const txid = input.txid instanceof Uint8Array ? bytesToHex(input.txid) : String(input.txid);
-  return { txid, vout: input.index };
-}
-
-/**
- * Checks a consumer runs once before committing to a beacon asset id.
- * Issuance is uncontrolled, supply 1, group 0. Deploy spends the checkpoint
- * that spends that issuance, pays the recomputed beacon script, and carries
- * the genesis state with only that one unit on the beacon output.
- */
-export function verifyGenesis(genesis: GenesisCheck): asset.AssetId {
-  const extension = Extension.fromTx(genesis.issueTx);
-  const packet = extension.getAssetPacket();
-  if (!packet) throw new Error("issuance has no asset packet");
-  const group = packet.groups[0];
-  if (!group) throw new Error("genesis has no asset group 0");
-  if (!group.isIssuance()) throw new Error("group is not an issuance");
-  if (group.controlAsset) throw new Error("control asset");
-  if (group.inputs.length !== 0) throw new Error("issuance has inputs");
-  if (group.outputs.length !== 1 || BigInt(group.outputs[0]!.amount) !== 1n) throw new Error("supply is not 1");
-
-  const id = asset.AssetId.create(genesis.issueTx.id, 0);
-  if (genesis.deployTx.id === genesis.issueTx.id) throw new Error("issuance tx passed as deploy");
-  const deploySpends = spentOutpoint(genesis.deployTx, 0);
-  const checkpointSpends = spentOutpoint(genesis.checkpoint, 0);
-  if (
-    deploySpends.txid !== genesis.checkpoint.id ||
-    deploySpends.vout !== 0 ||
-    checkpointSpends.txid !== genesis.issueTx.id ||
-    checkpointSpends.vout !== 0
-  ) {
-    throw new Error("deploy does not spend the issuance");
-  }
-
-  const bound = bindBeacon({ ...genesis, id: beaconIdOf(id) });
-  const paid = genesis.deployTx.getOutput(0);
-  if (!paid?.script || bytesToHex(paid.script) !== bytesToHex(bound.pkScript)) throw new Error("wrong script");
-
-  const deployExt = Extension.fromTx(genesis.deployTx);
-  const state = deployExt.getPacketByType(STATE_TYPE);
-  if (!state || bytesToHex(state.serialize()) !== bytesToHex(genesisState())) throw new Error("non-genesis state");
-  const deployPacket = deployExt.getAssetPacket();
-  if (!deployPacket) throw new Error("deploy has no asset packet");
-  let onBeacon = 0n;
-  for (const deployGroup of deployPacket.groups) {
-    for (const output of deployGroup.outputs) {
-      if (output.vout !== 0) continue;
-      if (deployGroup.assetId?.toString() !== id.toString()) throw new Error("extra asset");
-      onBeacon += BigInt(output.amount);
-    }
-  }
-  if (onBeacon !== 1n) throw new Error("extra asset");
-  return id;
 }
 
 export function statePacketOf(tx: Transaction): Uint8Array {

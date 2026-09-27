@@ -91,7 +91,7 @@ function anchorIndex(tx: Transaction): number {
 }
 
 /** Insert the extension ahead of the anchor, as the SDK's builder does. */
-export function attachExtension(tx: Transaction, packets: ExtensionPacket[]) {
+function attachExtension(tx: Transaction, packets: ExtensionPacket[]) {
   const out = Extension.create(packets).txOut();
   const anchor = anchorIndex(tx);
   const last = tx.getOutput(anchor);
@@ -214,27 +214,6 @@ export function buildAttest(input: {
     [{ script: input.beacon.script, fn: "attest", callArgs, coin: input.beacon.coin }],
     [{ script: input.beacon.script.pkScript, amount: BigInt(input.beacon.coin.value) }],
     [unitTransfer(input.beacon.id, 0, 0), statePacket(input.next)],
-    input.checkpoint,
-  );
-}
-
-/** Move the unit to a new program: the beacon at input 0, `next` at output 0, state unchanged. */
-export function buildMigrate(input: {
-  beacon: BeaconCoin;
-  next: Uint8Array;
-  nextPkScript: Uint8Array;
-  sigs: readonly Uint8Array[];
-  checkpoint: CSVMultisigTapscript.Type;
-}): Built {
-  if (input.sigs.length !== 5) throw new Error("five signature slots");
-  const callArgs: Record<string, bigint | Uint8Array> = { next: input.next };
-  input.sigs.forEach((sig, i) => {
-    callArgs[`sigs.${i}`] = sig;
-  });
-  return build(
-    [{ script: input.beacon.script, fn: "migrate", callArgs, coin: input.beacon.coin }],
-    [{ script: input.nextPkScript, amount: BigInt(input.beacon.coin.value) }],
-    [unitTransfer(input.beacon.id, 0, 0), statePacket(input.beacon.state)],
     input.checkpoint,
   );
 }
