@@ -19,7 +19,7 @@ import { createOracle, type HeldCoin, type OracleDeps, type OracleWallet } from 
 
 const CHECKPOINT_HEX = "03080040b27520dfcaec558c7e78cf3e38b898ba8a43cfb5727266bae32c5c5b3aeb32c558aa0bac";
 
-spawnSync(process.execPath, ["oracle/build.mjs"], { cwd: path.resolve(import.meta.dirname, ".."), stdio: "inherit" });
+spawnSync("pnpm", ["-s", "oracle:page"], { cwd: path.resolve(import.meta.dirname, ".."), stdio: "inherit" });
 
 function secret(byte: number): Uint8Array {
   return Uint8Array.from(hex.decode(byte.toString(16).padStart(2, "0").repeat(32)));

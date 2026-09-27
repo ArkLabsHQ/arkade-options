@@ -56,7 +56,7 @@ button {
   color: #8d1d1d;
 }
 
-code, .mono {
+.mono {
   font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
   font-size: 0.85rem;
   overflow-wrap: anywhere;

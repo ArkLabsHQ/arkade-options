@@ -10,7 +10,7 @@ COPY app/settle-math.js app/settle-math.js
 COPY contracts contracts
 COPY protocol protocol
 COPY oracle oracle
-RUN node oracle/build.mjs
+RUN pnpm oracle:page
 ENV DATA_DIR=/data HOST=0.0.0.0
 VOLUME /data
 EXPOSE 8789
