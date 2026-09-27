@@ -3,6 +3,7 @@ import { arkade, DefaultVtxo, type ArkTxInput } from "@arkade-os/sdk";
 import { DUST_SATS } from "../protocol/constants.ts";
 import { bindContracts, type Terms } from "../protocol/contracts.ts";
 import { bytesToHex } from "../protocol/hex.ts";
+import { classifyIntent, psbtView } from "../protocol/intent-state.ts";
 import { intentProgram } from "../protocol/programs.ts";
 import type { QuoteRow } from "./book.ts";
 
@@ -37,7 +38,8 @@ export type FillResult = "waiting" | "filled" | "expired" | "short";
 
 /**
  * Happy path. Collateral on the intent is finalized: premium to the writer, collateral to the vault.
- * No coin by the deadline expires the quote. The seller cancels that coin.
+ * No live coin: recover a prior finalize from spent history before expiring past the deadline.
+ * A live coin past the wall-clock deadline expires; the seller cancels that coin.
  */
 export async function fillQuote(opts: {
   client: Client;
@@ -54,7 +56,16 @@ export async function fillQuote(opts: {
   const collateral = BigInt(opts.row.collateral);
   const premium = BigInt(opts.row.premium);
   const coin = coins.find((item) => BigInt(item.value) >= collateral);
-  if (!coin) return { result: opts.now >= opts.row.deadline ? "expired" : "waiting" };
+  if (!coin) {
+    const recovered = await recoverFilled(opts.client, bound.writerPkScript, bytesToHex(intent.pkScript), {
+      collateral,
+      premium,
+      now: opts.now,
+      deadline: opts.row.deadline,
+    });
+    if (recovered) return { result: "filled", txid: recovered };
+    return { result: opts.now >= opts.row.deadline ? "expired" : "waiting" };
+  }
   if (opts.now >= opts.row.deadline) return { result: "expired" };
 
   const float = opts.float ?? await deskFloat(opts.client, opts.deskScript);
@@ -76,6 +87,47 @@ export async function fillQuote(opts: {
   if (surplus > 0n) spend.change(opts.deskScript.pkScript);
   const sent = await spend.send();
   return { result: "filled", txid: sent.txid, spent: picked };
+}
+
+/** If finalize already landed but the book never saved, classify the spend as filled. */
+async function recoverFilled(
+  client: Client,
+  writerPkScript: Uint8Array,
+  intentScriptHex: string,
+  terms: { collateral: bigint; premium: bigint; now: number; deadline: number },
+): Promise<string | undefined> {
+  if (!client.indexer) return undefined;
+  const intentScript = intentScriptHex.toLowerCase();
+  const spent = await client.indexer.getVtxos({ scripts: [intentScript], spentOnly: true });
+  const coins = (spent.vtxos ?? []).map((coin) => ({
+    value: BigInt(coin.value),
+    spent: true,
+    spentBy: coin.arkTxId || coin.spentBy || "",
+  })).filter((coin) => coin.spentBy);
+  const ids = [...new Set(coins.map((coin) => coin.spentBy))];
+  if (!ids.length) return undefined;
+  const page = await client.indexer.getVirtualTxs(ids);
+  const spends: Record<string, ReturnType<typeof psbtView>["outputs"]> = {};
+  ids.forEach((id, index) => {
+    const raw = page.txs[index];
+    if (!raw) return;
+    try {
+      spends[id] = psbtView(raw).outputs;
+    } catch {
+      // Checkpoint ids are not payouts.
+    }
+  });
+  const seen = classifyIntent({
+    coins,
+    spends,
+    collateral: terms.collateral,
+    premium: terms.premium,
+    writerScript: bytesToHex(writerPkScript),
+    now: terms.now,
+    deadline: terms.deadline,
+  });
+  if (seen.phase !== "filled") return undefined;
+  return coins.find((coin) => spends[coin.spentBy])?.spentBy;
 }
 
 async function deskFloat(client: Client, deskScript: DefaultVtxo.Script): Promise<Coin[]> {

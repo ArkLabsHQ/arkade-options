@@ -1202,8 +1202,8 @@ async function loadSpot() {
       // try the next source, then the labeled fallback
     }
   }
-  state.spotCents = 10_000_000n;
-  state.spotSource = "Simulated spot";
+  state.spotCents = null;
+  state.spotSource = "Spot unavailable";
 }
 
 function loadArtifact() {
@@ -1254,7 +1254,7 @@ bind();
 window.addEventListener("hashchange", showFromHash);
 loadSpot().then(() => {
   $("spot-source").textContent = state.spotSource;
-  $("spot-px").textContent = fmtUsdFromCents(state.spotCents);
+  $("spot-px").textContent = state.spotCents == null ? "—" : fmtUsdFromCents(state.spotCents);
   adoptQuote();
   if (state.view === "sell") onTermsChanged();
   renderBlotter();

@@ -234,7 +234,7 @@ async function onRequest(message: RfqRequest, from: string) {
     }
     sats = priced.sats;
   }
-  const dust = premiumRefusal(sats);
+  const dust = premiumRefusal(sats, BigInt(message.amount));
   if (dust) {
     await refuse(from, message.rfq_id, dust);
     return;
@@ -339,12 +339,19 @@ function tracked(rfqId: string): boolean {
   return false;
 }
 
+function forgetScript(rfqId: string) {
+  for (const [script, id] of quoteByScript) {
+    if (id === rfqId) quoteByScript.delete(script);
+  }
+}
+
 async function track(row: QuoteRow) {
-  if (tracked(row.rfqId)) return;
   const bound = bindContracts(termsFor(row));
   const intent = client.contract(intentProgram(), bound.intent);
+  const script = bytesToHex(intent.pkScript);
+  if (quoteByScript.get(script) === row.rfqId) return;
   await intent.register({ label: row.rfqId });
-  quoteByScript.set(bytesToHex(intent.pkScript), row.rfqId);
+  quoteByScript.set(script, row.rfqId);
 }
 
 function queueFill(rfqId: string) {
@@ -378,10 +385,12 @@ async function pump() {
           for (const coin of outcome.spent ?? []) deskCoins.delete(`${coin.txid}:${coin.vout}`);
           recount();
           book.mark(row.rfqId, "filled", outcome.txid);
+          forgetScript(row.rfqId);
           await book.save();
           console.log("filled", row.rfqId, outcome.txid ?? "");
         } else if (outcome.result === "expired") {
           book.mark(row.rfqId, "expired");
+          forgetScript(row.rfqId);
           await book.save();
         } else if (outcome.result === "short") {
           console.error("float short", row.rfqId);
@@ -416,10 +425,9 @@ async function housekeeping() {
           console.error("register", row.rfqId, err instanceof Error ? err.message : err);
           continue;
         }
-        queueFill(row.rfqId);
-        continue;
       }
-      if (row.status === "open" && now >= row.deadline) queueFill(row.rfqId);
+      // Poll unsettled quotes: EventSource can miss a coin; recovery needs another look after a crash.
+      queueFill(row.rfqId);
     }
   } finally {
     polling = false;
@@ -437,7 +445,7 @@ contractManager.onContractEvent((event) => {
   if (event.type !== "vtxo_received" && event.type !== "vtxo_spent") return;
   if (event.contractScript === deskScriptHex) {
     rememberDesk(event);
-    if (event.type === "vtxo_received") queueOpenFills();
+    queueOpenFills();
     return;
   }
   const rfqId = quoteByScript.get(event.contractScript);

@@ -54,3 +54,20 @@ test("exposure counts open quotes and unexpired fills, and the cap refuses the n
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("one rfqId stays one row: live duplicates refuse, dead ones are replaced", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "arkade-book-"));
+  try {
+    const book = await Book.open(dir);
+    const caps = { perStrike: 100_000_000n, total: 100_000_000n };
+    assert.equal(book.hold(row(), caps, 1_200), true);
+    assert.equal(book.hold(row({ premium: "60000" }), caps, 1_200), false);
+    assert.equal(book.list().length, 1);
+    book.mark("aa".repeat(32), "expired");
+    assert.equal(book.hold(row({ premium: "60000", deadline: 2_000 }), caps, 1_200), true);
+    assert.equal(book.list().length, 1);
+    assert.equal(book.get("aa".repeat(32))?.premium, "60000");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

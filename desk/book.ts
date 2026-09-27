@@ -36,6 +36,16 @@ type FileShape = {
   quotes: QuoteRow[];
 };
 
+/** Still binding float or vault exposure for this rfqId. */
+export function liveQuote(row: QuoteRow, now: number): boolean {
+  if (row.status === "open") return row.deadline > now;
+  if (row.status === "filled") {
+    if (!row.fillTxid) return true;
+    return row.expiry > now;
+  }
+  return false;
+}
+
 export class Book {
   private rows: QuoteRow[] = [];
   private readonly file: string;
@@ -78,8 +88,11 @@ export class Book {
     return { total, byStrike };
   }
 
-  /** Insert an open quote when the caps still hold. The check and the insert are one step. */
+  /** One rfqId, one row. Refuses while a same-id quote is still live; replaces dead ones. */
   hold(row: QuoteRow, caps: Caps, now: number): boolean {
+    const prior = this.rows.find((item) => item.rfqId === row.rfqId);
+    if (prior && liveQuote(prior, now)) return false;
+    if (prior) this.rows = this.rows.filter((item) => item.rfqId !== row.rfqId);
     const amount = BigInt(row.collateral);
     const { total, byStrike } = this.exposure(now);
     const strike = (byStrike.get(row.strike) ?? 0n) + amount;
