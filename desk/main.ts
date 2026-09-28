@@ -40,6 +40,7 @@ import { premiumSats } from "../protocol/pricing.ts";
 import { openSqliteStorage } from "../protocol/sqlite-storage.ts";
 import { Book, hasBeacon, type QuoteRow } from "./book.ts";
 import { countFill, countQuote, emptyHour, hourLine, msUntilNextHour } from "./digest.ts";
+import { finalizeDeskSpends } from "./finalize.ts";
 import { fillQuote } from "./fill.ts";
 import { spotCents } from "./spot.ts";
 
@@ -98,6 +99,7 @@ let hour = emptyHour();
 const storage = await openSqliteStorage(dataDir);
 const beaconDisplay = beaconFromEnv();
 const indexer = new RestIndexerProvider(arkUrl);
+const ark = new RestArkProvider(arkUrl);
 if (typeof EventSource === "undefined") {
   throw new Error("Contract events need Node's EventSource. Start the desk with --experimental-eventsource.");
 }
@@ -108,7 +110,7 @@ const contractManager = await ContractManager.create({
   vtxoSyncMaxAgeMs: 60_000,
 });
 const client = await arkade.Arkade.connect({
-  arkade: new RestArkProvider(arkUrl),
+  arkade: ark,
   indexer,
   emulator: new RestEmulatorProvider(emulatorUrl),
   identity,
@@ -325,12 +327,35 @@ const deskScriptHex = bytesToHex(deskScript.pkScript);
 // ponytail: script→quote only. Scan for the reverse; add quote→script if the open book gets large.
 const quoteByScript = new Map<string, string>();
 const deskCoins = new Map<string, FloatCoin>();
+const shortLogged = new Set<string>();
 const queued = new Set<string>();
 // ponytail: one fill at a time. Per-quote locks if two quotes must settle together.
 let filling = false;
 
 function recount() {
   balance = [...deskCoins.values()].reduce((sum, coin) => sum + BigInt(coin.value), 0n);
+  if (balance > 0n) shortLogged.clear();
+}
+
+/** Finish spends the emulator submitted, then trust the indexer for the float. */
+async function refreshFloat() {
+  if (!client.indexer) return;
+  try {
+    const done = await finalizeDeskSpends({ ark, indexer, identity, deskScript });
+    if (done.length) console.log("finalized", done.join(","));
+  } catch (err) {
+    console.error("finalize", err instanceof Error ? err.message : err);
+  }
+  try {
+    const page = await indexer.getVtxos({ scripts: [deskScriptHex], spendableOnly: true });
+    deskCoins.clear();
+    for (const coin of page.vtxos ?? []) {
+      deskCoins.set(`${coin.txid}:${coin.vout}`, { txid: coin.txid, vout: coin.vout, value: coin.value });
+    }
+    recount();
+  } catch (err) {
+    console.error("float", err instanceof Error ? err.message : err);
+  }
 }
 
 function rememberDesk(event: { type: string; vtxos: FloatCoin[] }) {
@@ -388,6 +413,7 @@ async function pump() {
           row,
           now,
           float: [...deskCoins.values()],
+          ark,
         });
         if (outcome.result === "filled") {
           const fresh = row.status !== "filled";
@@ -405,12 +431,16 @@ async function pump() {
           }
           if (fresh) countFill(hour, BigInt(row.premium), BigInt(row.collateral));
           console.log("filled", row.rfqId, outcome.txid ?? "");
+          await refreshFloat();
         } else if (outcome.result === "expired") {
           book.mark(row.rfqId, "expired");
           forgetScript(row.rfqId);
           await book.save();
         } else if (outcome.result === "short") {
-          console.error("float short", row.rfqId);
+          if (!shortLogged.has(row.rfqId)) {
+            shortLogged.add(row.rfqId);
+            console.error("float short", row.rfqId, "have", balance.toString(), "need", row.premium);
+          }
         }
       } catch (err) {
         console.error("fill", row.rfqId, err instanceof Error ? err.message : err);
@@ -426,6 +456,7 @@ async function housekeeping() {
   if (polling) return;
   polling = true;
   try {
+    if (!filling) await refreshFloat();
     try {
       spot = await spotCents();
     } catch (err) {
@@ -477,6 +508,7 @@ contractManager.onContractEvent((event) => {
   const rfqId = quoteByScript.get(event.contractScript);
   if (rfqId) queueFill(rfqId);
 });
+await refreshFloat();
 await contractManager.watchScript(deskScriptHex, { label: "desk" });
 
 function revision(): string {
