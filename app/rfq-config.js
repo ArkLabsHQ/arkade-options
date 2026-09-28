@@ -9,6 +9,8 @@ export const RELAYS = ["wss://nostr.arkade.sh"];
  * Temporary Mutinynet desk. Its pubkey is `GET /` on
  * https://arkadeoptions-desk-jxdh3j-37969b-138-199-218-130.traefik.me/
  */
+export const DESK_STATUS = "https://arkadeoptions-desk-jxdh3j-37969b-138-199-218-130.traefik.me/status";
+
 export const PINNED_DESKS = [
   {
     name: "Mutinynet",

@@ -122,6 +122,8 @@ export type BeaconArgs = {
   threshold: bigint;
   domain: Uint8Array;
   keyLag: bigint;
+  /** Sats a read adds to the beacon. Zero is a free read. */
+  readFee: bigint;
   /** Continued output must be worth at least this many sats, and this must be above 300. */
   minValue: bigint;
   adminPk: Uint8Array;
@@ -156,6 +158,7 @@ export function bindBeacon(input: BeaconArgs): Bound {
     threshold: input.threshold,
     domain: input.domain,
     keyLag: input.keyLag,
+    readFee: input.readFee,
     minValue: input.minValue,
     adminPk: xOnly(input.adminPk),
     exit: input.exit ?? EXIT,

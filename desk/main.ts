@@ -514,6 +514,7 @@ function statusBody() {
     quotes: book.list().map((row) => ({
       rfqId: row.rfqId,
       status: row.status,
+      kind: row.kind,
       collateral: row.collateral,
       premium: row.premium,
       strike: row.strike,
@@ -533,7 +534,10 @@ const server = http.createServer((req, res) => {
     res.end(JSON.stringify({ error: "not found" }));
     return;
   }
-  res.writeHead(200, { "content-type": "application/json" });
+  res.writeHead(200, {
+    "content-type": "application/json",
+    "access-control-allow-origin": "*",
+  });
   res.end(statusBody());
 });
 

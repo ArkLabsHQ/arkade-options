@@ -90,13 +90,16 @@ Desk logs: one line per UTC hour, `hour N quotes, N filled, N premium paid, N co
 | `threshold` | How many of the five committee keys must sign a `migrate`. Attest is separate: each of the three price slices needs three distinct signers. |
 | `domain` | Hex of the ASCII string `BTCUSD-FIX`. It is mixed into the migrate signature so a signature for this beacon cannot authorize a move of another one. Price prints use `BTCUSD`, not this string. |
 | `keyLag` | Seconds after the expiry key before `attest` is allowed. `60` means a fixing cannot be published until the close window has ended. |
-| `readFee` | On this deployed coin only: 100 sats added to the beacon on every `read`. The contract in this repo no longer has this field. |
+| `readFee` | Sats added to the beacon on every `read`. This testnet uses `0`. The deployed coin still has `100`. |
+| `minValue` | Smallest continued value. Must be above 300. The service uses 330. The deployed coin does not have this field. |
 | `adminPk` | X-only pubkey of `ORACLE_KEY`. The only key that may write a fixing. It signs `sha256(ctrlTxid \|\| nextPacket)`. |
 | `exit` | Seconds the admin must wait before a unilateral exit of the beacon coin to Bitcoin. `2048` is Mutinynet's `unilateralExitDelay`. |
 
-The coin at `76ba2970…da89` was deployed with `readFee` 100. A settlement of that coin still attaches 100 sats, and those sats stay on the beacon. They are not paid to the admin wallet.
+`readFee` is the sats a read adds to the beacon coin. It stays on the beacon. It is not paid to the admin. This testnet sets it to `0`, so a read is free. A later beacon can set it above zero.
 
-The contract in this repo replaced that field with `minValue`. A read copies the price packet and adds nothing. Output 0 must be worth at least the input and at least `minValue`, and `minValue` must be above the 300-sat subdust line. The service sets it to 330, the same as the beacon coin. That script is a different address. Publishing or settling against `76ba2970…da89` with this build will not match the coin. Issue and deploy a new beacon, then point the desk at the new `issueTxid`, before using it.
+`minValue` is the smallest the continued coin may be, and it must be above the 300-sat subdust line. The service sets it to 330.
+
+The coin at `76ba2970…da89` was deployed with `readFee` 100 and no `minValue`. This build is a different script. Do not point the live desk at it until a new beacon is issued and deployed.
 
 The status object omits `ctrlGidx` (it is `0`, the `0000` suffix on `assetId`) and the five signers (they are the top-level `pubkeys`).
 

@@ -14,7 +14,7 @@ import { artifactLine } from "./src/program.ts";
 import { requestQuotes } from "./src/rfq.ts";
 import { deribitPremium, fetchSurface } from "../protocol/deribit.ts";
 import { bestQuote } from "./quote.js";
-import { PINNED_DESKS, RELAYS } from "./rfq-config.js";
+import { DESK_STATUS, PINNED_DESKS, RELAYS } from "./rfq-config.js";
 import { DUST, Q_MAX, Q_MIN, writerPayoff } from "./settle-math.js";
 import { readIntent, watchIntents } from "./src/watch.ts";
 
@@ -558,6 +558,8 @@ function renderSell() {
   $("ticket-kicker").textContent = frozen ? statusLabel(position) : "Payout now";
   const refund = $("refund");
   if (refund) refund.hidden = !(position && position.refundable && position.status === "expired");
+  const abort = $("abort");
+  if (abort) abort.hidden = !(position && position.status === "locking");
   const track = $("steps");
   if (track) {
     track.replaceChildren();
@@ -641,7 +643,7 @@ function renderBlotter() {
     title.textContent = position.kind === 0 ? "Covered call" : "Limited put";
     const meta = document.createElement("span");
     meta.className = "tag";
-    meta.textContent = `${fmtBtc(position.collateral)} BTC · $${fmtUsdFromCents(position.strike)}`;
+    meta.textContent = `${fmtBtc(position.collateral)} BTC · $${fmtUsdFromCents(position.strike)} · ${fmtWhen(position.expiry)}`;
     main.append(title, meta);
     const status = document.createElement("span");
     status.className = "position-status";
@@ -664,7 +666,7 @@ function detail(position) {
   const pay = document.createElement("p");
   pay.className = "premium-meta";
   const apy = position.apyFrozen ? position.apy : annualized(position.premiumSats, position.collateral, tenorDays(position));
-  pay.textContent = `Pays ${fmtBtc(position.premiumSats)} BTC · ${fmtApy(apy)}`;
+  pay.textContent = `Pays ${fmtBtc(position.premiumSats)} BTC · ${fmtApy(apy)} · expires ${fmtWhen(position.expiry)}`;
   box.append(lead, pay);
   if (position.status === "locking" && position.marketSats && position.marketSats !== position.premiumSats) {
     const now = document.createElement("p");
@@ -701,6 +703,16 @@ function detail(position) {
     if (!host.parentElement) chart.append(host);
   });
   box.append(chart);
+  if (position.status === "locking") {
+    const cancel = document.createElement("button");
+    cancel.type = "button";
+    cancel.className = "copy-uri";
+    cancel.textContent = "Cancel trade";
+    cancel.addEventListener("click", () => {
+      void abortLock(position, cancel);
+    });
+    box.append(cancel);
+  }
   if (position.refundable && position.status === "expired") {
     const cancel = document.createElement("button");
     cancel.type = "button";
@@ -968,6 +980,94 @@ function disconnect() {
   $("account-key").focus();
 }
 
+function tenorFromExpiry(expiry) {
+  const span = Number(expiry) - Math.floor(Date.now() / 1000);
+  if (span > 60 * 86400) return 90;
+  if (span > 14 * 86400) return 30;
+  return 7;
+}
+
+/** Filled trades the page never stored, recovered when this address is the writer. */
+async function adoptDeskPositions() {
+  if (!state.address || !DESK_STATUS) return;
+  let body;
+  try {
+    const res = await fetch(DESK_STATUS);
+    if (!res.ok) return;
+    body = await res.json();
+  } catch {
+    return;
+  }
+  const holder = body.pubkey;
+  const beaconTxid = body.beaconTxid;
+  if (!holder || !/^[0-9a-f]{64}$/.test(beaconTxid || "")) return;
+  const known = new Set(state.positions.map((position) => position.address));
+  const quotes = (body.quotes || []).filter((quote) => quote.status === "filled" && quote.intentAddress && !known.has(quote.intentAddress));
+  let changed = false;
+  for (const quote of quotes) {
+    const kinds = quote.kind === 0 || quote.kind === 1 ? [quote.kind] : [0, 1];
+    for (const kind of kinds) {
+      try {
+        const deposit = await depositAddress({
+          kind,
+          strike: BigInt(quote.strike),
+          collateral: BigInt(quote.collateral),
+          premium: BigInt(quote.premium),
+          expiry: BigInt(quote.expiry),
+          deadline: BigInt(quote.deadline),
+          writerAddress: state.address,
+          holderPkHex: holder,
+          beaconTxidHex: beaconTxid,
+          beaconGidx: body.beaconGidx ?? 0,
+        });
+        if (deposit.address !== quote.intentAddress) continue;
+        const expiry = BigInt(quote.expiry);
+        const collateral = BigInt(quote.collateral);
+        const premiumSats = BigInt(quote.premium);
+        const days = tenorFromExpiry(expiry);
+        state.positions.unshift({
+          id: crypto.randomUUID(),
+          side: 0,
+          kind,
+          strike: BigInt(quote.strike),
+          expiry,
+          collateral,
+          premiumSats,
+          premiumUsd: null,
+          solver: "Mutinynet",
+          status: "filled",
+          deadline: quote.deadline,
+          address: deposit.address,
+          holderPkHex: holder,
+          beaconTxid,
+          beaconGidx: body.beaconGidx ?? 0,
+          exit: deposit.exit,
+          vaultAddress: deposit.vaultAddress,
+          writerAddress: state.address,
+          payoutAddress: state.address,
+          days,
+          createdAt: quote.deadline ? Number(quote.deadline) - 180 : Math.floor(Date.now() / 1000),
+          apy: annualized(premiumSats, collateral, days),
+          uri: deposit.uri,
+          apyFrozen: true,
+          marketSats: null,
+          marketApy: null,
+        });
+        known.add(deposit.address);
+        changed = true;
+        break;
+      } catch {
+        // Another writer's quote does not derive this address.
+      }
+    }
+  }
+  if (!changed) return;
+  persist();
+  renderBlotter();
+  renderSell();
+  startWatch();
+}
+
 async function hydrateMissing() {
   let changed = false;
   for (const position of state.positions) {
@@ -1004,6 +1104,33 @@ async function fundRequest(position) {
   const hex = position.writerHex || legacyWriterHex();
   if (!hex) throw new Error("This position has no address in this browser.");
   return { ...base, writerHex: hex };
+}
+
+async function abortLock(position, button) {
+  if (!position || position.status !== "locking") return;
+  button.disabled = true;
+  const previous = button.textContent;
+  button.textContent = "Checking";
+  try {
+    const phase = await readIntent(watchRow(position));
+    if (phase.phase !== "open") {
+      applyChain(position, phase);
+      renderSell();
+      renderBlotter();
+      return;
+    }
+  } catch (err) {
+    button.disabled = false;
+    button.textContent = err instanceof Error ? err.message : "Could not check the deposit";
+    return;
+  }
+  state.positions = state.positions.filter((item) => item.id !== position.id);
+  if (state.selected === position.id) state.selected = null;
+  persist();
+  button.disabled = false;
+  button.textContent = previous;
+  renderSell();
+  renderBlotter();
 }
 
 async function refund(position, button) {
@@ -1184,6 +1311,11 @@ function bind() {
   listen("confirm", "click", () => {
     void confirm();
   });
+  listen("abort", "click", () => {
+    const deposit = shownDeposit();
+    const position = deposit && state.positions.find((item) => item.address === deposit.address);
+    if (position) void abortLock(position, $("abort"));
+  });
   listen("refund", "click", () => {
     const deposit = shownDeposit();
     const position = deposit && state.positions.find((item) => item.address === deposit.address);
@@ -1289,3 +1421,4 @@ setInterval(() => {
   void refreshPositionMarkets();
 }, REFRESH_MS);
 void hydrateMissing();
+void adoptDeskPositions();

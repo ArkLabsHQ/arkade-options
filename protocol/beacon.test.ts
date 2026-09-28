@@ -38,6 +38,7 @@ const FIXTURE = {
   expiry: 1_700_000_000n,
   price: 10_000_000n,
   beaconSats: 330n,
+  readFee: 0n,
   minValue: 330n,
   keyLag: 60n,
   threshold: 3n,
@@ -80,6 +81,7 @@ async function buildFixture() {
     threshold: FIXTURE.threshold,
     domain: FIXTURE.domain,
     keyLag: FIXTURE.keyLag,
+    readFee: FIXTURE.readFee,
     minValue: FIXTURE.minValue,
     adminPk,
     serverKey,
@@ -138,6 +140,7 @@ async function buildFixture() {
   const settle = buildSettle({
     vault: { script: vault.script, coin: coinOf(vaultTx, FIXTURE.collateral) },
     beacon: { script: beacon.script, coin: coinOf(beaconTx, FIXTURE.beaconSats), state: fixed, id: assetId },
+    readFee: FIXTURE.readFee,
     payouts: [
       { script: vault.holderPkScript, amount: split.holder },
       { script: vault.writerPkScript, amount: split.writer },
@@ -232,6 +235,7 @@ test("bindings are deterministic Mutinynet addresses and refuse a bad committee"
     threshold: 3n,
     domain: FIXTURE.domain,
     keyLag: 60n,
+    readFee: 0n,
     minValue: 330n,
     adminPk: signers[0]!,
     serverKey,

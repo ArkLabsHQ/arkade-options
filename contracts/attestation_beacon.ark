@@ -37,7 +37,7 @@ pragma arkade ^0.1.0;
 // Every cooperative leaf continues the coin at output 0: same script (or
 // `next` for migrate), at least the same value, at least minValue, the asset
 // unit, the packet. minValue must be above the 300-sat subdust line. `read`
-// adds nothing.
+// adds readFee sats. Testnet deploys set readFee to 0.
 
 contract AttestationBeacon(
   bytes32 ctrlTxid,
@@ -46,6 +46,7 @@ contract AttestationBeacon(
   int threshold,
   bytes domain,
   int keyLag,
+  int readFee,
   int minValue,
   pubkey adminPk,
   int exit
@@ -220,6 +221,7 @@ contract AttestationBeacon(
     require(selfIndex == this.activeInputIndex, "self index");
     bytes state = tx.packet(STATE);
     require(state == tx.inputs[selfIndex].packet(STATE), "state carried");
+    require(tx.outputs[0].value >= tx.input.current.value + readFee, "read fee");
     continues(state);
   }
 

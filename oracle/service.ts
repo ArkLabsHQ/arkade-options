@@ -23,6 +23,8 @@ import { loadStore, saveStore, type StoredPrint } from "./store.ts";
 const DOMAIN = new TextEncoder().encode("BTCUSD-FIX");
 const THRESHOLD = 3n;
 const KEY_LAG = 60n;
+// Mutinynet testing does not charge a read. The parameter stays so a later beacon can.
+const READ_FEE = 0n;
 const MIN_VALUE = DUST_SATS;
 // About a year of daily expiries at three prints each. The oldest print of that oracle goes first.
 const PRINTS_PER_ORACLE = 1_000;
@@ -208,6 +210,7 @@ export async function createOracle(deps: OracleDeps) {
       threshold: THRESHOLD,
       domain: DOMAIN,
       keyLag: KEY_LAG,
+      readFee: READ_FEE,
       minValue: MIN_VALUE,
       adminPk,
       exit: EXIT,
@@ -240,6 +243,7 @@ export async function createOracle(deps: OracleDeps) {
         threshold: Number(THRESHOLD),
         domain: bytesToHex(DOMAIN),
         keyLag: Number(KEY_LAG),
+        readFee: Number(READ_FEE),
         minValue: Number(MIN_VALUE),
         adminPk: adminPk ? bytesToHex(adminPk) : null,
         exit: Number(EXIT),

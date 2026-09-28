@@ -11,7 +11,7 @@ type Status = {
   wallet: string | null;
   balance: string | null;
   address: string | null;
-  args: { ctrlTxid: string | null; threshold: number; domain: string; keyLag: number; minValue: number; adminPk: string | null; exit: number };
+  args: { ctrlTxid: string | null; threshold: number; domain: string; keyLag: number; readFee: number; minValue: number; adminPk: string | null; exit: number };
   fixings: unknown[];
   prints: unknown[];
 };
@@ -38,7 +38,7 @@ async function refresh(): Promise<void> {
   const body = (await (await fetch("/api/status")).json()) as Status;
   const { args } = body;
   lines(byId("status"), "p", [
-    `Threshold ${args.threshold}. Key lag ${args.keyLag}. Minimum ${args.minValue}. Exit ${args.exit}.`,
+    `Threshold ${args.threshold}. Key lag ${args.keyLag}. Read fee ${args.readFee}. Minimum ${args.minValue}. Exit ${args.exit}.`,
     `Domain ${args.domain}`,
     `Admin ${args.adminPk ?? "unset"}`,
     `Fund ${body.wallet ?? "unset"}`,
