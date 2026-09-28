@@ -10,7 +10,6 @@ RUN pnpm install --frozen-lockfile --prod
 COPY protocol protocol
 COPY desk desk
 COPY contracts contracts
-COPY app/settle-math.js app/settle-math.js
 ARG GIT_COMMIT=unknown
 RUN printf '%s\n' "$GIT_COMMIT" > /etc/git-commit
 ENV DATA_DIR=/data

@@ -43,15 +43,15 @@ function whole(value: unknown): bigint | null {
   return null;
 }
 
-/** Origin only. A pasted `/api/status` URL still works. */
-export function oracleOrigin(raw: string): string {
+/** Origin only. A pasted `/status` or `/api/status` URL still works. */
+export function serviceOrigin(raw: string): string {
   let url: URL;
   try {
     url = new URL(raw);
   } catch {
-    throw new Error("ORACLE_URL must be an http(s) origin");
+    throw new Error("URL must be an http(s) origin");
   }
-  if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("ORACLE_URL must be an http(s) origin");
+  if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("URL must be an http(s) origin");
   return url.origin;
 }
 
@@ -62,14 +62,16 @@ export async function fetchOracleStatus(origin: string, signal?: AbortSignal): P
 }
 
 /**
- * Accept the `/api/status` body when it is the beacon this desk quoted.
- * `beaconTxid` is the display txid. `gidx` is the identity asset's vout.
+ * Accept a deployed oracle `/api/status` body.
+ * When `beaconTxid` is set, the body must be that identity asset.
  */
-export function parseOracleBeacon(body: unknown, beaconTxid: string, gidx: number): ParsedBeacon {
+export function parseOracleBeacon(body: unknown, beaconTxid?: string, gidx = 0): ParsedBeacon {
   const root = record(body);
   if (!root) return { ok: false, error: "oracle status" };
   const issue = typeof root.issueTxid === "string" ? root.issueTxid.toLowerCase() : "";
-  if (issue !== beaconTxid) return { ok: false, error: "oracle beacon" };
+  if (!/^[0-9a-f]{64}$/.test(issue)) return { ok: false, error: "oracle beacon" };
+  const expected = beaconTxid?.toLowerCase();
+  if (expected && issue !== expected) return { ok: false, error: "oracle beacon" };
   if (typeof root.assetId !== "string") return { ok: false, error: "oracle asset" };
   let parsed: ReturnType<typeof asset.AssetId.fromString>;
   try {
@@ -77,7 +79,8 @@ export function parseOracleBeacon(body: unknown, beaconTxid: string, gidx: numbe
   } catch {
     return { ok: false, error: "oracle asset" };
   }
-  if (bytesToHex(parsed.txid) !== beaconTxid || Number(parsed.groupIndex) !== gidx) return { ok: false, error: "oracle asset" };
+  if (bytesToHex(parsed.txid) !== issue) return { ok: false, error: "oracle asset" };
+  if (expected && Number(parsed.groupIndex) !== gidx) return { ok: false, error: "oracle beacon" };
   if (typeof root.address !== "string" || !root.address.startsWith("tark1")) return { ok: false, error: "oracle address" };
   if (!Array.isArray(root.pubkeys) || root.pubkeys.length !== 5) return { ok: false, error: "five pubkeys" };
   const signers: Uint8Array[] = [];

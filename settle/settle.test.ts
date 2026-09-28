@@ -24,9 +24,9 @@ import { EXIT } from "../protocol/constants.ts";
 import { bindContracts, payoutVtxo, type Terms } from "../protocol/contracts.ts";
 import { statePacket } from "../protocol/cospend.ts";
 import { bytesToHex, hexToBytes } from "../protocol/hex.ts";
-import type { QuoteRow } from "./book.ts";
-import { oracleOrigin, parseOracleBeacon } from "./oracle.ts";
-import { duePositions, settleQuote, slotPrice, settlePayouts, type ChainCoin } from "./settle.ts";
+import { serviceOrigin, parseOracleBeacon } from "./oracle.ts";
+import { duePositions, positionsFromDesk, termsFor } from "./positions.ts";
+import { settleQuote, slotPrice, settlePayouts, type ChainCoin } from "./vault.ts";
 
 const CHECKPOINT = "03080040b27520dfcaec558c7e78cf3e38b898ba8a43cfb5727266bae32c5c5b3aeb32c558aa0bac";
 const DISPLAY = "00".repeat(31) + "07";
@@ -128,42 +128,20 @@ test("dust folding pays one leg the whole coin", () => {
   assert.equal(under.error, "underfunded");
 });
 
-test("due positions are filled vaults at expiry, oldest first", () => {
-  const row = (patch: Partial<QuoteRow>): QuoteRow => ({
-    rfqId: "aa".repeat(32),
-    collateral: "20000",
-    premium: "1000",
-    kind: 0,
-    strike: "9700000",
-    expiry: EXPIRY,
-    deadline: EXPIRY - 10,
-    validUntil: EXPIRY - 20,
-    exit: 2048,
-    writerPubkey: "11".repeat(32),
-    writerPkScript: "5120" + "22".repeat(32),
-    holderPubkey: "33".repeat(32),
-    beaconTxid: DISPLAY,
-    beaconGidx: 0,
-    intentAddress: "tark1intent",
-    vaultAddress: "tark1vault",
-    status: "filled",
-    fillTxid: "cc".repeat(32),
-    createdAt: 1,
-    clientPubkey: "99".repeat(32),
-    ...patch,
-  });
-  const early = row({ rfqId: "11".repeat(32), expiry: EXPIRY + 10 });
-  const later = row({ rfqId: "22".repeat(32), expiry: EXPIRY });
-  const older = row({ rfqId: "01".repeat(32), expiry: EXPIRY - 5 });
-  const settled = row({ rfqId: "33".repeat(32), settleTxid: "dd".repeat(32) });
-  const open = row({ rfqId: "44".repeat(32), status: "open", fillTxid: undefined });
-  const due = duePositions([early, later, settled, open, older], EXPIRY);
-  assert.deepEqual(due.map((item) => item.rfqId), [older.rfqId, later.rfqId]);
+test("due positions are expired vaults this bot has not progressed", () => {
+  const row = (id: string, expiry: number) => ({ id, expiry });
+  const due = duePositions([
+    row("early", EXPIRY + 10),
+    row("later", EXPIRY),
+    row("older", EXPIRY - 5),
+    row("done", EXPIRY - 1),
+  ], EXPIRY, new Set(["done"]));
+  assert.deepEqual(due.map((item) => item.id), ["older", "later"]);
 });
 
-test("an oracle origin drops the path and refuses other schemes", () => {
-  assert.equal(oracleOrigin("https://oracle.example/api/status"), "https://oracle.example");
-  assert.throws(() => oracleOrigin("ftp://oracle.example"), /http/);
+test("a service origin drops the path and refuses other schemes", () => {
+  assert.equal(serviceOrigin("https://oracle.example/api/status"), "https://oracle.example");
+  assert.throws(() => serviceOrigin("ftp://oracle.example"), /http/);
 });
 
 test("a filled vault settles from the beacon state the oracle published", async () => {
@@ -286,28 +264,30 @@ test("a filled vault settles from the beacon state the oracle published", async 
   if (!wrongBeacon.ok) assert.equal(wrongBeacon.error, "oracle beacon");
   if (!wrongAddress.ok) assert.equal(wrongAddress.error, "oracle address");
 
-  const row: QuoteRow = {
-    rfqId: "aa".repeat(32),
-    collateral: COLLATERAL.toString(),
-    premium: "1000",
-    kind: 0,
-    strike: STRIKE.toString(),
-    expiry: EXPIRY,
-    deadline: EXPIRY,
-    validUntil: EXPIRY,
-    exit: Number(EXIT),
-    writerPubkey: bytesToHex(writerPk),
-    writerPkScript: bytesToHex(bound.writerPkScript),
-    holderPubkey: bytesToHex(holderPk),
-    beaconTxid: DISPLAY,
-    beaconGidx: 0,
-    intentAddress: bound.intentAddress,
-    vaultAddress: bound.vaultAddress,
-    status: "filled",
-    fillTxid: vaultTx.id,
-    createdAt: EXPIRY,
-    clientPubkey: "99".repeat(32),
-  };
+  const published = positionsFromDesk({
+    quotes: [
+      {
+        rfqId: "aa".repeat(32),
+        status: "filled",
+        kind: 0,
+        collateral: COLLATERAL.toString(),
+        strike: STRIKE.toString(),
+        expiry: EXPIRY,
+        exit: Number(EXIT),
+        writerPubkey: bytesToHex(writerPk),
+        writerPkScript: bytesToHex(bound.writerPkScript),
+        holderPubkey: bytesToHex(holderPk),
+        beaconTxid: DISPLAY,
+        beaconGidx: 0,
+        vaultAddress: bound.vaultAddress,
+        fillTxid: vaultTx.id,
+      },
+      { rfqId: "bb".repeat(32), status: "open", kind: 0 },
+    ],
+  }, "https://desk.example");
+  assert.equal(published.length, 1);
+  assert.equal(published[0]?.fillTxid, vaultTx.id);
+  assert.equal(bindContracts(termsFor(published[0]!, serverKey, emulatorKey)).vaultAddress, bound.vaultAddress);
   const env = {
     chain,
     serverKey,
@@ -315,7 +295,7 @@ test("a filled vault settles from the beacon state the oracle published", async 
     emulator,
     checkpoint: CSVMultisigTapscript.decode(hexToBytes(CHECKPOINT)),
     identity: key(22),
-    row,
+    fillTxid: vaultTx.id,
     terms,
     beacon: parsed.beacon,
     feeScript: payoutVtxo(holderPk, serverKey, EXIT),

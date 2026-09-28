@@ -8,7 +8,6 @@ import { bindContracts, type Terms } from "../protocol/contracts.ts";
 import { buildSettle, submit, type SignedSpend } from "../protocol/cospend.ts";
 import { bytesToHex } from "../protocol/hex.ts";
 import { vaultProgram } from "../protocol/programs.ts";
-import { hasBeacon, type QuoteRow } from "./book.ts";
 import type { BeaconSpec } from "./oracle.ts";
 
 export type ChainCoin = {
@@ -36,16 +35,6 @@ export type SettleOutcome =
   | { result: "settled"; txid: string; fee?: { txid: string; vout: number } };
 
 type FeeCoin = { txid: string; vout: number; value: number | bigint };
-
-/**
- * Filled vaults whose expiry has been reached and which have not been spent yet.
- * Oldest expiry first, so a later fixing is not left sitting behind an earlier one.
- */
-export function duePositions(rows: readonly QuoteRow[], now: number): QuoteRow[] {
-  return rows
-    .filter((row) => row.status === "filled" && Boolean(row.fillTxid) && !row.settleTxid && hasBeacon(row) && row.expiry <= now)
-    .sort((a, b) => a.expiry - b.expiry || a.rfqId.localeCompare(b.rfqId));
-}
 
 /** The price the vault reads: the first 8 bytes of the newest slot whose key is `expiry`. */
 export function slotPrice(state: Uint8Array, expiry: bigint): bigint | null {
@@ -125,7 +114,8 @@ export async function settleQuote(env: {
   emulator: Pick<EmulatorProvider, "submitTx">;
   checkpoint: CSVMultisigTapscript.Type;
   identity?: Identity;
-  row: QuoteRow;
+  /** Creating tx of the vault, when the watcher knows which fill paid it. */
+  fillTxid?: string;
   terms: Terms;
   beacon: BeaconSpec;
   now: number;
@@ -149,11 +139,11 @@ export async function settleQuote(env: {
     if (unrolled) return { result: "settled", txid: unrolled };
     const history = await env.chain.getVtxos({ scripts: [vaultScript], spentOnly: true });
     const prior = history.vtxos ?? [];
-    const gone = spendTxid(prior.find((coin) => coin.txid === env.row.fillTxid) ?? prior.find((coin) => spent(coin)));
+    const gone = spendTxid(prior.find((coin) => coin.txid === env.fillTxid) ?? prior.find((coin) => spent(coin)));
     if (gone) return { result: "settled", txid: gone };
     return { result: "waiting", reason: "vault" };
   }
-  const vaultCoin = vaults.find((coin) => coin.txid === env.row.fillTxid) ?? vaults[0]!;
+  const vaultCoin = vaults.find((coin) => coin.txid === env.fillTxid) ?? vaults[0]!;
 
   const beaconBound = bindBeacon({
     id: beaconId,

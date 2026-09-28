@@ -31,7 +31,7 @@ function row(patch: Partial<QuoteRow> = {}): QuoteRow {
   };
 }
 
-test("exposure counts open quotes and unexpired fills, and a settle releases the cap", async () => {
+test("exposure counts open quotes and unexpired fills, and the cap refuses the next one", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "arkade-book-"));
   try {
     const book = await Book.open(dir);
@@ -49,13 +49,7 @@ test("exposure counts open quotes and unexpired fills, and a settle releases the
     assert.equal(saved.list().length, 2);
     assert.equal(saved.get("aa".repeat(32))?.fillTxid, "cc".repeat(32));
     assert.equal(saved.exposure(1_600).total, 10_000_000n);
-    assert.equal(saved.noteSettle("aa".repeat(32), "ee".repeat(32))?.settleTxid, "ee".repeat(32));
-    assert.equal(saved.exposure(1_600).total, 0n);
     assert.equal(saved.exposure(3_000).total, 0n);
-    await saved.save();
-    const closed = await Book.open(dir);
-    assert.equal(closed.get("aa".repeat(32))?.settleTxid, "ee".repeat(32));
-    assert.equal(closed.exposure(1_600).total, 0n);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

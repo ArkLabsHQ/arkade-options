@@ -23,8 +23,6 @@ export type QuoteRow = {
   vaultAddress: string;
   status: QuoteStatus;
   fillTxid?: string;
-  /** Arkade tx that spent the vault: settle, or a close / unilateral observed later. */
-  settleTxid?: string;
   createdAt: number;
   clientPubkey: string;
 };
@@ -43,11 +41,10 @@ export function hasBeacon(row: QuoteRow): boolean {
   return /^[0-9a-f]{64}$/.test(row.beaconTxid ?? "") && Number.isInteger(row.beaconGidx) && row.beaconGidx >= 0 && row.beaconGidx <= 65_535;
 }
 
-/** Still binding float or vault exposure for this rfqId. A recorded settle releases it. */
+/** Still binding float or vault exposure for this rfqId. */
 export function liveQuote(row: QuoteRow, now: number): boolean {
   if (row.status === "open") return row.deadline > now;
   if (row.status === "filled") {
-    if (row.settleTxid) return false;
     if (!row.fillTxid) return true;
     return row.expiry > now;
   }
@@ -88,7 +85,7 @@ export class Book {
     let total = 0n;
     for (const row of this.rows) {
       const counted = (row.status === "open" && row.deadline > now)
-        || (row.status === "filled" && Boolean(row.fillTxid) && !row.settleTxid && row.expiry > now);
+        || (row.status === "filled" && Boolean(row.fillTxid) && row.expiry > now);
       if (!counted) continue;
       const amount = BigInt(row.collateral);
       total += amount;
@@ -115,14 +112,6 @@ export class Book {
     if (!row) return undefined;
     row.status = status;
     if (fillTxid) row.fillTxid = fillTxid;
-    return row;
-  }
-
-  /** Remember the spend that closed the vault. The first txid sticks. */
-  noteSettle(rfqId: string, txid: string): QuoteRow | undefined {
-    const row = this.get(rfqId);
-    if (!row || row.status !== "filled" || !txid || txid.length > 128) return undefined;
-    if (!row.settleTxid) row.settleTxid = txid;
     return row;
   }
 
