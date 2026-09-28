@@ -20,4 +20,4 @@ ENV DATA_DIR=/data HOST=0.0.0.0
 VOLUME /data
 EXPOSE 8789
 HEALTHCHECK CMD node -e "fetch('http://127.0.0.1:8789/api/status').then((res)=>process.exit(res.ok?0:1)).catch(()=>process.exit(1))"
-CMD ["node", "--experimental-strip-types", "oracle/main.ts"]
+CMD ["node", "--experimental-strip-types", "--experimental-eventsource", "oracle/main.ts"]
