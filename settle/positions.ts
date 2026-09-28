@@ -2,11 +2,12 @@ import { asset } from "@arkade-os/sdk";
 
 import { beaconIdOf } from "../protocol/beacon-id.ts";
 import { directPayoutKey, type Terms } from "../protocol/contracts.ts";
-import { bytesToHex, hexToBytes } from "../protocol/hex.ts";
+import { hexToBytes } from "../protocol/hex.ts";
+import { parsePosition } from "../protocol/messages.ts";
 
 /**
- * A filled vault published by a desk. The settler rebuilds the contract from
- * these fields. It does not read the desk's book.
+ * A filled vault announced on Nostr. The settler rebuilds the contract from
+ * these fields. It does not read a desk book or a desk URL.
  */
 export type WatchPosition = {
   id: string;
@@ -25,81 +26,26 @@ export type WatchPosition = {
   fillTxid?: string;
 };
 
-const HEX64 = /^[0-9a-fA-F]{64}$/;
-const SCRIPT = /^51[0-9a-fA-F]{66}$/;
-
-function record(value: unknown): Record<string, unknown> | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  return value as Record<string, unknown>;
-}
-
-function hex32(value: unknown): Uint8Array | null {
-  if (typeof value !== "string" || !HEX64.test(value)) return null;
-  return hexToBytes(value);
-}
-
-function amount(value: unknown): bigint | null {
-  if (typeof value === "number" && Number.isSafeInteger(value) && value > 0) return BigInt(value);
-  if (typeof value === "string" && /^[1-9][0-9]*$/.test(value)) return BigInt(value);
-  return null;
-}
-
-function whole(value: unknown): bigint | null {
-  if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0) return BigInt(value);
-  if (typeof value === "string" && /^[0-9]+$/.test(value)) return BigInt(value);
-  return null;
-}
-
-function one(value: unknown, origin: string): WatchPosition | null {
-  const row = record(value);
-  if (!row || row.status !== "filled") return null;
-  const rfqId = typeof row.rfqId === "string" && HEX64.test(row.rfqId) ? row.rfqId.toLowerCase() : "";
-  if (!rfqId) return null;
-  if (row.kind !== 0 && row.kind !== 1) return null;
-  const collateral = amount(row.collateral);
-  const strike = amount(row.strike);
-  const expiry = whole(row.expiry);
-  const exit = whole(row.exit);
-  if (collateral == null || strike == null || expiry == null || exit == null) return null;
-  if (!Number.isSafeInteger(Number(expiry)) || !Number.isSafeInteger(Number(exit))) return null;
-  const writerPk = hex32(row.writerPubkey);
-  const holderPk = hex32(row.holderPubkey);
-  if (!writerPk || !holderPk) return null;
-  if (typeof row.writerPkScript !== "string" || !SCRIPT.test(row.writerPkScript)) return null;
-  const beaconTxid = typeof row.beaconTxid === "string" ? row.beaconTxid.toLowerCase() : "";
-  if (!HEX64.test(beaconTxid)) return null;
-  const gidx = whole(row.beaconGidx);
-  if (gidx == null || gidx > 65_535n) return null;
-  if (typeof row.vaultAddress !== "string" || !row.vaultAddress.startsWith("tark1")) return null;
-  const fillTxid = typeof row.fillTxid === "string" && HEX64.test(row.fillTxid) ? row.fillTxid.toLowerCase() : undefined;
+/** One public position event. Incomplete or sealed RFQ payloads are skipped. */
+export function positionFromAnnouncement(body: unknown): WatchPosition | null {
+  const row = parsePosition(body);
+  if (!row) return null;
   return {
-    id: `${origin}/${rfqId}`,
-    rfqId,
+    id: row.rfq_id,
+    rfqId: row.rfq_id,
     kind: row.kind,
-    collateral,
-    strike,
-    expiry: Number(expiry),
-    exit,
-    writerPk,
-    holderPk,
-    payoutKey: directPayoutKey(bytesToHex(writerPk), row.writerPkScript.toLowerCase()),
-    beaconTxid,
-    beaconGidx: Number(gidx),
-    vaultAddress: row.vaultAddress,
-    fillTxid,
+    collateral: BigInt(row.collateral),
+    strike: BigInt(row.strike),
+    expiry: row.expiry,
+    exit: BigInt(row.exit),
+    writerPk: hexToBytes(row.writer_pubkey),
+    holderPk: hexToBytes(row.holder_pubkey),
+    payoutKey: directPayoutKey(row.writer_pubkey, row.writer_pk_script),
+    beaconTxid: row.beacon_txid,
+    beaconGidx: row.beacon_gidx,
+    vaultAddress: row.vault_address,
+    fillTxid: row.fill_txid,
   };
-}
-
-/** Filled quotes from one desk status body. Incomplete rows are skipped. */
-export function positionsFromDesk(body: unknown, origin: string): WatchPosition[] {
-  const root = record(body);
-  if (!root || !Array.isArray(root.quotes)) return [];
-  const positions: WatchPosition[] = [];
-  for (const item of root.quotes) {
-    const position = one(item, origin);
-    if (position) positions.push(position);
-  }
-  return positions;
 }
 
 /** Filled vaults at expiry that this bot has not already progressed. Oldest first. */

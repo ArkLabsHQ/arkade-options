@@ -1,8 +1,11 @@
 import { mkdir, open, readFile, rename } from "node:fs/promises";
 import path from "node:path";
 
+import { parsePosition, type OptionPosition } from "../protocol/messages.ts";
+
 type FileShape = {
   settled: { id: string; txid: string }[];
+  positions?: OptionPosition[];
 };
 
 /**
@@ -11,6 +14,7 @@ type FileShape = {
  */
 export class Progress {
   private readonly done = new Map<string, string>();
+  private readonly seen = new Map<string, OptionPosition>();
   private readonly file: string;
   private writing: Promise<void> = Promise.resolve();
 
@@ -27,6 +31,10 @@ export class Progress {
         if (row && typeof row.id === "string" && typeof row.txid === "string" && row.id && row.txid) {
           progress.done.set(row.id, row.txid);
         }
+      }
+      for (const row of parsed.positions ?? []) {
+        const position = parsePosition(row);
+        if (position) progress.seen.set(position.rfq_id, position);
       }
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
@@ -51,6 +59,18 @@ export class Progress {
     if (!this.done.has(id)) this.done.set(id, txid);
   }
 
+  /** Keep a public vault announcement. False when this process already stored it. */
+  remember(position: OptionPosition): boolean {
+    const prior = this.seen.get(position.rfq_id);
+    if (prior && prior.fill_txid === position.fill_txid && prior.vault_address === position.vault_address) return false;
+    this.seen.set(position.rfq_id, position);
+    return true;
+  }
+
+  positions(): OptionPosition[] {
+    return [...this.seen.values()];
+  }
+
   async save(): Promise<void> {
     const run = this.writing.then(() => this.write());
     this.writing = run.then(() => undefined, () => undefined);
@@ -62,7 +82,8 @@ export class Progress {
     const handle = await open(tmp, "w");
     try {
       const settled = [...this.done.entries()].map(([id, txid]) => ({ id, txid }));
-      await handle.writeFile(JSON.stringify({ settled }, null, 2));
+      const positions = [...this.seen.values()];
+      await handle.writeFile(JSON.stringify({ settled, positions }, null, 2));
       await handle.sync();
     } finally {
       await handle.close();

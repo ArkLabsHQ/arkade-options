@@ -1,8 +1,8 @@
-import { finalizeEvent, getPublicKey } from "nostr-tools/pure";
+import { finalizeEvent, getPublicKey, verifyEvent } from "nostr-tools/pure";
 import { getConversationKey, encrypt, decrypt } from "nostr-tools/nip44";
 
-import { RFQ_KIND } from "./constants.ts";
-import { parseWire, type Wire } from "./messages.ts";
+import { POSITION_KIND, POSITION_TAG, RFQ_KIND } from "./constants.ts";
+import { parsePosition, parseWire, type OptionPosition, type Wire } from "./messages.ts";
 
 const ARKADE_RELAY = "wss://nostr.arkade.sh";
 
@@ -56,8 +56,43 @@ export type Incoming = {
 
 export type Transport = {
   publish(recipientPubkey: string, payload: Wire): Promise<void>;
+  /** Public, stored record of a filled vault. A third party can read it. */
+  publishPosition(position: OptionPosition): Promise<void>;
   close(): void;
 };
+
+/** Signed NIP-78 event. `d` is the rfq id, so a later publish replaces this one. */
+export function positionEvent(secretKey: Uint8Array, position: OptionPosition, now = Math.floor(Date.now() / 1000)): Sealed {
+  return finalizeEvent({
+    kind: POSITION_KIND,
+    created_at: now,
+    tags: [["d", position.rfq_id], ["t", POSITION_TAG]],
+    content: JSON.stringify(position),
+  }, secretKey);
+}
+
+/** A verified public vault. The signer is the holder. Sealed RFQs do not pass. */
+export function readPosition(event: Sealed): OptionPosition | null {
+  if (event.kind !== POSITION_KIND) return null;
+  if (!event.tags.some((tag) => tag[0] === "t" && tag[1] === POSITION_TAG)) return null;
+  if (!event.tags.some((tag) => tag[0] === "d" && tag[1])) return null;
+  try {
+    if (!verifyEvent(event)) return null;
+  } catch {
+    return null;
+  }
+  let body: unknown;
+  try {
+    body = JSON.parse(event.content);
+  } catch {
+    return null;
+  }
+  const position = parsePosition(body);
+  if (!position || position.holder_pubkey !== event.pubkey) return null;
+  const id = event.tags.find((tag) => tag[0] === "d")?.[1];
+  if (id !== position.rfq_id) return null;
+  return position;
+}
 
 function frameText(data: unknown): string | null {
   if (typeof data === "string") return data;
@@ -177,6 +212,10 @@ export function connectTransport(opts: {
       const ws = await ensure();
       sendFrame(ws, ["EVENT", seal(opts.secretKey, recipientPubkey, payload)]);
     },
+    async publishPosition(position) {
+      const ws = await ensure();
+      sendFrame(ws, ["EVENT", positionEvent(opts.secretKey, position)]);
+    },
     close() {
       stopped = true;
       if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) {
@@ -289,4 +328,71 @@ export async function collectReplies(opts: {
   } finally {
     if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) ws.close();
   }
+}
+
+/**
+ * Stored filled vaults on nostr.arkade.sh. The subscription replays what the
+ * relay still has, then stays open for new ones.
+ */
+export function watchPositions(opts: {
+  relays: string[];
+  onPosition: (position: OptionPosition) => void;
+}): { close(): void } {
+  const url = quoteRelay(opts.relays);
+  const seen = new Set<string>();
+  let socket: WebSocket | undefined;
+  let opening: Promise<WebSocket> | undefined;
+  let stopped = false;
+
+  const handle = (data: unknown) => {
+    const frame = parseFrame(data);
+    if (!frame || frame[0] !== "EVENT" || !isEvent(frame[2])) return;
+    if (seen.has(frame[2].id)) return;
+    seen.add(frame[2].id);
+    const position = readPosition(frame[2]);
+    if (position) opts.onPosition(position);
+  };
+
+  const ensure = (): Promise<WebSocket> => {
+    if (socket && socket.readyState === WebSocket.OPEN) return Promise.resolve(socket);
+    if (opening) return opening;
+    opening = connectSocket(url).then((ws) => {
+      opening = undefined;
+      if (stopped) {
+        ws.close();
+        throw new Error("nostr.arkade.sh is not connected");
+      }
+      socket = ws;
+      ws.addEventListener("message", (ev) => handle(ev.data));
+      ws.addEventListener("close", () => {
+        if (socket === ws) socket = undefined;
+        if (stopped) return;
+        setTimeout(() => {
+          if (!stopped && !socket && !opening) void ensure().catch(() => undefined);
+        }, 2_000);
+      });
+      sendFrame(ws, ["REQ", "positions", { kinds: [POSITION_KIND], "#t": [POSITION_TAG] }]);
+      return ws;
+    }).catch((err) => {
+      opening = undefined;
+      if (!stopped) {
+        setTimeout(() => {
+          if (!stopped && !opening) void ensure().catch(() => undefined);
+        }, 2_000);
+      }
+      throw err;
+    });
+    return opening;
+  };
+
+  void ensure().catch(() => undefined);
+  return {
+    close() {
+      stopped = true;
+      if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) {
+        socket.close();
+      }
+      socket = undefined;
+    },
+  };
 }

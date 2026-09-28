@@ -67,6 +67,26 @@ export type RfqStatus = {
   txid?: string;
 };
 
+/** A filled vault, published in the clear. The sealed RFQ is not this record. */
+export type OptionPosition = {
+  v: 1;
+  type: "option_position";
+  rfq_id: string;
+  pair: typeof PAIR;
+  kind: 0 | 1;
+  collateral: string;
+  strike: string;
+  expiry: number;
+  exit: number;
+  writer_pubkey: string;
+  writer_pk_script: string;
+  holder_pubkey: string;
+  beacon_txid: string;
+  beacon_gidx: number;
+  vault_address: string;
+  fill_txid: string;
+};
+
 export type Wire = RfqRequest | RfqQuote | RfqRefusal | RfqStatusRequest | RfqStatus;
 
 function record(value: unknown): Record<string, unknown> | null {
@@ -171,6 +191,35 @@ function parseRefusal(body: Record<string, unknown>): RfqRefusal | null {
 function parseStatusRequest(body: Record<string, unknown>): RfqStatusRequest | null {
   if (!hex64(body.rfq_id)) return null;
   return { v: 1, type: "rfq_status_request", rfq_id: body.rfq_id };
+}
+
+export function parsePosition(value: unknown): OptionPosition | null {
+  const body = record(value);
+  if (!body || body.v !== 1 || body.type !== "option_position" || body.pair !== PAIR) return null;
+  if (!hex64(body.rfq_id) || (body.kind !== 0 && body.kind !== 1)) return null;
+  if (!amount(body.collateral) || !amount(body.strike)) return null;
+  if (!int(body.expiry, 4_000_000_000) || !int(body.exit, 4_000_000_000)) return null;
+  if (!hex64(body.writer_pubkey) || !script(body.writer_pk_script)) return null;
+  if (!hex64(body.holder_pubkey) || !hex64(body.beacon_txid) || !int(body.beacon_gidx, 65_535)) return null;
+  if (!address(body.vault_address) || !hex64(body.fill_txid)) return null;
+  return {
+    v: 1,
+    type: "option_position",
+    rfq_id: body.rfq_id.toLowerCase(),
+    pair: PAIR,
+    kind: body.kind,
+    collateral: body.collateral,
+    strike: body.strike,
+    expiry: body.expiry,
+    exit: body.exit,
+    writer_pubkey: body.writer_pubkey.toLowerCase(),
+    writer_pk_script: body.writer_pk_script.toLowerCase(),
+    holder_pubkey: body.holder_pubkey.toLowerCase(),
+    beacon_txid: body.beacon_txid.toLowerCase(),
+    beacon_gidx: body.beacon_gidx,
+    vault_address: body.vault_address,
+    fill_txid: body.fill_txid.toLowerCase(),
+  };
 }
 
 function parseStatus(body: Record<string, unknown>): RfqStatus | null {

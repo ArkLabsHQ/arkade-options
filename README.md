@@ -66,10 +66,9 @@ curl -k -X POST -H "Authorization: Bearer $ORACLE_ADMIN" -H "content-type: appli
 
 The beacon keeps the eight newest fixings. Settle a vault before eight later expiries are published, or publish that expiry again.
 
-Settlement is a separate process. It watches one or more desk `/status` pages, and after expiry it fetches the oracle and spends the vault. The desk does not settle.
+Settlement is a separate process. A desk publishes each filled vault on nostr.arkade.sh. The settler watches those events and, after expiry, spends the vault. It does not call the desk.
 
 ```bash
-export DESKS=https://<desk>
 export ORACLE_URL=https://<oracle>
 pnpm settle
 ```

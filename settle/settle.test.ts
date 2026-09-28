@@ -20,12 +20,13 @@ import {
   priceValue,
   statePacketOf,
 } from "../protocol/beacon.ts";
-import { EXIT } from "../protocol/constants.ts";
+import { EXIT, PAIR } from "../protocol/constants.ts";
 import { bindContracts, payoutVtxo, type Terms } from "../protocol/contracts.ts";
 import { statePacket } from "../protocol/cospend.ts";
 import { bytesToHex, hexToBytes } from "../protocol/hex.ts";
+import { parsePosition } from "../protocol/messages.ts";
 import { serviceOrigin, parseOracleBeacon } from "./oracle.ts";
-import { duePositions, positionsFromDesk, termsFor } from "./positions.ts";
+import { duePositions, positionFromAnnouncement, termsFor } from "./positions.ts";
 import { settleQuote, slotPrice, settlePayouts, type ChainCoin } from "./vault.ts";
 
 const CHECKPOINT = "03080040b27520dfcaec558c7e78cf3e38b898ba8a43cfb5727266bae32c5c5b3aeb32c558aa0bac";
@@ -264,30 +265,30 @@ test("a filled vault settles from the beacon state the oracle published", async 
   if (!wrongBeacon.ok) assert.equal(wrongBeacon.error, "oracle beacon");
   if (!wrongAddress.ok) assert.equal(wrongAddress.error, "oracle address");
 
-  const published = positionsFromDesk({
-    quotes: [
-      {
-        rfqId: "aa".repeat(32),
-        status: "filled",
-        kind: 0,
-        collateral: COLLATERAL.toString(),
-        strike: STRIKE.toString(),
-        expiry: EXPIRY,
-        exit: Number(EXIT),
-        writerPubkey: bytesToHex(writerPk),
-        writerPkScript: bytesToHex(bound.writerPkScript),
-        holderPubkey: bytesToHex(holderPk),
-        beaconTxid: DISPLAY,
-        beaconGidx: 0,
-        vaultAddress: bound.vaultAddress,
-        fillTxid: vaultTx.id,
-      },
-      { rfqId: "bb".repeat(32), status: "open", kind: 0 },
-    ],
-  }, "https://desk.example");
-  assert.equal(published.length, 1);
-  assert.equal(published[0]?.fillTxid, vaultTx.id);
-  assert.equal(bindContracts(termsFor(published[0]!, serverKey, emulatorKey)).vaultAddress, bound.vaultAddress);
+  const announcement = {
+    v: 1 as const,
+    type: "option_position" as const,
+    rfq_id: "aa".repeat(32),
+    pair: PAIR,
+    kind: 0 as const,
+    collateral: COLLATERAL.toString(),
+    strike: STRIKE.toString(),
+    expiry: EXPIRY,
+    exit: Number(EXIT),
+    writer_pubkey: bytesToHex(writerPk),
+    writer_pk_script: bytesToHex(bound.writerPkScript),
+    holder_pubkey: bytesToHex(holderPk),
+    beacon_txid: DISPLAY,
+    beacon_gidx: 0,
+    vault_address: bound.vaultAddress,
+    fill_txid: vaultTx.id,
+  };
+  const announced = parsePosition(announcement);
+  assert.ok(announced);
+  assert.equal(parsePosition({ ...announcement, type: "rfq_quote" }), null);
+  const published = positionFromAnnouncement(announced);
+  assert.equal(published?.fillTxid, vaultTx.id);
+  assert.equal(bindContracts(termsFor(published!, serverKey, emulatorKey)).vaultAddress, bound.vaultAddress);
   const env = {
     chain,
     serverKey,

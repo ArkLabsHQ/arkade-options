@@ -1,4 +1,4 @@
-# Third-party settler. It watches desk status pages and spends expired vaults.
+# Third-party settler. It watches filled-vault events on nostr.arkade.sh.
 #
 # Local (context = repository root):
 #   docker build -f settle/Dockerfile -t arkade-options-settle .

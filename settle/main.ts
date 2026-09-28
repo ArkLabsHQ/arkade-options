@@ -11,20 +11,23 @@ import {
   SingleKey,
 } from "@arkade-os/sdk";
 
-import { ARK_URL, EMULATOR_URL, EXIT } from "../protocol/constants.ts";
+import { ARK_URL, DEFAULT_RELAYS, EMULATOR_URL, EXIT } from "../protocol/constants.ts";
 import { bindContracts, payoutVtxo } from "../protocol/contracts.ts";
 import { bytesToHex } from "../protocol/hex.ts";
+import type { OptionPosition } from "../protocol/messages.ts";
+import { quoteRelay, watchPositions } from "../protocol/nostr.ts";
 import { fetchOracleStatus, parseOracleBeacon, serviceOrigin } from "./oracle.ts";
-import { duePositions, positionsFromDesk, termsFor, type WatchPosition } from "./positions.ts";
+import { duePositions, positionFromAnnouncement, termsFor, type WatchPosition } from "./positions.ts";
 import { Progress } from "./progress.ts";
 import { settleQuote } from "./vault.ts";
 
 /**
- * A third party. It watches desks for filled vaults and settles them after
- * expiry by reading the oracle. It does not quote, fill, or hold the book.
+ * A third party. It watches public filled-vault events on nostr.arkade.sh and
+ * settles them after expiry by reading the oracle. It does not quote, fill,
+ * or call a desk.
  *
- *   DESKS        comma-separated desk origins. Each is polled at /status.
  *   ORACLE_URL   oracle origin. The beacon script comes from /api/status.
+ *   RELAYS       default nostr.arkade.sh. Filled vaults are kind 30078.
  *   SETTLE_KEY   optional 32-byte hex. Signs the read-fee coin when readFee > 0.
  *   ARK_URL      default Mutinynet arkd
  *   EMULATOR_URL default Mutinynet emulator
@@ -38,13 +41,8 @@ function required(name: string): string {
   return value;
 }
 
-function origins(name: string): string[] {
-  const values = required(name).split(",").map((item) => item.trim()).filter(Boolean);
-  if (!values.length) throw new Error(`${name} is required`);
-  return values.map(serviceOrigin);
-}
-
-const desks = origins("DESKS");
+const relayList = (process.env.RELAYS ?? DEFAULT_RELAYS.join(",")).split(",").map((item) => item.trim()).filter(Boolean);
+const relay = quoteRelay(relayList);
 const oracleUrl = serviceOrigin(required("ORACLE_URL"));
 const settleKey = process.env.SETTLE_KEY?.trim() ?? "";
 if (settleKey && !/^[0-9a-fA-F]{64}$/.test(settleKey)) throw new Error("SETTLE_KEY must be 32 bytes");
@@ -108,26 +106,23 @@ async function feeCoins() {
   return page.vtxos ?? [];
 }
 
-async function deskPositions(origin: string): Promise<WatchPosition[]> {
-  const res = await fetch(`${origin}/status`, { signal: AbortSignal.timeout(10_000) });
-  if (!res.ok) throw new Error(`desk status ${res.status}`);
-  return positionsFromDesk(await res.json(), origin);
+function onPosition(position: OptionPosition) {
+  if (!progress.remember(position)) return;
+  void progress.save().catch((err) => {
+    console.error("progress save", err instanceof Error ? err.message : err);
+  });
 }
 
 /**
- * One settle per pass. Desks share one beacon coin, so the next vault has to
- * read the outpoint the previous settle created.
+ * One settle per pass. Filled vaults share one beacon coin, so the next vault
+ * has to read the outpoint the previous settle created.
  */
 async function progressDue() {
   const now = Math.floor(Date.now() / 1000);
   const positions: WatchPosition[] = [];
-  for (const origin of desks) {
-    try {
-      positions.push(...await deskPositions(origin));
-      noted.delete(`desk:${origin}`);
-    } catch (err) {
-      once(`desk:${origin}`, `desk ${origin} ${err instanceof Error ? err.message : err}`, true);
-    }
+  for (const row of progress.positions()) {
+    const position = positionFromAnnouncement(row);
+    if (position) positions.push(position);
   }
   watching = positions.length;
   const due = duePositions(positions, now, progress.ids());
@@ -224,7 +219,7 @@ const server = http.createServer((req, res) => {
   res.end(JSON.stringify({
     commit: revision(),
     oracle: oracleUrl,
-    desks,
+    relay,
     watching,
     settled: [...progress.ids()].length,
   }));
@@ -233,9 +228,11 @@ const server = http.createServer((req, res) => {
 server.listen(port, () => {
   console.log(`commit ${revision()}`);
   console.log(`oracle ${oracleUrl}`);
-  for (const desk of desks) console.log(`desk ${desk}`);
+  console.log(`relay ${relay}`);
   console.log(`status http://127.0.0.1:${port}/status`);
 });
+
+const positions = watchPositions({ relays: relayList, onPosition });
 
 const timer = setInterval(() => {
   void tick();
@@ -244,6 +241,7 @@ void tick();
 
 function shutdown() {
   clearInterval(timer);
+  positions.close();
   server.close();
   process.exit(0);
 }

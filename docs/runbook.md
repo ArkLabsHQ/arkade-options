@@ -140,29 +140,27 @@ Dokploy, building `master`:
 - Mount a volume at `/data`. The live name is `arkade-options-desk-data`. It holds `book.json` and `arkade.sqlite`.
 - `commit` in `GET /` must match the image you just built.
 
-`GET /` returns `commit`, `pubkey`, `address`, `balance`, `beaconTxid`, `beaconGidx`, and the quote book. Each filled quote includes the vault fields a settler needs: `writerPubkey`, `writerPkScript`, `holderPubkey`, `beaconTxid`, `beaconGidx`, and `exit`. Paste `pubkey` into `app/rfq-config.js` and push `master` so the page asks this desk. Leave `PINNED_DESKS` empty to price from Deribit in the browser only.
+`GET /` returns `commit`, `pubkey`, `address`, `balance`, `beaconTxid`, `beaconGidx`, and the quote book. Paste `pubkey` into `app/rfq-config.js` and push `master` so the page asks this desk. Leave `PINNED_DESKS` empty to price from Deribit in the browser only. A filled vault is also a public event on nostr.arkade.sh, which is what a settler reads.
 
 Fund `address` with Mutinynet sats for premiums. Collateral stays on the seller's side.
 
 ## Settler
 
-A separate process. It does not use `DESK_KEY`, `book.json`, or the desk float. It polls each desk `GET /status`, and after expiry it reads the oracle beacon and submits the settle itself.
+A separate process. It does not use `DESK_KEY`, `book.json`, the desk float, or a desk URL. The RFQ stays sealed to the client. When a fill lands, the desk publishes that vault on nostr.arkade.sh (kind `30078`, tag `arkade-option`). The settler subscribes, and after expiry it reads the oracle beacon and submits the settle.
 
 ```bash
-export DESKS=https://<desk>
 export ORACLE_URL=https://<oracle>
 pnpm settle
 ```
 
-Several desks share one oracle: `DESKS=https://<desk-a>,https://<desk-b>`.
-
 ```bash
 docker build -f settle/Dockerfile -t arkade-options-settle .
-docker run --rm -p 8790:8790 -e DESKS -e ORACLE_URL -v settle-data:/data arkade-options-settle
+docker run --rm -p 8790:8790 -e ORACLE_URL -v settle-data:/data arkade-options-settle
 ```
 
-- Port `8790`. `GET /status` returns `commit`, `oracle`, `desks`, `watching`, and `settled`.
-- `DESKS` and `ORACLE_URL` are required http(s) origins.
-- Mount a volume at `/data`. It holds `progress.json`, the vaults this process has already progressed. The desk book is not updated.
+- Port `8790`. `GET /status` returns `commit`, `oracle`, `relay`, `watching`, and `settled`.
+- `ORACLE_URL` is the oracle origin. The beacon script comes from `/api/status`. The price comes from the beacon coin.
+- `RELAYS` defaults to `wss://nostr.arkade.sh`. Every desk publishes to that relay, so one settler sees all of them.
+- Mount a volume at `/data`. It holds `progress.json`: announcements already seen, and vaults this process has progressed. The desk book is not updated.
 - `readFee` 0 needs no key. When the beacon charges a read fee, set `SETTLE_KEY` (32-byte hex, not the desk key) and fund that vtxo with a coin of exactly `readFee` sats. The settler pays that fee from its own coin.
 - One beacon coin settles one vault per pass. The next vault is the following tick.
