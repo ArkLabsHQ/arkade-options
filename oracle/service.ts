@@ -351,21 +351,6 @@ export async function createOracle(deps: OracleDeps) {
         who: slice.map((print) => BigInt(store.pubkeys!.indexOf(print.pubkey))),
         sig: slice.map((print) => hexToBytes(print.sig)),
       }));
-      for (const slice of chosen) {
-        for (const print of slice) {
-          let ok = false;
-          try {
-            ok = schnorr.verify(
-              hexToBytes(print.sig),
-              printHash(BigInt(print.price), BigInt(print.time)),
-              hexToBytes(print.pubkey),
-            );
-          } catch {
-            ok = false;
-          }
-          if (!ok) throw new HttpError(400, "bad stored sig");
-        }
-      }
       const fixed = fixing(expiry, slices);
       if (fixed.error || fixed.twap == null) throw new HttpError(400, fixed.error ?? "twap");
       const next = nextState(state, expiry, priceValue(fixed.twap));

@@ -423,7 +423,6 @@ async function housekeeping() {
     } catch (err) {
       console.error("spot", err instanceof Error ? err.message : err);
     }
-    const now = Math.floor(Date.now() / 1000);
     for (const row of book.list()) {
       const unsettled = row.status === "open" || (row.status === "filled" && !row.fillTxid);
       if (!unsettled) continue;
@@ -445,8 +444,7 @@ async function housekeeping() {
 
 function queueOpenFills() {
   for (const row of book.list()) {
-    const unsettled = row.status === "open" || (row.status === "filled" && !row.fillTxid);
-    if (unsettled) queueFill(row.rfqId);
+    if (row.status === "open" || (row.status === "filled" && !row.fillTxid)) queueFill(row.rfqId);
   }
 }
 

@@ -48,14 +48,4 @@ export async function saveStore(dir: string, file: OracleFile): Promise<void> {
     await handle.close();
   }
   await rename(tmp, dest);
-  try {
-    const dirHandle = await open(dir, "r");
-    try {
-      await dirHandle.sync();
-    } finally {
-      await dirHandle.close();
-    }
-  } catch {
-    // Some filesystems refuse directory fsync; the renamed file is still durable enough.
-  }
 }

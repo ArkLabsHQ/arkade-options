@@ -456,15 +456,19 @@ function svgEl(name, attrs, text) {
   return node;
 }
 
+function clearStaleDeskQuote(now = Math.floor(Date.now() / 1000)) {
+  const quote = state.deskQuote;
+  if (!quote) return false;
+  if ((quote.validUntil && quote.validUntil <= now) || (quote.deadline && quote.deadline <= now)) {
+    state.deskQuote = null;
+    return true;
+  }
+  return false;
+}
+
 function renderSell() {
   if (state.view !== "sell") return;
-  const now = Math.floor(Date.now() / 1000);
-  if (state.deskQuote && (
-    (state.deskQuote.validUntil && state.deskQuote.validUntil <= now)
-    || (state.deskQuote.deadline && state.deskQuote.deadline <= now)
-  )) {
-    state.deskQuote = null;
-  }
+  clearStaleDeskQuote();
   document.querySelectorAll("[data-kind]").forEach((btn) => {
     btn.setAttribute("aria-pressed", String(Number(btn.dataset.kind) === state.kind));
   });
@@ -843,16 +847,12 @@ async function refreshLive(gen) {
       state.deskQuote = best;
       state.quoteNote = "";
     } else {
-      if (state.deskQuote && state.deskQuote.validUntil <= Math.floor(Date.now() / 1000)) {
-        state.deskQuote = null;
-      }
+      clearStaleDeskQuote();
       if (!state.deskQuote) state.quoteNote = live.note || "The desk did not answer.";
     }
   } catch (err) {
     if (gen !== quoteGen) return;
-    if (state.deskQuote && state.deskQuote.validUntil <= Math.floor(Date.now() / 1000)) {
-      state.deskQuote = null;
-    }
+    clearStaleDeskQuote();
     if (!state.deskQuote) {
       state.quoteNote = err instanceof Error ? err.message : "The desk did not answer.";
     }
@@ -866,9 +866,11 @@ async function confirm() {
   const sats = sizeSats();
   const now = Math.floor(Date.now() / 1000);
   if (!state.address || !quote || sats == null || sizeError(sats) || quote.sats <= DUST || state.confirming) return;
-  if (PINNED_DESKS.length > 0 && !quote.intentAddress) return;
-  if (PINNED_DESKS.length > 0 && (!quote.deadline || quote.deadline <= now)) return;
-  if (PINNED_DESKS.length > 0 && (!quote.validUntil || quote.validUntil <= now)) return;
+  if (PINNED_DESKS.length > 0 && (
+    !quote.intentAddress
+    || !quote.deadline || quote.deadline <= now
+    || !quote.validUntil || quote.validUntil <= now
+  )) return;
   state.confirming = true;
   $("status").textContent = "";
   renderSell();
@@ -1121,13 +1123,7 @@ async function refreshPositionMarkets() {
 
 function tick() {
   const now = Math.floor(Date.now() / 1000);
-  if (state.deskQuote && (
-    (state.deskQuote.validUntil && state.deskQuote.validUntil <= now)
-    || (state.deskQuote.deadline && state.deskQuote.deadline <= now)
-  )) {
-    state.deskQuote = null;
-    if (state.view === "sell") renderSell();
-  }
+  if (clearStaleDeskQuote(now) && state.view === "sell") renderSell();
   for (const position of state.positions) {
     if (position.status !== "deposited" || !position.deadline || now < Number(position.deadline)) continue;
     if (!position.address || expiring.has(position.address)) continue;
@@ -1225,10 +1221,7 @@ async function loadSpot() {
     state.spotSource = "Spot unavailable";
     return;
   }
-  live.sort((a, b) => (a.cents < b.cents ? -1 : a.cents > b.cents ? 1 : 0));
-  state.spotCents = live.length % 2 === 1
-    ? live[Math.floor(live.length / 2)].cents
-    : (live[live.length / 2 - 1].cents + live[live.length / 2].cents) / 2n;
+  state.spotCents = (live[0].cents + live[1].cents) / 2n;
   state.spotSource = live.map((item) => item.name).join(" · ");
 }
 
