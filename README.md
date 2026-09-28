@@ -91,13 +91,20 @@ curl -X POST -H "Authorization: Bearer $ORACLE_ADMIN" -H "content-type: applicat
   https://<oracle>/api/keys
 ```
 
-4. **Fund the oracle wallet.** `GET /api/status` returns `wallet`. Send Mutinynet sats there before issue (fees) and keep at least 330 sats for the beacon coin at deploy.
+4. **Fund the oracle wallet.** `GET /api/status` returns `wallet` and `balance`. Send Mutinynet sats to `wallet` and wait until `balance` is at least `330` before Issue. An empty wallet returns `{"error":"fund wallet"}` (not a Traefik failure). Keep enough left after issue for the 330-sat beacon coin at deploy.
 
 5. **Issue** the identity asset (supply 1). `issueTxid` is the desk's `BEACON_TXID`:
 
 ```bash
 curl -X POST -H "Authorization: Bearer $ORACLE_ADMIN" -H "content-type: application/json" \
   -d '{}' https://<oracle>/api/issue
+```
+
+Issue uses the SDK submit+finalize path. If the process dies after `submitTx` and before `finalizeTx`, the explorer shows an unfinalized spend and `balance` stays `0`. Call recover (or redeploy — boot recovers automatically), then check `/api/status`:
+
+```bash
+curl -X POST -H "Authorization: Bearer $ORACLE_ADMIN" -H "content-type: application/json" \
+  -d '{}' https://<oracle>/api/recover
 ```
 
 6. **Deploy** the unit into the beacon script:

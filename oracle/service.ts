@@ -55,6 +55,11 @@ export type OracleWallet = {
     inputs: HeldCoin[],
     outputs: { script: Uint8Array; amount: bigint }[],
   ): Promise<{ arkTxid: string; signedCheckpointTxs: string[] }>;
+  finalizePendingTxs?(vtxos?: HeldCoin[]): Promise<{ finalized: string[]; pending: string[] }>;
+  walletRepository?: {
+    getWalletState(): Promise<{ settings?: { hasPendingTx?: boolean } } | null>;
+    saveWalletState(state: { settings?: { hasPendingTx?: boolean } }): Promise<void>;
+  };
   arkServerPublicKey: Uint8Array;
   serverUnrollScript: CSVMultisigTapscript.Type;
 };
@@ -211,16 +216,24 @@ export async function createOracle(deps: OracleDeps) {
     });
   }
 
+  async function walletBalance(): Promise<bigint | null> {
+    if (!deps.wallet) return null;
+    const coins = await deps.wallet.getVtxos();
+    return coins.filter((coin) => !coin.isSpent).reduce((sum, coin) => sum + BigInt(coin.value), 0n);
+  }
+
   async function status() {
     const id = store.assetId ? asset.AssetId.fromString(store.assetId) : null;
     const beacon = id ? beaconIdOf(id) : null;
     const script = await bound();
+    const balance = await walletBalance();
     return {
       pubkeys: store.pubkeys,
       assetId: store.assetId,
       issueTxid: store.issueTxid,
       deployTxid: store.deployTxid,
       wallet: deps.wallet ? await deps.wallet.getAddress() : null,
+      balance: balance == null ? null : balance.toString(),
       address: script?.address ?? null,
       args: {
         ctrlTxid: beacon ? bytesToHex(beacon.txid) : null,
@@ -252,11 +265,84 @@ export async function createOracle(deps: OracleDeps) {
     return { pubkeys };
   }
 
+  function asHttp(err: unknown, fallback: string): HttpError {
+    if (err instanceof HttpError) return err;
+    const message = err instanceof Error ? err.message : fallback;
+    if (/insufficient funds/i.test(message)) return new HttpError(400, "fund wallet");
+    return new HttpError(500, message.slice(0, 200) || fallback);
+  }
+
+  async function markPending() {
+    const repo = deps.wallet?.walletRepository;
+    if (!repo) return;
+    const state = (await repo.getWalletState()) ?? {};
+    await repo.saveWalletState({
+      ...state,
+      settings: { ...state.settings, hasPendingTx: true },
+    });
+  }
+
+  /** Finish submitTx that never got finalizeTx, and adopt an issued unit if the store is empty. */
+  async function recover() {
+    if (!deps.wallet?.finalizePendingTxs) throw new HttpError(400, "wallet required");
+    await markPending();
+    let finalized: string[] = [];
+    let pending: string[] = [];
+    try {
+      ({ finalized, pending } = await deps.wallet.finalizePendingTxs());
+    } catch (err) {
+      throw asHttp(err, "recover failed");
+    }
+    let adopted: { assetId: string; txid: string } | null = null;
+    if (!store.assetId) {
+      const coins = await deps.wallet.getVtxos();
+      for (const coin of coins.filter((item) => !item.isSpent)) {
+        const unit = coin.assets?.find((item) => BigInt(item.amount) === 1n && typeof item.assetId === "string" && item.assetId.length >= 64);
+        if (!unit) continue;
+        try {
+          const id = asset.AssetId.fromString(unit.assetId);
+          store.assetId = unit.assetId;
+          store.issueTxid = bytesToHex(id.txid);
+          await save();
+          adopted = { assetId: store.assetId, txid: store.issueTxid };
+          break;
+        } catch {
+          // skip unparseable asset ids
+        }
+      }
+    }
+    return { finalized, pending, adopted, balance: (await walletBalance())?.toString() ?? null };
+  }
+
   async function issue() {
     if (!store.pubkeys) throw new HttpError(400, "keys first");
     if (store.assetId) throw new HttpError(409, "already issued");
     if (!deps.wallet || !deps.oracleKey) throw new HttpError(400, "ORACLE_KEY is required");
-    const issued = await deps.wallet.assetManager.issue({ amount: 1n });
+    if (deps.wallet.finalizePendingTxs) {
+      try {
+        const recovered = await recover();
+        if (store.assetId) return { assetId: store.assetId, txid: store.issueTxid!, recovered };
+      } catch {
+        // continue to a fresh issue when nothing is pending
+      }
+    }
+    const balance = await walletBalance();
+    if (balance == null || balance < 330n) throw new HttpError(400, "fund wallet");
+    let issued: { assetId: string; arkTxId: string };
+    try {
+      await markPending();
+      issued = await deps.wallet.assetManager.issue({ amount: 1n });
+    } catch (err) {
+      if (deps.wallet.finalizePendingTxs) {
+        try {
+          const recovered = await recover();
+          if (store.assetId) return { assetId: store.assetId, txid: store.issueTxid!, recovered };
+        } catch {
+          // keep the original issue error
+        }
+      }
+      throw asHttp(err, "issue failed");
+    }
     store.assetId = issued.assetId;
     store.issueTxid = issued.arkTxId;
     await save();
@@ -385,12 +471,13 @@ export async function createOracle(deps: OracleDeps) {
       if (req.method === "GET" && url === "/page.js") return sendFile(res, "page.js", "text/javascript; charset=utf-8");
       if (req.method === "GET" && url === "/page.css") return sendFile(res, "page.css", "text/css; charset=utf-8");
       if (req.method === "GET" && url === "/api/status") return sendJson(res, 200, await status());
-      if (req.method === "POST" && (url === "/api/keys" || url === "/api/issue" || url === "/api/deploy")) {
+      if (req.method === "POST" && (url === "/api/keys" || url === "/api/issue" || url === "/api/deploy" || url === "/api/recover")) {
         requireAdmin(req);
         const body = asRecord(await readBody(req, 4096));
         if (url === "/api/keys") return sendJson(res, 200, await setKeys(body));
         exact(body, []);
         if (url === "/api/issue") return sendJson(res, 200, await issue());
+        if (url === "/api/recover") return sendJson(res, 200, await recover());
         return sendJson(res, 200, await deploy());
       }
       if (req.method === "POST" && url === "/api/prints") {

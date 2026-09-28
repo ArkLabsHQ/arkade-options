@@ -9,6 +9,7 @@ type Status = {
   issueTxid: string | null;
   deployTxid: string | null;
   wallet: string | null;
+  balance: string | null;
   address: string | null;
   args: { ctrlTxid: string | null; threshold: number; domain: string; keyLag: number; readFee: number; adminPk: string | null; exit: number };
   fixings: unknown[];
@@ -41,6 +42,7 @@ async function refresh(): Promise<void> {
     `Domain ${args.domain}`,
     `Admin ${args.adminPk ?? "unset"}`,
     `Fund ${body.wallet ?? "unset"}`,
+    `Balance ${body.balance ?? "unset"} sats`,
     `Asset ${body.assetId ?? "unset"}`,
     `Deploy ${body.deployTxid ?? "unset"}`,
     `Beacon ${body.address ?? "unset"}`,
@@ -61,6 +63,7 @@ function shown(errorId: string, work: () => Promise<void>): void {
 const pubkeys = () => byId<HTMLTextAreaElement>("pubkeys").value.split(/[\s,]+/).filter(Boolean);
 byId("save").addEventListener("click", () => shown("admin-error", () => post("/api/keys", { pubkeys: pubkeys() }, true)));
 byId("issue").addEventListener("click", () => shown("admin-error", () => post("/api/issue", {}, true)));
+byId("recover").addEventListener("click", () => shown("admin-error", () => post("/api/recover", {}, true)));
 byId("deploy").addEventListener("click", () => shown("admin-error", () => post("/api/deploy", {}, true)));
 
 byId("time").value = String(Math.floor(Date.now() / 1000));

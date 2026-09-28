@@ -1,7 +1,8 @@
+import path from "node:path";
+
 import {
   defaultEmulatorPubkey,
   InMemoryContractRepository,
-  InMemoryWalletRepository,
   networks,
   RestEmulatorProvider,
   SingleKey,
@@ -11,13 +12,14 @@ import {
 import { ARK_URL, EMULATOR_URL } from "../protocol/constants.ts";
 import { bytesToHex, hexToBytes } from "../protocol/hex.ts";
 import { createOracle, type OracleWallet } from "./service.ts";
+import { openWalletRepository } from "./wallet-repo.ts";
 
 /**
  *   ORACLE_KEY     optional 32-byte hex. Never generated. Admin pubkey and publish key.
- *   ORACLE_ADMIN   optional bearer. Unset disables /api/keys, /api/issue, /api/deploy, and /api/publish.
+ *   ORACLE_ADMIN   optional bearer. Unset disables /api/keys, /api/issue, /api/deploy, /api/recover, and /api/publish.
  *   ARK_URL        default https://mutinynet.arkade.sh
  *   EMULATOR_URL   default Mutinynet emulator
- *   DATA_DIR       oracle.json. Default ./data
+ *   DATA_DIR       oracle.json + wallet state. Default ./data
  *   PORT           default 8789
  *   HOST           default 127.0.0.1. oracle/Dockerfile sets 0.0.0.0.
  */
@@ -37,6 +39,7 @@ const arkUrl = process.env.ARK_URL?.trim() || ARK_URL;
 const emulatorUrl = process.env.EMULATOR_URL?.trim() || EMULATOR_URL;
 if (!Number.isInteger(port) || port < 0) throw new Error("PORT");
 
+const walletRepository = await openWalletRepository(dataDir);
 const wallet = oracleKey
   ? await Wallet.create({
       identity: SingleKey.fromHex(bytesToHex(oracleKey)),
@@ -44,11 +47,29 @@ const wallet = oracleKey
       indexerUrl: arkUrl,
       settlementConfig: false,
       storage: {
-        walletRepository: new InMemoryWalletRepository(),
+        walletRepository,
         contractRepository: new InMemoryContractRepository(),
       },
     })
   : undefined;
+
+if (wallet) {
+  try {
+    const state = (await walletRepository.getWalletState()) ?? {};
+    await walletRepository.saveWalletState({
+      ...state,
+      settings: { ...state.settings, hasPendingTx: true },
+    });
+    const recovered = await wallet.finalizePendingTxs();
+    if (recovered.finalized.length || recovered.pending.length) {
+      console.log(
+        `oracle recover finalized=${recovered.finalized.join(",") || "-"} pending=${recovered.pending.join(",") || "-"}`,
+      );
+    }
+  } catch (err) {
+    console.error("oracle recover failed:", err instanceof Error ? err.message : err);
+  }
+}
 
 const oracle = await createOracle({
   dataDir,
@@ -63,3 +84,4 @@ const oracle = await createOracle({
 });
 
 console.log(`oracle http://127.0.0.1:${oracle.port}/`);
+console.log(`oracle data ${path.resolve(dataDir)}`);

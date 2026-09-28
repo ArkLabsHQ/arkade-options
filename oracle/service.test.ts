@@ -111,7 +111,7 @@ async function boot(extra: Partial<OracleDeps> & { adminToken?: string } = {}) {
     now: () => 1_700_000_000 + 60,
     ...extra,
   });
-  return { oracle, dir, recorded, submitted, serverKey, emulatorKey, other, close: async () => { await oracle.close(); await rm(dir, { recursive: true, force: true }); } };
+  return { oracle, dir, recorded, submitted, serverKey, emulatorKey, other, wallet, close: async () => { await oracle.close(); await rm(dir, { recursive: true, force: true }); } };
 }
 
 async function call(url: string, pathName: string, body?: unknown, token?: string) {
@@ -149,6 +149,7 @@ test("status, admin order, deploy change, and a print that becomes a fixing", as
     assert.equal((open.json.args as { exit: number }).exit, 2048);
     assert.equal((open.json.args as { adminPk: string }).adminPk, hex.encode(schnorr.getPublicKey(secret(9))));
     assert.match(String(open.json.wallet), /^tark1/);
+    assert.equal(open.json.balance, "10000");
 
     assert.equal((await call(ctx.oracle.url, "/api/issue", {}, "nope")).status, 401);
     assert.equal((await call(ctx.oracle.url, "/api/issue", {})).status, 401);
@@ -246,6 +247,56 @@ test("status, admin order, deploy change, and a print that becomes a fixing", as
     assert.equal(witness[1], 64);
     const op = publishDigest(beaconIdOf(asset.AssetId.create("ee".repeat(32), 0)).txid, next);
     assert.equal(schnorr.verify(witness.subarray(2, 66), op, schnorr.getPublicKey(secret(9))), true);
+  } finally {
+    await ctx.close();
+  }
+});
+
+test("issue refuses an empty wallet with fund wallet", async () => {
+  const ctx = await boot();
+  ctx.wallet.getVtxos = async () => [];
+  try {
+    const pubkeys = [11, 12, 13, 14, 15].map((byte) => hex.encode(schnorr.getPublicKey(secret(byte))));
+    assert.equal((await call(ctx.oracle.url, "/api/keys", { pubkeys }, "test-token")).status, 200);
+    const status = await call(ctx.oracle.url, "/api/status");
+    assert.equal(status.json.balance, "0");
+    const issued = await call(ctx.oracle.url, "/api/issue", {}, "test-token");
+    assert.equal(issued.status, 400);
+    assert.equal(issued.json.error, "fund wallet");
+  } finally {
+    await ctx.close();
+  }
+});
+
+test("recover finalizes pending and can adopt an issued unit", async () => {
+  const ctx = await boot();
+  const finalized: string[] = [];
+  let state: { settings?: { hasPendingTx?: boolean } } | null = null;
+  const issuedId = asset.AssetId.create("ee".repeat(32), 0).toString();
+  ctx.wallet.walletRepository = {
+    async getWalletState() {
+      return state;
+    },
+    async saveWalletState(next) {
+      state = next;
+    },
+  };
+  ctx.wallet.finalizePendingTxs = async () => {
+    finalized.push("aa".repeat(32));
+    return { finalized: ["aa".repeat(32)], pending: ["aa".repeat(32)] };
+  };
+  ctx.wallet.getVtxos = async () => [
+    { txid: "ee".repeat(32), vout: 0, value: 10_000, assets: [{ assetId: issuedId, amount: 1n }] },
+  ];
+  try {
+    const first = await call(ctx.oracle.url, "/api/recover", {}, "test-token");
+    assert.equal(first.status, 200, JSON.stringify(first.json));
+    assert.deepEqual(finalized, ["aa".repeat(32)]);
+    assert.equal(state?.settings?.hasPendingTx, true);
+    assert.equal((first.json.adopted as { txid: string }).txid, "ee".repeat(32));
+    const status = await call(ctx.oracle.url, "/api/status");
+    assert.equal(status.json.issueTxid, "ee".repeat(32));
+    assert.equal(status.json.assetId, issuedId);
   } finally {
     await ctx.close();
   }
