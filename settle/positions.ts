@@ -3,7 +3,7 @@ import { asset } from "@arkade-os/sdk";
 import { beaconIdOf } from "../protocol/beacon-id.ts";
 import { directPayoutKey, type Terms } from "../protocol/contracts.ts";
 import { hexToBytes } from "../protocol/hex.ts";
-import { parsePosition } from "../protocol/messages.ts";
+import { parsePosition, type OptionPosition } from "../protocol/messages.ts";
 
 /**
  * A filled vault announced on Nostr. The settler rebuilds the contract from
@@ -25,6 +25,26 @@ export type WatchPosition = {
   vaultAddress: string;
   fillTxid?: string;
 };
+
+/**
+ * Vaults handed to the process directly. Accepts one position, an array, or
+ * `{ positions: [...] }`. Rows that are not a filled-vault record are skipped.
+ */
+export function manualPositions(body: unknown): OptionPosition[] {
+  let rows: unknown[] = [];
+  if (Array.isArray(body)) rows = body;
+  else if (body && typeof body === "object") {
+    const record = body as { positions?: unknown; type?: unknown };
+    if (Array.isArray(record.positions)) rows = record.positions;
+    else if (record.type === "option_position") rows = [body];
+  }
+  const positions: OptionPosition[] = [];
+  for (const row of rows) {
+    const position = parsePosition(row);
+    if (position) positions.push(position);
+  }
+  return positions;
+}
 
 /** One public position event. Incomplete or sealed RFQ payloads are skipped. */
 export function positionFromAnnouncement(body: unknown): WatchPosition | null {

@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import http from "node:http";
 
 import {
@@ -17,7 +18,7 @@ import { bytesToHex } from "../protocol/hex.ts";
 import type { OptionPosition } from "../protocol/messages.ts";
 import { quoteRelay, watchPositions } from "../protocol/nostr.ts";
 import { fetchOracleStatus, parseOracleBeacon, serviceOrigin } from "./oracle.ts";
-import { duePositions, positionFromAnnouncement, termsFor, type WatchPosition } from "./positions.ts";
+import { duePositions, manualPositions, positionFromAnnouncement, termsFor, type WatchPosition } from "./positions.ts";
 import { Progress } from "./progress.ts";
 import { settleQuote } from "./vault.ts";
 
@@ -28,6 +29,7 @@ import { settleQuote } from "./vault.ts";
  *
  *   ORACLE_URL   oracle origin. The beacon script comes from /api/status.
  *   RELAYS       default nostr.arkade.sh. Filled vaults are kind 30078.
+ *   POSITIONS    optional JSON file of vaults to settle without waiting for an event.
  *   SETTLE_KEY   optional 32-byte hex. Signs the read-fee coin when readFee > 0.
  *   ARK_URL      default Mutinynet arkd
  *   EMULATOR_URL default Mutinynet emulator
@@ -43,6 +45,7 @@ function required(name: string): string {
 
 const relayList = (process.env.RELAYS ?? DEFAULT_RELAYS.join(",")).split(",").map((item) => item.trim()).filter(Boolean);
 const relay = quoteRelay(relayList);
+const positionsFile = process.env.POSITIONS?.trim() || "";
 const oracleUrl = serviceOrigin(required("ORACLE_URL"));
 const settleKey = process.env.SETTLE_KEY?.trim() ?? "";
 if (settleKey && !/^[0-9a-fA-F]{64}$/.test(settleKey)) throw new Error("SETTLE_KEY must be 32 bytes");
@@ -106,6 +109,36 @@ async function feeCoins() {
   return page.vtxos ?? [];
 }
 
+async function loadManual() {
+  if (!positionsFile) return;
+  let text: string;
+  try {
+    text = await readFile(positionsFile, "utf8");
+  } catch (err) {
+    const missing = (err as NodeJS.ErrnoException).code === "ENOENT";
+    once("positions-file", missing ? `positions file missing ${positionsFile}` : `positions file ${err instanceof Error ? err.message : err}`, true);
+    return;
+  }
+  let body: unknown;
+  try {
+    body = JSON.parse(text);
+  } catch (err) {
+    once("positions-file", `positions file ${err instanceof Error ? err.message : err}`, true);
+    return;
+  }
+  noted.delete("positions-file");
+  let changed = false;
+  for (const position of manualPositions(body)) {
+    if (progress.remember(position)) changed = true;
+  }
+  if (!changed) return;
+  try {
+    await progress.save();
+  } catch (err) {
+    console.error("progress save", err instanceof Error ? err.message : err);
+  }
+}
+
 function onPosition(position: OptionPosition) {
   if (!progress.remember(position)) return;
   void progress.save().catch((err) => {
@@ -118,6 +151,7 @@ function onPosition(position: OptionPosition) {
  * has to read the outpoint the previous settle created.
  */
 async function progressDue() {
+  await loadManual();
   const now = Math.floor(Date.now() / 1000);
   const positions: WatchPosition[] = [];
   for (const row of progress.positions()) {

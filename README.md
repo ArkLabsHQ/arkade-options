@@ -66,7 +66,9 @@ curl -k -X POST -H "Authorization: Bearer $ORACLE_ADMIN" -H "content-type: appli
 
 The beacon keeps the eight newest fixings. Settle a vault before eight later expiries are published, or publish that expiry again.
 
-Settlement is a separate process. A desk publishes each filled vault on nostr.arkade.sh. The settler watches those events and, after expiry, spends the vault. It does not call the desk.
+The app provider runs a settler next to the oracle and the desk. After a fill, the desk publishes the vault on nostr.arkade.sh. The settler catches that event and, once the option has expired, spends the vault. It does not call the desk. Anyone else can run the same process and settle the same contracts. The first valid spend wins.
+
+A vault txid alone is not enough. The event (or a `POSITIONS` file of the same JSON) also has to carry the contract parameters: kind, strike, expiry, beacon, and the writer and holder keys. The price comes from the beacon coin. Deploy steps, the event fields, and the file are in [docs/runbook.md](docs/runbook.md).
 
 ```bash
 export ORACLE_URL=https://<oracle>

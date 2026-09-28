@@ -26,7 +26,7 @@ import { statePacket } from "../protocol/cospend.ts";
 import { bytesToHex, hexToBytes } from "../protocol/hex.ts";
 import { parsePosition } from "../protocol/messages.ts";
 import { serviceOrigin, parseOracleBeacon } from "./oracle.ts";
-import { duePositions, positionFromAnnouncement, termsFor } from "./positions.ts";
+import { duePositions, manualPositions, positionFromAnnouncement, termsFor } from "./positions.ts";
 import { settleQuote, slotPrice, settlePayouts, type ChainCoin } from "./vault.ts";
 
 const CHECKPOINT = "03080040b27520dfcaec558c7e78cf3e38b898ba8a43cfb5727266bae32c5c5b3aeb32c558aa0bac";
@@ -138,6 +138,31 @@ test("due positions are expired vaults this bot has not progressed", () => {
     row("done", EXPIRY - 1),
   ], EXPIRY, new Set(["done"]));
   assert.deepEqual(due.map((item) => item.id), ["older", "later"]);
+});
+
+test("a positions file accepts one vault, a list, or a positions object", () => {
+  const row = {
+    v: 1,
+    type: "option_position",
+    rfq_id: "aa".repeat(32),
+    pair: PAIR,
+    kind: 0,
+    collateral: "20000",
+    strike: "9700000",
+    expiry: EXPIRY,
+    exit: Number(EXIT),
+    writer_pubkey: "11".repeat(32),
+    writer_pk_script: "5120" + "22".repeat(32),
+    holder_pubkey: "33".repeat(32),
+    beacon_txid: "07".repeat(32),
+    beacon_gidx: 0,
+    vault_address: "tark1qqcpq7yq3e8hhsx6ml3fud93m7827qg",
+    fill_txid: "ee".repeat(32),
+  };
+  assert.equal(manualPositions(row)[0]?.fill_txid, row.fill_txid);
+  assert.equal(manualPositions([row, { ...row, type: "rfq_quote" }]).length, 1);
+  assert.equal(manualPositions({ positions: [row] }).length, 1);
+  assert.equal(manualPositions({ quotes: [row] }).length, 0);
 });
 
 test("a service origin drops the path and refuses other schemes", () => {
