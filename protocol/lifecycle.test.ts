@@ -19,6 +19,7 @@ import {
 import { holderPayoff, settlementOutputs } from "../app/settle-math.js";
 import type { QuoteRow } from "../desk/book.ts";
 import { fillQuote } from "../desk/fill.ts";
+import type { PendingArk } from "../desk/finalize.ts";
 import { beaconIdOf, bindBeacon, genesisState, nextState, priceValue } from "./beacon.ts";
 import { EXIT } from "./constants.ts";
 import { bindContracts, payoutVtxo, type Terms } from "./contracts.ts";
@@ -50,10 +51,14 @@ function key(n: number) {
 
 function memory() {
   const coins: Coin[] = [];
+  const pending: Coin[] = [];
+  const pendingTxs: { arkTxid: string; signedCheckpointTxs: string[] }[] = [];
+  const finalized: string[] = [];
   const prev = new Map<string, string>();
   const submitted: string[] = [];
   const indexer = {
-    async getVtxos(filter: { scripts?: string[] }) {
+    async getVtxos(filter: { scripts?: string[]; pendingOnly?: boolean }) {
+      if (filter.pendingOnly) return { vtxos: pending };
       const wanted = new Set(filter.scripts ?? []);
       return { vtxos: coins.filter((coin) => wanted.has(coin.script) && !coin.isSpent) };
     },
@@ -73,7 +78,17 @@ function memory() {
     },
     async submitTx(arkTx: string, checkpointTxs: string[]) {
       submitted.push(arkTx);
-      prev.set(Transaction.fromPSBT(base64.decode(arkTx)).id, arkTx);
+      const txid = Transaction.fromPSBT(base64.decode(arkTx)).id;
+      prev.set(txid, arkTx);
+      pendingTxs.splice(0, pendingTxs.length, { arkTxid: txid, signedCheckpointTxs: checkpointTxs });
+      pending.splice(0, pending.length, {
+        txid: "11".repeat(32),
+        vout: 0,
+        value: 1_000,
+        script: "",
+        isSpent: true,
+        spentBy: txid,
+      });
       return { signedArkTx: arkTx, signedCheckpointTxs: checkpointTxs };
     },
     async submitIntent() {
@@ -86,7 +101,7 @@ function memory() {
       return { signedTx: tx };
     },
   };
-  return { coins, prev, submitted, indexer, emulator };
+  return { coins, pending, pendingTxs, finalized, prev, submitted, indexer, emulator };
 }
 
 function spendOutputs(psbt: string) {
@@ -112,8 +127,13 @@ test("a covered call locks, pays the writer, settles, and refunds a missed fill"
       async submitTx() {
         throw new Error("arkd is not used");
       },
-      async finalizeTx() {
-        throw new Error("arkd is not used");
+      async getPendingTxs() {
+        return book.pendingTxs;
+      },
+      async finalizeTx(arkTxid: string) {
+        book.finalized.push(arkTxid);
+        book.pending.splice(0, book.pending.length);
+        book.pendingTxs.splice(0, book.pendingTxs.length);
       },
     } as unknown as Pick<ArkProvider, "getInfo" | "submitTx" | "finalizeTx">,
     emulator: book.emulator as EmulatorProvider,
@@ -196,9 +216,11 @@ test("a covered call locks, pays the writer, settles, and refunds a missed fill"
     row: quote(terms.deadline),
     now: Number(now),
     termsFor: () => terms,
+    ark: client.arkProvider as unknown as PendingArk,
   });
   assert.equal(filled.result, "filled");
   assert.ok(filled.txid);
+  assert.deepEqual(book.finalized, [filled.txid]);
   const fillTx = book.submitted.at(-1);
   assert.ok(fillTx);
   const paid = spendOutputs(fillTx);
