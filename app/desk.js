@@ -27,6 +27,7 @@ const state = {
   address: "",
   kind: 0,
   days: 30,
+  tenorSec: 0,
   strikeIndex: 0,
   view: "connect",
   market: null,
@@ -88,6 +89,7 @@ function persist() {
     writerAddress: p.writerAddress,
     payoutAddress: p.payoutAddress,
     days: p.days,
+    tenorSec: p.tenorSec || 0,
     createdAt: p.createdAt,
     apy: p.apy,
     apyFrozen: p.apyFrozen,
@@ -133,11 +135,18 @@ function annualized(premiumSats, collateralSats, days) {
   return (Number(premiumSats) / Number(collateralSats)) * (365 / days) * 100;
 }
 
+function selectedDays() {
+  if (state.tenorSec > 0) return state.tenorSec / 86400;
+  return state.days;
+}
+
 function tenorDays(position) {
+  if (position.tenorSec > 0) return position.tenorSec / 86400;
   if (position.days > 0) return position.days;
   const start = position.createdAt || Math.floor(Date.now() / 1000);
   const span = Number(position.expiry) - start;
-  return Math.max(1, Math.round(span / 86400) || 30);
+  if (span > 0) return span / 86400;
+  return 30;
 }
 
 function btcToSats(text) {
@@ -147,9 +156,16 @@ function btcToSats(text) {
   return BigInt(whole) * 100_000_000n + BigInt((frac + "00000000").slice(0, 8));
 }
 
-function expiryUnix(days) {
+let pinnedExpiry = 0;
+
+function expiryUnix() {
+  if (state.tenorSec > 0) {
+    const now = Math.floor(Date.now() / 1000);
+    if (pinnedExpiry <= now + 90) pinnedExpiry = now + state.tenorSec;
+    return BigInt(pinnedExpiry);
+  }
   const d = new Date();
-  d.setUTCDate(d.getUTCDate() + days);
+  d.setUTCDate(d.getUTCDate() + state.days);
   d.setUTCHours(8, 0, 0, 0);
   return BigInt(Math.floor(d.getTime() / 1000));
 }
@@ -159,15 +175,16 @@ let pinnedStrike = null;
 function ladder() {
   const steps = state.kind === 0 ? [105n, 110n, 115n, 125n, 140n] : [95n, 90n, 85n, 75n, 60n];
   const grid = state.spotCents >= 10_000_000n ? 100_000n : 50_000n;
-  const seen = new Set();
-  const rows = steps.map((step) => {
+  const seen = new Set([state.spotCents.toString()]);
+  const rows = [state.spotCents];
+  for (const step of steps) {
     let cents = ((state.spotCents * step) / 100n + grid / 2n) / grid * grid;
     const bump = state.kind === 0 ? grid : -grid;
     while (seen.has(cents.toString())) cents += bump;
     seen.add(cents.toString());
-    return cents;
-  });
-  if (pinnedStrike != null && !rows.includes(pinnedStrike)) return [pinnedStrike, ...rows.slice(0, 4)];
+    rows.push(cents);
+  }
+  if (pinnedStrike != null && !rows.includes(pinnedStrike)) return [pinnedStrike, ...rows.slice(0, 5)];
   return rows;
 }
 
@@ -189,7 +206,7 @@ function sizeError(sats) {
 function termsKey() {
   const sats = sizeSats();
   if (state.spotCents == null || sats == null) return "";
-  return `${state.kind}:${strike()}:${expiryUnix(state.days)}:${sats}`;
+  return `${state.kind}:${strike()}:${expiryUnix()}:${sats}`;
 }
 
 function kindCopy() {
@@ -287,6 +304,9 @@ function humanNote(note) {
   if (note.includes("premium below dust")) {
     return dustNote();
   }
+  if (note.includes("expiry")) {
+    return "The desk will not quote an expiry this soon. Redeploy it to allow 10 minutes.";
+  }
   return note;
 }
 
@@ -370,6 +390,7 @@ function renderStrikes() {
 }
 
 function pctFromSpot(cents) {
+  if (cents === state.spotCents) return "±0%";
   const delta = Number((cents - state.spotCents) * 10000n / state.spotCents) / 100;
   const sign = delta > 0 ? "+" : "";
   return `${sign}${delta.toFixed(1)}%`;
@@ -472,11 +493,14 @@ function renderSell() {
   document.querySelectorAll("[data-kind]").forEach((btn) => {
     btn.setAttribute("aria-pressed", String(Number(btn.dataset.kind) === state.kind));
   });
-  document.querySelectorAll("[data-days]").forEach((btn) => {
-    btn.setAttribute("aria-pressed", String(Number(btn.dataset.days) === state.days));
+  document.querySelectorAll("[data-days], [data-tenor]").forEach((btn) => {
+    const tenor = Number(btn.dataset.tenor || 0);
+    const days = Number(btn.dataset.days || 0);
+    const on = tenor ? state.tenorSec === tenor : !state.tenorSec && days === state.days;
+    btn.setAttribute("aria-pressed", String(on));
   });
   $("kind-copy").textContent = kindCopy();
-  $("expiry-when").textContent = state.spotCents == null ? "" : fmtWhen(expiryUnix(state.days));
+  $("expiry-when").textContent = state.spotCents == null ? "" : fmtWhen(expiryUnix());
   const sats = sizeSats();
   const err = state.spotCents == null ? "" : sizeError(sats);
   $("size-error").textContent = err;
@@ -489,7 +513,7 @@ function renderSell() {
   const head = frozen
     ? { sats: position.premiumSats, name: position.solver || "Desk" }
     : headlineQuote();
-  const days = state.days;
+  const days = selectedDays();
   if (!head || err) {
     $("premium").textContent = state.quoting && !err ? "…" : "—";
     $("premium-meta").textContent = err ? "" : (state.spotCents == null ? "Loading the price." : "");
@@ -532,7 +556,7 @@ function renderSell() {
     $("deposit-amount").textContent = sent
       ? `${fmtBtc(deposit.amountSats)} BTC is on this address`
       : `Send ${fmtBtc(deposit.amountSats)} BTC`;
-    const apy = deposit.apy ?? annualized(deposit.premium, deposit.amountSats, state.days);
+    const apy = deposit.apy ?? annualized(deposit.premium, deposit.amountSats, selectedDays());
     $("deposit-fixed").textContent = frozen
       ? `This deposit pays ${fmtBtc(deposit.premium)} BTC · ${fmtApy(position.apy ?? apy)}`
       : `This deposit pays ${fmtBtc(deposit.premium)} BTC · ${fmtApy(apy)}`;
@@ -784,13 +808,20 @@ function adoptQuote() {
   const idx = ladder().findIndex((cents) => cents === latest.strike);
   if (idx < 0) return;
   state.strikeIndex = idx;
-  if (latest.days === 7 || latest.days === 30 || latest.days === 90) state.days = latest.days;
+  if (latest.tenorSec > 0) {
+    state.tenorSec = latest.tenorSec;
+    state.days = 0;
+  } else if (latest.days === 7 || latest.days === 30 || latest.days === 90) {
+    state.tenorSec = 0;
+    state.days = latest.days;
+  }
   const size = $("size");
   if (size) size.value = fmtBtc(latest.collateral);
   strikeKey = "";
 }
 
 function onTermsChanged() {
+  pinnedExpiry = 0;
   state.market = null;
   state.deskQuote = null;
   state.quoteNote = "";
@@ -813,7 +844,7 @@ async function refreshLive(gen) {
     if (gen === quoteGen) renderSell();
     return;
   }
-  const expiry = expiryUnix(state.days);
+  const expiry = expiryUnix();
   const picked = strike();
   try {
     const points = await fetchSurface();
@@ -893,7 +924,7 @@ async function confirm() {
       strike: strike(),
       collateral: sats,
       premium: quote.sats,
-      expiry: expiryUnix(state.days),
+      expiry: expiryUnix(),
       deadline: BigInt(deadline),
       writerAddress: state.address,
       holderPkHex: quote.holderPkHex,
@@ -904,7 +935,7 @@ async function confirm() {
     if (quote.intentAddress && (deposit.address !== quote.intentAddress || deposit.vaultAddress !== quote.vaultAddress)) {
       throw new Error("The desk address does not match this page.");
     }
-    const apy = annualized(quote.sats, sats, state.days);
+    const apy = annualized(quote.sats, sats, selectedDays());
     let position = state.positions.find((item) => item.address === deposit.address && item.status === "locking");
     if (!position) {
       position = {
@@ -912,7 +943,7 @@ async function confirm() {
         side: 0,
         kind: state.kind,
         strike: strike(),
-        expiry: expiryUnix(state.days),
+        expiry: expiryUnix(),
         collateral: sats,
         premiumSats: quote.sats,
         premiumUsd: quote.usd,
@@ -927,7 +958,8 @@ async function confirm() {
         vaultAddress: deposit.vaultAddress,
         writerAddress: state.address,
         payoutAddress: state.address,
-        days: state.days,
+        days: state.tenorSec > 0 ? 0 : state.days,
+        tenorSec: state.tenorSec,
         createdAt: Math.floor(Date.now() / 1000),
         apy,
         uri: deposit.uri,
@@ -1024,7 +1056,10 @@ async function adoptDeskPositions() {
         const expiry = BigInt(quote.expiry);
         const collateral = BigInt(quote.collateral);
         const premiumSats = BigInt(quote.premium);
-        const days = tenorFromExpiry(expiry);
+        const createdAt = quote.deadline ? Number(quote.deadline) - 180 : Math.floor(Date.now() / 1000);
+        const span = Number(expiry) - createdAt;
+        const tenorSec = span > 0 && span < 86400 ? span : 0;
+        const days = tenorSec ? 0 : tenorFromExpiry(expiry);
         state.positions.unshift({
           id: crypto.randomUUID(),
           side: 0,
@@ -1046,8 +1081,9 @@ async function adoptDeskPositions() {
           writerAddress: state.address,
           payoutAddress: state.address,
           days,
-          createdAt: quote.deadline ? Number(quote.deadline) - 180 : Math.floor(Date.now() / 1000),
-          apy: annualized(premiumSats, collateral, days),
+          tenorSec,
+          createdAt,
+          apy: annualized(premiumSats, collateral, tenorSec ? tenorSec / 86400 : days),
           uri: deposit.uri,
           apyFrozen: true,
           marketSats: null,
@@ -1279,12 +1315,21 @@ function bind() {
       show(view);
     });
   });
-  document.querySelectorAll("[data-days]").forEach((btn) => {
+  document.querySelectorAll("[data-days], [data-tenor]").forEach((btn) => {
     btn.addEventListener("click", () => {
-      const days = Number(btn.dataset.days);
-      if (days === state.days) return;
-      state.days = days;
-      document.querySelectorAll("[data-days]").forEach((other) => {
+      const tenor = Number(btn.dataset.tenor || 0);
+      const days = Number(btn.dataset.days || 0);
+      if (tenor) {
+        if (state.tenorSec === tenor) return;
+        state.tenorSec = tenor;
+        state.days = 0;
+      } else if (!state.tenorSec && days === state.days) {
+        return;
+      } else {
+        state.tenorSec = 0;
+        state.days = days;
+      }
+      document.querySelectorAll("[data-days], [data-tenor]").forEach((other) => {
         other.setAttribute("aria-pressed", String(other === btn));
       });
       onTermsChanged();
