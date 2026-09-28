@@ -211,5 +211,7 @@ test("a wire message with the wrong pair is dropped", () => {
   assert.equal(parseWire({ ...request, pair: "arkade:BTC->arkade:BTC" }), null);
   assert.equal(parseWire({ ...request, amount: "0001" }), null);
   assert.equal(requestRefusal(request, 1_790_000_000), "expiry");
+  assert.equal(requestRefusal({ ...request, profile: { ...request.profile, expiry: 1_790_000_600 } }, 1_790_000_000), "");
+  assert.equal(requestRefusal({ ...request, profile: { ...request.profile, expiry: 1_790_000_060 } }, 1_790_000_000), "expiry");
   assert.equal(requestRefusal({ ...request, profile: { ...request.profile, expiry: 1_800_000_000 } }, 1_700_000_000), "");
 });

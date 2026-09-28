@@ -239,7 +239,9 @@ function parseStatus(body: Record<string, unknown>): RfqStatus | null {
 export function requestRefusal(message: RfqRequest, now: number): string {
   const collateral = BigInt(message.amount);
   if (collateral < Q_MIN || collateral > Q_MAX) return "collateral";
-  if (message.profile.expiry <= now + 1800) return "expiry";
+  // Ten minutes is allowed. The open window (expiry − 1800) may already
+  // have passed; the quote only has to finish before expiry.
+  if (message.profile.expiry <= now + 60) return "expiry";
   return "";
 }
 

@@ -173,6 +173,7 @@ const filled = await fillQuote({
   deskScript,
   row: row(fill, fillDeadline),
   now: Number(now),
+  ark: deskClient.arkProvider as RestArkProvider,
   termsFor: (item) => ({
     kind: 0,
     strike,

@@ -6,6 +6,7 @@ import { bytesToHex } from "../protocol/hex.ts";
 import { classifyIntent, psbtView } from "../protocol/intent-state.ts";
 import { intentProgram } from "../protocol/programs.ts";
 import type { QuoteRow } from "./book.ts";
+import { finalizeDeskSpends, pendingOutpoints, type PendingArk } from "./finalize.ts";
 
 type Client = Awaited<ReturnType<typeof arkade.Arkade.connect>>;
 type Coin = { txid: string; vout: number; value: number };
@@ -49,6 +50,11 @@ export async function fillQuote(opts: {
   now: number;
   /** Desk float already reported by the contract manager. Omit it and the indexer is asked once. */
   float?: Coin[];
+  /**
+   * Ark server that can finish a covenant spend. `send()` stops after the emulator
+   * submits; without finalizeTx the premium and the desk change never become vtxos.
+   */
+  ark?: PendingArk;
 }): Promise<{ result: FillResult; txid?: string; spent?: Coin[] }> {
   const bound = bindContracts(opts.termsFor(opts.row));
   const intent = opts.client.contract(intentProgram(), bound.intent);
@@ -86,7 +92,41 @@ export async function fillQuote(opts: {
   ]);
   if (surplus > 0n) spend.change(opts.deskScript.pkScript);
   const sent = await spend.send();
+  await finishSpend(opts, picked);
   return { result: "filled", txid: sent.txid, spent: picked };
+}
+
+/**
+ * The emulator submits the virtual tx and returns. Arkd still holds the server-signed
+ * checkpoints until the desk signs them and calls finalizeTx. Retry while the spent
+ * float is still pending; a slow indexer is not a second fill.
+ */
+async function finishSpend(opts: {
+  client: Client;
+  deskScript: DefaultVtxo.Script;
+  ark?: PendingArk;
+}, picked: Coin[]) {
+  const indexer = opts.client.indexer;
+  const identity = opts.client.identity;
+  if (!opts.ark || !indexer || !identity) return;
+  const want = new Set(picked.map((coin) => `${coin.txid}:${coin.vout}`));
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    try {
+      const done = await finalizeDeskSpends({
+        ark: opts.ark,
+        indexer,
+        identity,
+        deskScript: opts.deskScript,
+      });
+      if (done.length) console.log("finalized", done.join(","));
+    } catch (err) {
+      console.error("finalize", err instanceof Error ? err.message : err);
+    }
+    const pending = await pendingOutpoints(indexer, opts.deskScript);
+    if (![...want].some((id) => pending.has(id))) return;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  console.error("finalize still pending", [...want].join(","));
 }
 
 /** If finalize already landed but the book never saved, classify the spend as filled. */
