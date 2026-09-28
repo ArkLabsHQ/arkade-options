@@ -1,4 +1,4 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, open, readFile, rename } from "node:fs/promises";
 import path from "node:path";
 
 export type StoredPrint = {
@@ -30,15 +30,22 @@ export async function loadStore(dir: string): Promise<OracleFile> {
   try {
     return { ...empty(), ...(JSON.parse(await readFile(path.join(dir, "oracle.json"), "utf8")) as Partial<OracleFile>) };
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") return empty();
-    throw err;
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+    return empty();
   }
 }
 
+/** Write then fsync the tmp file before rename so a crash cannot leave a torn oracle.json. */
 export async function saveStore(dir: string, file: OracleFile): Promise<void> {
   await mkdir(dir, { recursive: true });
   const dest = path.join(dir, "oracle.json");
   const tmp = `${dest}.${process.pid}.tmp`;
-  await writeFile(tmp, JSON.stringify(file, null, 2));
+  const handle = await open(tmp, "w");
+  try {
+    await handle.writeFile(JSON.stringify(file, null, 2));
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
   await rename(tmp, dest);
 }

@@ -47,6 +47,8 @@ import { spotCents } from "./spot.ts";
  * One process: Nostr RFQ, the quote book, and fills from the contract manager.
  *
  *   DESK_KEY        32-byte hex. Nostr pubkey and the option holder key.
+ *   BEACON_TXID     required 64-hex display txid of the oracle's identity asset
+ *   BEACON_GIDX     optional vout index of that asset. Default 0
  *   RELAYS          comma-separated websocket URLs
  *   ARK_URL         default Mutinynet arkd
  *   EMULATOR_URL    default Mutinynet emulator
@@ -94,7 +96,7 @@ const book = await Book.open(dataDir);
 const beaconDisplay = beaconFromEnv();
 const indexer = new RestIndexerProvider(arkUrl);
 if (typeof EventSource === "undefined") {
-  console.warn("Contract events need Node's EventSource. Start the desk with --experimental-eventsource.");
+  throw new Error("Contract events need Node's EventSource. Start the desk with --experimental-eventsource.");
 }
 const contractManager = await ContractManager.create({
   indexerProvider: indexer,
@@ -181,7 +183,9 @@ async function refuse(to: string, rfqId: string, reason: string) {
 async function onRequest(message: RfqRequest, from: string) {
   const now = Math.floor(Date.now() / 1000);
   const existing = book.get(message.rfq_id);
-  if (existing && existing.clientPubkey === from && existing.deadline > now) {
+  // Only replay open quotes. Expired (register-fail) and filled rows must not
+  // block a retry while the old deadline is still in the future.
+  if (existing && existing.status === "open" && existing.clientPubkey === from && existing.deadline > now) {
     await transport.publish(from, quoteMessage(existing));
     return;
   }
@@ -232,7 +236,7 @@ async function onRequest(message: RfqRequest, from: string) {
     }
     sats = priced.sats;
   }
-  const dust = premiumRefusal(sats);
+  const dust = premiumRefusal(sats, BigInt(message.amount));
   if (dust) {
     await refuse(from, message.rfq_id, dust);
     return;
@@ -275,6 +279,10 @@ async function onRequest(message: RfqRequest, from: string) {
     await track(row);
   } catch (err) {
     console.error("register", row.rfqId, err instanceof Error ? err.message : err);
+    book.mark(row.rfqId, "expired");
+    await book.save();
+    await refuse(from, message.rfq_id, "register");
+    return;
   }
   await transport.publish(from, quoteMessage(row));
   console.log("quote", row.rfqId, row.premium, row.intentAddress);
@@ -333,12 +341,19 @@ function tracked(rfqId: string): boolean {
   return false;
 }
 
+function forgetScript(rfqId: string) {
+  for (const [script, id] of quoteByScript) {
+    if (id === rfqId) quoteByScript.delete(script);
+  }
+}
+
 async function track(row: QuoteRow) {
-  if (tracked(row.rfqId)) return;
   const bound = bindContracts(termsFor(row));
   const intent = client.contract(intentProgram(), bound.intent);
+  const script = bytesToHex(intent.pkScript);
+  if (quoteByScript.get(script) === row.rfqId) return;
   await intent.register({ label: row.rfqId });
-  quoteByScript.set(bytesToHex(intent.pkScript), row.rfqId);
+  quoteByScript.set(script, row.rfqId);
 }
 
 function queueFill(rfqId: string) {
@@ -372,10 +387,19 @@ async function pump() {
           for (const coin of outcome.spent ?? []) deskCoins.delete(`${coin.txid}:${coin.vout}`);
           recount();
           book.mark(row.rfqId, "filled", outcome.txid);
-          await book.save();
+          forgetScript(row.rfqId);
+          try {
+            await book.save();
+          } catch (err) {
+            console.error("book save", row.rfqId, err instanceof Error ? err.message : err);
+            // Keep status filled but drop the txid so housekeeping retries save / recovery.
+            const stuck = book.get(row.rfqId);
+            if (stuck) delete stuck.fillTxid;
+          }
           console.log("filled", row.rfqId, outcome.txid ?? "");
         } else if (outcome.result === "expired") {
           book.mark(row.rfqId, "expired");
+          forgetScript(row.rfqId);
           await book.save();
         } else if (outcome.result === "short") {
           console.error("float short", row.rfqId);
@@ -399,7 +423,6 @@ async function housekeeping() {
     } catch (err) {
       console.error("spot", err instanceof Error ? err.message : err);
     }
-    const now = Math.floor(Date.now() / 1000);
     for (const row of book.list()) {
       const unsettled = row.status === "open" || (row.status === "filled" && !row.fillTxid);
       if (!unsettled) continue;
@@ -410,13 +433,18 @@ async function housekeeping() {
           console.error("register", row.rfqId, err instanceof Error ? err.message : err);
           continue;
         }
-        queueFill(row.rfqId);
-        continue;
       }
-      if (row.status === "open" && now >= row.deadline) queueFill(row.rfqId);
+      // Poll unsettled quotes: EventSource can miss a coin; recovery needs another look after a crash.
+      queueFill(row.rfqId);
     }
   } finally {
     polling = false;
+  }
+}
+
+function queueOpenFills() {
+  for (const row of book.list()) {
+    if (row.status === "open" || (row.status === "filled" && !row.fillTxid)) queueFill(row.rfqId);
   }
 }
 
@@ -424,6 +452,7 @@ contractManager.onContractEvent((event) => {
   if (event.type !== "vtxo_received" && event.type !== "vtxo_spent") return;
   if (event.contractScript === deskScriptHex) {
     rememberDesk(event);
+    queueOpenFills();
     return;
   }
   const rfqId = quoteByScript.get(event.contractScript);
@@ -456,6 +485,8 @@ function statusBody() {
     pubkey,
     address,
     balance: balance.toString(),
+    beaconTxid: beaconDisplay.txid,
+    beaconGidx: beaconDisplay.gidx,
     spotCents: spot ? spot.cents.toString() : null,
     spotSources: spot?.sources ?? [],
     pricing: volOverride != null
@@ -491,6 +522,7 @@ server.listen(port, () => {
   console.log(`commit ${revision()}`);
   console.log(`desk ${pubkey}`);
   console.log(`address ${address}`);
+  console.log(`beacon ${beaconDisplay.txid}:${beaconDisplay.gidx}`);
   console.log(`status http://127.0.0.1:${port}/status`);
 });
 

@@ -194,7 +194,8 @@ export function requestRefusal(message: RfqRequest, now: number): string {
   return "";
 }
 
-export function premiumRefusal(sats: bigint): string {
+export function premiumRefusal(sats: bigint, collateral?: bigint): string {
   if (sats <= DUST_SATS) return "premium below dust";
+  if (collateral != null && sats >= collateral) return "premium";
   return "";
 }

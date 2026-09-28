@@ -456,10 +456,19 @@ function svgEl(name, attrs, text) {
   return node;
 }
 
+function clearStaleDeskQuote(now = Math.floor(Date.now() / 1000)) {
+  const quote = state.deskQuote;
+  if (!quote) return false;
+  if ((quote.validUntil && quote.validUntil <= now) || (quote.deadline && quote.deadline <= now)) {
+    state.deskQuote = null;
+    return true;
+  }
+  return false;
+}
+
 function renderSell() {
   if (state.view !== "sell") return;
-  const now = Math.floor(Date.now() / 1000);
-  if (state.deskQuote?.deadline && state.deskQuote.deadline <= now) state.deskQuote = null;
+  clearStaleDeskQuote();
   document.querySelectorAll("[data-kind]").forEach((btn) => {
     btn.setAttribute("aria-pressed", String(Number(btn.dataset.kind) === state.kind));
   });
@@ -837,11 +846,13 @@ async function refreshLive(gen) {
     if (best) {
       state.deskQuote = best;
       state.quoteNote = "";
-    } else if (!state.deskQuote) {
-      state.quoteNote = live.note || "The desk did not answer.";
+    } else {
+      clearStaleDeskQuote();
+      if (!state.deskQuote) state.quoteNote = live.note || "The desk did not answer.";
     }
   } catch (err) {
     if (gen !== quoteGen) return;
+    clearStaleDeskQuote();
     if (!state.deskQuote) {
       state.quoteNote = err instanceof Error ? err.message : "The desk did not answer.";
     }
@@ -853,12 +864,17 @@ async function refreshLive(gen) {
 async function confirm() {
   const quote = liveQuote();
   const sats = sizeSats();
+  const now = Math.floor(Date.now() / 1000);
   if (!state.address || !quote || sats == null || sizeError(sats) || quote.sats <= DUST || state.confirming) return;
-  if (PINNED_DESKS.length > 0 && !quote.intentAddress) return;
+  if (PINNED_DESKS.length > 0 && (
+    !quote.intentAddress
+    || !quote.deadline || quote.deadline <= now
+    || !quote.validUntil || quote.validUntil <= now
+  )) return;
   state.confirming = true;
   $("status").textContent = "";
   renderSell();
-  const deadline = quote.deadline ?? Math.floor(Date.now() / 1000) + 180;
+  const deadline = quote.deadline;
   try {
     const deposit = await depositAddress({
       kind: state.kind,
@@ -1107,6 +1123,7 @@ async function refreshPositionMarkets() {
 
 function tick() {
   const now = Math.floor(Date.now() / 1000);
+  if (clearStaleDeskQuote(now) && state.view === "sell") renderSell();
   for (const position of state.positions) {
     if (position.status !== "deposited" || !position.deadline || now < Number(position.deadline)) continue;
     if (!position.address || expiring.has(position.address)) continue;
@@ -1188,22 +1205,24 @@ async function loadSpot() {
     ["Coinbase", "https://api.coinbase.com/v2/prices/BTC-USD/spot", (body) => body.data.amount],
     ["Binance", "https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT", (body) => body.price],
   ];
+  const live = [];
   for (const [name, url, pick] of sources) {
     try {
       const res = await fetch(url);
       if (!res.ok) continue;
       const price = Number(pick(await res.json()));
-      if (price > 1000 && price < 10_000_000) {
-        state.spotCents = BigInt(Math.round(price * 100));
-        state.spotSource = name;
-        return;
-      }
+      if (price > 1000 && price < 10_000_000) live.push({ name, cents: BigInt(Math.round(price * 100)) });
     } catch {
-      // try the next source, then the labeled fallback
+      // try the next source
     }
   }
-  state.spotCents = 10_000_000n;
-  state.spotSource = "Simulated spot";
+  if (live.length < 2) {
+    state.spotCents = null;
+    state.spotSource = "Spot unavailable";
+    return;
+  }
+  state.spotCents = (live[0].cents + live[1].cents) / 2n;
+  state.spotSource = live.map((item) => item.name).join(" · ");
 }
 
 function loadArtifact() {
@@ -1254,7 +1273,7 @@ bind();
 window.addEventListener("hashchange", showFromHash);
 loadSpot().then(() => {
   $("spot-source").textContent = state.spotSource;
-  $("spot-px").textContent = fmtUsdFromCents(state.spotCents);
+  $("spot-px").textContent = state.spotCents == null ? "—" : fmtUsdFromCents(state.spotCents);
   adoptQuote();
   if (state.view === "sell") onTermsChanged();
   renderBlotter();

@@ -17,7 +17,8 @@ curl -k https://arkadeoptions-desk-jxdh3j-37969b-138-199-218-130.traefik.me/
 - Send Mutinynet sats to `address`. That is the float.
 - Send enough for premiums, not for the seller's collateral.
 - `balance` stays `0` until the coins arrive.
-- A quote can still go out at `0`. Finalize then logs `float short`.
+- A quote can go out at `0`. Fill retries when float arrives; until then the desk logs `float short`.
+- `beaconTxid` must match the oracle's identity asset. Copy it from the oracle dashboard or startup log.
 
 ## Point the page at the desk
 
@@ -55,13 +56,15 @@ docker run --rm -p 8080:80 arkade-options
 ```bash
 pnpm install
 export DESK_KEY=$(openssl rand -hex 32)
+export BEACON_TXID=<64-hex identity-asset txid from the oracle>
 pnpm desk
 ```
 
 ```bash
 export DESK_KEY=$(openssl rand -hex 32)
+export BEACON_TXID=<64-hex identity-asset txid from the oracle>
 docker build -f desk/Dockerfile --build-arg GIT_COMMIT=$(git rev-parse HEAD) -t arkade-options-desk .
-docker run --rm -p 8788:8788 -e DESK_KEY -v desk-data:/data arkade-options-desk
+docker run --rm -p 8788:8788 -e DESK_KEY -e BEACON_TXID -v desk-data:/data arkade-options-desk
 ```
 
 Dokploy:
@@ -69,11 +72,13 @@ Dokploy:
 - Build the repository `Dockerfile`.
 - Port `8788`.
 - Set `DESK_KEY` to a 32-byte hex key and keep it.
+- Set `BEACON_TXID` to the 64-hex display txid printed by the oracle (`BEACON_TXID …` on the dashboard, or `issueTxid` in `/api/status`). Required: the desk exits immediately if this is absent or malformed.
+- Set `BEACON_GIDX` only if the identity asset is not at vout `0` (optional, default `0`).
 - Mount a volume at `/data`.
 - Redeploy after a desk change. An older image refuses a pasted address.
 - `commit` in `GET /` must change. A cached image can stay on `16d579f`.
 
-`GET /` and `GET /status` return the same JSON: `commit`, `pubkey`, `address`, `balance`.
+`GET /` and `GET /status` return the same JSON: `commit`, `pubkey`, `address`, `balance`, `beaconTxid`, `beaconGidx`.
 
 ## Oracle
 

@@ -1,4 +1,4 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, open, readFile, rename } from "node:fs/promises";
 import path from "node:path";
 
 export type QuoteStatus = "open" | "filled" | "expired";
@@ -35,6 +35,16 @@ export type Caps = {
 type FileShape = {
   quotes: QuoteRow[];
 };
+
+/** Still binding float or vault exposure for this rfqId. */
+export function liveQuote(row: QuoteRow, now: number): boolean {
+  if (row.status === "open") return row.deadline > now;
+  if (row.status === "filled") {
+    if (!row.fillTxid) return true;
+    return row.expiry > now;
+  }
+  return false;
+}
 
 export class Book {
   private rows: QuoteRow[] = [];
@@ -78,8 +88,11 @@ export class Book {
     return { total, byStrike };
   }
 
-  /** Insert an open quote when the caps still hold. The check and the insert are one step. */
+  /** One rfqId, one row. Refuses while a same-id quote is still live; replaces dead ones. */
   hold(row: QuoteRow, caps: Caps, now: number): boolean {
+    const prior = this.rows.find((item) => item.rfqId === row.rfqId);
+    if (prior && liveQuote(prior, now)) return false;
+    if (prior) this.rows = this.rows.filter((item) => item.rfqId !== row.rfqId);
     const amount = BigInt(row.collateral);
     const { total, byStrike } = this.exposure(now);
     const strike = (byStrike.get(row.strike) ?? 0n) + amount;
@@ -98,7 +111,13 @@ export class Book {
 
   async save(): Promise<void> {
     const tmp = `${this.file}.tmp`;
-    await writeFile(tmp, JSON.stringify({ quotes: this.rows }, null, 2));
+    const handle = await open(tmp, "w");
+    try {
+      await handle.writeFile(JSON.stringify({ quotes: this.rows }, null, 2));
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
     await rename(tmp, this.file);
   }
 }

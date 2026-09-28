@@ -197,7 +197,10 @@ export async function collectReplies(opts: {
   recipients: string[];
   payload: Wire;
   timeoutMs: number;
+  /** Keep this reply in the result. */
   accept?: (incoming: Incoming) => boolean;
+  /** Stop waiting early when this reply arrives. Defaults to any accepted reply. */
+  done?: (incoming: Incoming) => boolean;
 }): Promise<Incoming[]> {
   const url = quoteRelay(opts.relays);
   const ws = await connectSocket(url);
@@ -251,7 +254,9 @@ export async function collectReplies(opts: {
       const take = (event: Sealed) => {
         const before = found.length;
         consider(event);
-        if (found.length > before) finish();
+        if (found.length === before) return;
+        const last = found[found.length - 1]!;
+        if (!opts.done || opts.done(last)) finish();
       };
       ws.addEventListener("message", (ev) => {
         const frame = parseFrame(ev.data);

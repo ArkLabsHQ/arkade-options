@@ -101,6 +101,8 @@ test("the reference swap derives a pinned address", async () => {
 test("a premium at or below 330 sats is a refusal", () => {
   assert.equal(premiumRefusal(330n), "premium below dust");
   assert.equal(premiumRefusal(331n), "");
+  assert.equal(premiumRefusal(10_000n, 10_000n), "premium");
+  assert.equal(premiumRefusal(9_999n, 10_000n), "");
   const priced = premiumSats({
     kind: 0,
     spotCents: 10_000_000,
