@@ -13,9 +13,9 @@ export type PendingArk = {
   finalizeTx(arkTxid: string, finalCheckpointTxs: string[]): Promise<void>;
 };
 
-type Indexer = Pick<IndexerProvider, "getVtxos">;
+type Indexer = Pick<IndexerProvider, "getVtxos" | "getVirtualTxs">;
 
-type Coin = { txid: string; vout: number; value: number };
+type Coin = { txid: string; vout: number; value: number; arkTxId?: string };
 
 function sameScript(left: Uint8Array | undefined, right: Uint8Array): boolean {
   return !!left && left.length === right.length && left.every((byte, index) => byte === right[index]);
@@ -50,6 +50,55 @@ async function ownershipProof(identity: Identity, desk: Script, coins: Coin[]) {
   return { proof: base64.encode(signed.toPSBT()), message };
 }
 
+function prevTxid(tx: Transaction, index: number): string {
+  const raw = tx.getInput(index).txid;
+  if (!(raw instanceof Uint8Array) || raw.length !== 32) throw new Error("ark input missing txid");
+  return bytesToHex(raw);
+}
+
+/** Arkd lists a pending spend only when the vtxo row carries ArkTxid. The indexer already has it. */
+async function finalizeFromIndexer(opts: {
+  ark: PendingArk;
+  indexer: Indexer;
+  identity: Identity;
+  deskScript: Script;
+}, coins: Coin[]): Promise<string[]> {
+  const ids = [...new Set(coins.map((coin) => coin.arkTxId).filter((id): id is string => !!id))];
+  if (!ids.length) {
+    console.error("finalize indexer has no ark tx for", coins.length, "coins");
+    return [];
+  }
+  const page = await opts.indexer.getVirtualTxs(ids);
+  const finalized: string[] = [];
+  for (let i = 0; i < ids.length; i += 1) {
+    const arkTxid = ids[i]!;
+    const raw = page.txs[i];
+    if (!raw) {
+      console.error("finalize virtual tx missing", arkTxid);
+      continue;
+    }
+    try {
+      const arkTx = Transaction.fromPSBT(base64.decode(raw));
+      if (arkTx.id !== arkTxid) throw new Error(`virtual tx ${arkTxid} came back as ${arkTx.id}`);
+      const checkpointIds: string[] = [];
+      for (let input = 0; input < arkTx.inputsLength; input += 1) checkpointIds.push(prevTxid(arkTx, input));
+      const fetched = await opts.indexer.getVirtualTxs(checkpointIds);
+      const checkpoints = await Promise.all(checkpointIds.map(async (id, index) => {
+        const checkpoint = fetched.txs[index];
+        if (!checkpoint) throw new Error(`checkpoint ${id} missing`);
+        const parsed = Transaction.fromPSBT(base64.decode(checkpoint));
+        if (parsed.id !== id) throw new Error(`checkpoint ${id} came back as ${parsed.id}`);
+        return cosignCheckpoint(opts.identity, opts.deskScript.pkScript, checkpoint);
+      }));
+      await opts.ark.finalizeTx(arkTxid, checkpoints);
+      finalized.push(arkTxid);
+    } catch (err) {
+      console.error("finalize", arkTxid, err instanceof Error ? err.message : err);
+    }
+  }
+  return finalized;
+}
+
 /** Sign and finalize ark txs that already spent the desk script but never cleared finalizeTx. */
 export async function finalizeDeskSpends(opts: {
   ark: PendingArk;
@@ -66,9 +115,6 @@ export async function finalizeDeskSpends(opts: {
   const intent = await ownershipProof(opts.identity, opts.deskScript, coins);
   const pending = await opts.ark.getPendingTxs(intent);
   const finalized: string[] = [];
-  if (!pending?.length) {
-    console.error("finalize no pending txs for", coins.length, "coins");
-  }
   for (const tx of pending ?? []) {
     if (!tx?.arkTxid || !tx.signedCheckpointTxs?.length) {
       console.error("finalize bad pending tx", tx ? Object.keys(tx).join(",") : "empty");
@@ -84,7 +130,9 @@ export async function finalizeDeskSpends(opts: {
       console.error("finalize", tx.arkTxid, err instanceof Error ? err.message : err);
     }
   }
-  return finalized;
+  if (finalized.length || pending?.length) return finalized;
+  console.error("finalize no pending txs for", coins.length, "coins");
+  return finalizeFromIndexer(opts, coins);
 }
 
 /** Outpoints of desk coins sitting in an unfinalized spend. */

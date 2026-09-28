@@ -82,7 +82,10 @@ test("finalizeDeskSpends proves the pending coin and finalizes the server checkp
         assert.deepEqual(filter.scripts, [bytesToHex(script.pkScript)]);
         return { vtxos: [{ txid: "cc".repeat(32), vout: 2, value: 40_633, isSpent: true }] };
       },
-    } as Pick<IndexerProvider, "getVtxos">,
+      async getVirtualTxs() {
+        throw new Error("indexer fallback is for an empty pending list");
+      },
+    } as Pick<IndexerProvider, "getVtxos" | "getVirtualTxs">,
     ark: {
       async getPendingTxs(intent) {
         assert.equal(intent.message.type, "get-pending-tx");
@@ -101,4 +104,74 @@ test("finalizeDeskSpends proves the pending coin and finalizes the server checkp
   assert.deepEqual(done, ["dd".repeat(32)]);
   const signed = Transaction.fromPSBT(base64.decode(finalized[0]![1]!));
   assert.equal(signed.getInput(0).tapScriptSig?.length, 1);
+});
+
+test("an empty pending list is finalized from the indexer virtual txs", async () => {
+  const desk = key(5);
+  const foreignKey = key(6);
+  const server = Uint8Array.from(Buffer.from(SERVER, "hex"));
+  const script = payoutVtxo(await desk.xOnlyPublicKey(), server, EXIT);
+  const foreign = payoutVtxo(await foreignKey.xOnlyPublicKey(), server, EXIT);
+  const { arkTx, checkpoints } = buildOffchainTx(
+    [
+      {
+        txid: "ee".repeat(32),
+        vout: 0,
+        value: 100_000,
+        tapLeafScript: foreign.forfeit(),
+        tapTree: foreign.encode(),
+      } as unknown as ArkTxInput,
+      {
+        txid: "ff".repeat(32),
+        vout: 1,
+        value: 40_633,
+        tapLeafScript: script.forfeit(),
+        tapTree: script.encode(),
+      } as unknown as ArkTxInput,
+    ],
+    [{ script: script.pkScript, amount: 140_633n }],
+    { script: new Uint8Array([0x51]), params: { timelock: { type: "seconds", value: EXIT }, pubkeys: [server] } } as never,
+  );
+  const byId = new Map<string, string>([
+    [arkTx.id, base64.encode(arkTx.toPSBT())],
+    ...checkpoints.map((tx) => [tx.id, base64.encode(tx.toPSBT())] as const),
+  ]);
+  const finalized: string[][] = [];
+  const done = await finalizeDeskSpends({
+    identity: desk,
+    deskScript: script,
+    indexer: {
+      async getVtxos() {
+        return {
+          vtxos: [{
+            txid: "ff".repeat(32),
+            vout: 1,
+            value: 40_633,
+            isSpent: true,
+            arkTxId: arkTx.id,
+          }],
+        };
+      },
+      async getVirtualTxs(ids) {
+        return { txs: ids.map((id) => byId.get(id) ?? "") };
+      },
+    } as Pick<IndexerProvider, "getVtxos" | "getVirtualTxs">,
+    ark: {
+      async getPendingTxs() {
+        return [];
+      },
+      async finalizeTx(arkTxid, txs) {
+        finalized.push([arkTxid, ...txs]);
+      },
+    },
+  });
+  assert.deepEqual(done, [arkTx.id]);
+  assert.equal(finalized[0]![0], arkTx.id);
+  assert.equal(finalized[0]!.length, 3);
+  const foreignSigned = Transaction.fromPSBT(base64.decode(finalized[0]![1]!));
+  const deskSigned = Transaction.fromPSBT(base64.decode(finalized[0]![2]!));
+  assert.equal(foreignSigned.id, checkpoints[0]!.id);
+  assert.equal(deskSigned.id, checkpoints[1]!.id);
+  assert.equal(foreignSigned.getInput(0).tapScriptSig?.length ?? 0, 0);
+  assert.equal(deskSigned.getInput(0).tapScriptSig?.length, 1);
 });
