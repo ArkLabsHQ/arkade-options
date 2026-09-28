@@ -55,10 +55,11 @@ docker run --rm -p 8789:8789 -e ORACLE_KEY -e ORACLE_ADMIN -v oracle-data:/data 
 
 Dokploy:
 
-- Dockerfile `oracle/Dockerfile`, build context the repository root.
+- Build type Dockerfile. **Docker File** `oracle/Dockerfile` (or `./Dockerfile` if the context is the oracle folder). **Docker Context Path** `/oracle` or `/`. Do not use the repository-root `./Dockerfile`: that image is the desk (port `8788`) and will 502 behind an oracle domain on `8789`.
 - Port `8789` behind the Dokploy HTTPS domain. The dashboard is `GET /`; browsers only let it sign over HTTPS or localhost.
 - Set `ORACLE_KEY` and `ORACLE_ADMIN`. Keep both. `ORACLE_KEY` is the only key that writes fixings on the beacon it deploys.
 - Mount a volume at `/data`. A fresh volume means a new beacon; keys, issue, and deploy run again.
+- If Traefik shows Bad Gateway, open Logs: exited replicas mean the wrong image or a crash on boot. Confirm the container listens on `8789` and that Advanced → Docker File is not the root desk `Dockerfile`.
 
 ### Bootstrap the beacon
 
