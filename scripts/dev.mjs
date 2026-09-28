@@ -1,4 +1,5 @@
-import { cpSync, createReadStream, existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { cpSync, createReadStream, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import http from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -11,7 +12,15 @@ mkdirSync(dist, { recursive: true });
 
 const publish = () => {
   mkdirSync(path.join(dist, "viz"), { recursive: true });
-  cpSync(path.join(root, "app/index.html"), path.join(dist, "index.html"));
+  const jsPath = path.join(dist, "app.js");
+  const hash = existsSync(jsPath)
+    ? createHash("sha256").update(readFileSync(jsPath)).digest("hex").slice(0, 10)
+    : "dev";
+  const html = readFileSync(path.join(root, "app/index.html"), "utf8").replace(
+    'src="./app.js"',
+    `src="./app.js?${hash}"`,
+  );
+  writeFileSync(path.join(dist, "index.html"), html);
   cpSync(path.join(root, "app/desk.css"), path.join(dist, "desk.css"));
   cpSync(path.join(root, "viz/index.html"), path.join(dist, "viz/index.html"));
   cpSync(path.join(root, "app/settle-math.js"), path.join(dist, "viz/settle-math.js"));
