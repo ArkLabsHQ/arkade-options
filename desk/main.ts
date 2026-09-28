@@ -103,6 +103,13 @@ const ark = new RestArkProvider(arkUrl);
 if (typeof EventSource === "undefined") {
   throw new Error("Contract events need Node's EventSource. Start the desk with --experimental-eventsource.");
 }
+// Every intent.register persists a script, and the watcher subscribes to all of them.
+// Mutinynet allows 1000 topics. Old quotes are polled, not streamed.
+const remembered = await storage.contractRepository.getContracts();
+for (const contract of remembered) {
+  await storage.contractRepository.deleteContract(contract.script);
+}
+if (remembered.length) console.log("unwatched", remembered.length, "old intent scripts");
 const contractManager = await ContractManager.create({
   indexerProvider: indexer,
   contractRepository: storage.contractRepository,
@@ -342,7 +349,11 @@ async function refreshFloat() {
   if (!client.indexer) return;
   try {
     const done = await finalizeDeskSpends({ ark, indexer, identity, deskScript });
-    if (done.length) console.log("finalized", done.join(","));
+    const pending = await indexer.getVtxos({ scripts: [deskScriptHex], pendingOnly: true });
+    const pendingCount = pending.vtxos?.length ?? 0;
+    if (done.length || pendingCount) {
+      console.log("finalized", done.join(",") || "-", "pending", pendingCount);
+    }
   } catch (err) {
     console.error("finalize", err instanceof Error ? err.message : err);
   }
@@ -372,9 +383,15 @@ function tracked(rfqId: string): boolean {
   return false;
 }
 
-function forgetScript(rfqId: string) {
+async function forgetScript(rfqId: string) {
   for (const [script, id] of quoteByScript) {
-    if (id === rfqId) quoteByScript.delete(script);
+    if (id !== rfqId) continue;
+    quoteByScript.delete(script);
+    try {
+      await contractManager.deleteContract(script);
+    } catch (err) {
+      console.error("unwatch", rfqId, err instanceof Error ? err.message : err);
+    }
   }
 }
 
@@ -420,7 +437,7 @@ async function pump() {
           for (const coin of outcome.spent ?? []) deskCoins.delete(`${coin.txid}:${coin.vout}`);
           recount();
           book.mark(row.rfqId, "filled", outcome.txid);
-          forgetScript(row.rfqId);
+          await forgetScript(row.rfqId);
           try {
             await book.save();
           } catch (err) {
@@ -434,7 +451,7 @@ async function pump() {
           await refreshFloat();
         } else if (outcome.result === "expired") {
           book.mark(row.rfqId, "expired");
-          forgetScript(row.rfqId);
+          await forgetScript(row.rfqId);
           await book.save();
         } else if (outcome.result === "short") {
           if (!shortLogged.has(row.rfqId)) {
@@ -468,7 +485,7 @@ async function housekeeping() {
       if (!unsettled) continue;
       if (!hasBeacon(row)) {
         row.status = "expired";
-        forgetScript(row.rfqId);
+        await forgetScript(row.rfqId);
         dropped += 1;
         continue;
       }

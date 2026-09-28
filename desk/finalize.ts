@@ -29,7 +29,9 @@ export async function cosignCheckpoint(identity: Identity, deskScript: Uint8Arra
     const signed = await identity.sign(tx, [0]);
     return base64.encode(signed.toPSBT());
   } catch (err) {
-    if ((tx.getInput(0).tapScriptSig?.length ?? 0) > 0) return raw;
+    const message = err instanceof Error ? err.message : String(err);
+    // The checkpoint was already signed with this key before submit.
+    if (/same key/i.test(message)) return raw;
     throw err;
   }
 }
@@ -64,8 +66,14 @@ export async function finalizeDeskSpends(opts: {
   const intent = await ownershipProof(opts.identity, opts.deskScript, coins);
   const pending = await opts.ark.getPendingTxs(intent);
   const finalized: string[] = [];
+  if (!pending?.length) {
+    console.error("finalize no pending txs for", coins.length, "coins");
+  }
   for (const tx of pending ?? []) {
-    if (!tx?.arkTxid || !tx.signedCheckpointTxs?.length) continue;
+    if (!tx?.arkTxid || !tx.signedCheckpointTxs?.length) {
+      console.error("finalize bad pending tx", tx ? Object.keys(tx).join(",") : "empty");
+      continue;
+    }
     try {
       const checkpoints = await Promise.all(tx.signedCheckpointTxs.map((raw) => (
         cosignCheckpoint(opts.identity, opts.deskScript.pkScript, raw)
