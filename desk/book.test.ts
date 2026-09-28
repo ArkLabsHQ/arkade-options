@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { Book, type QuoteRow } from "./book.ts";
+import { Book, hasBeacon, type QuoteRow } from "./book.ts";
 
 function row(patch: Partial<QuoteRow> = {}): QuoteRow {
   return {
@@ -53,6 +53,12 @@ test("exposure counts open quotes and unexpired fills, and the cap refuses the n
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+test("a quote needs a 64-hex beacon txid", () => {
+  assert.equal(hasBeacon(row()), true);
+  assert.equal(hasBeacon(row({ beaconTxid: "" })), false);
+  assert.equal(hasBeacon(row({ beaconTxid: undefined as unknown as string })), false);
 });
 
 test("parallel saves all land in book.json", async () => {

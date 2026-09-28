@@ -36,6 +36,11 @@ type FileShape = {
   quotes: QuoteRow[];
 };
 
+/** Old book rows predate the beacon field. They cannot be registered. */
+export function hasBeacon(row: QuoteRow): boolean {
+  return /^[0-9a-f]{64}$/.test(row.beaconTxid ?? "") && Number.isInteger(row.beaconGidx) && row.beaconGidx >= 0 && row.beaconGidx <= 65_535;
+}
+
 /** Still binding float or vault exposure for this rfqId. */
 export function liveQuote(row: QuoteRow, now: number): boolean {
   if (row.status === "open") return row.deadline > now;

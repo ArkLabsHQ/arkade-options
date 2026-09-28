@@ -38,7 +38,7 @@ import { connectTransport, nostrPubkey, type Incoming } from "../protocol/nostr.
 import { deribitPremium, fetchSurface, surfaceStatus } from "../protocol/deribit.ts";
 import { premiumSats } from "../protocol/pricing.ts";
 import { openSqliteStorage } from "../protocol/sqlite-storage.ts";
-import { Book, type QuoteRow } from "./book.ts";
+import { Book, hasBeacon, type QuoteRow } from "./book.ts";
 import { fillQuote } from "./fill.ts";
 import { spotCents } from "./spot.ts";
 
@@ -423,9 +423,16 @@ async function housekeeping() {
     } catch (err) {
       console.error("spot", err instanceof Error ? err.message : err);
     }
+    let dropped = 0;
     for (const row of book.list()) {
       const unsettled = row.status === "open" || (row.status === "filled" && !row.fillTxid);
       if (!unsettled) continue;
+      if (!hasBeacon(row)) {
+        row.status = "expired";
+        forgetScript(row.rfqId);
+        dropped += 1;
+        continue;
+      }
       if (!tracked(row.rfqId)) {
         try {
           await track(row);
@@ -436,6 +443,10 @@ async function housekeeping() {
       }
       // Poll unsettled quotes: EventSource can miss a coin; recovery needs another look after a crash.
       queueFill(row.rfqId);
+    }
+    if (dropped) {
+      await book.save();
+      console.log("dropped", dropped, "quotes with no beacon");
     }
   } finally {
     polling = false;
