@@ -55,6 +55,24 @@ test("exposure counts open quotes and unexpired fills, and the cap refuses the n
   }
 });
 
+test("parallel saves all land in book.json", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "arkade-book-"));
+  try {
+    const book = await Book.open(dir);
+    const caps = { perStrike: 10_000_000_000n, total: 10_000_000_000n };
+    const saves: Promise<void>[] = [];
+    for (let i = 0; i < 20; i += 1) {
+      assert.equal(book.hold(row({ rfqId: i.toString(16).padStart(64, "0"), collateral: "1" }), caps, 1_200), true);
+      saves.push(book.save());
+    }
+    await Promise.all(saves);
+    const saved = await Book.open(dir);
+    assert.equal(saved.list().length, 20);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("one rfqId stays one row: live duplicates refuse, dead ones are replaced", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "arkade-book-"));
   try {

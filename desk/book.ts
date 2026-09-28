@@ -49,6 +49,7 @@ export function liveQuote(row: QuoteRow, now: number): boolean {
 export class Book {
   private rows: QuoteRow[] = [];
   private readonly file: string;
+  private writing: Promise<void> = Promise.resolve();
 
   private constructor(file: string) {
     this.file = file;
@@ -110,7 +111,13 @@ export class Book {
   }
 
   async save(): Promise<void> {
-    const tmp = `${this.file}.tmp`;
+    const run = this.writing.then(() => this.write());
+    this.writing = run.then(() => undefined, () => undefined);
+    return run;
+  }
+
+  private async write(): Promise<void> {
+    const tmp = `${this.file}.${process.pid}.${Date.now().toString(36)}.${Math.random().toString(16).slice(2)}.tmp`;
     const handle = await open(tmp, "w");
     try {
       await handle.writeFile(JSON.stringify({ quotes: this.rows }, null, 2));
