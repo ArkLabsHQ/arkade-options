@@ -37,6 +37,9 @@ const port = Number(process.env.PORT ?? "8789");
 const arkUrl = process.env.ARK_URL?.trim() || ARK_URL;
 const emulatorUrl = process.env.EMULATOR_URL?.trim() || EMULATOR_URL;
 if (!Number.isInteger(port) || port < 0) throw new Error("PORT");
+if (typeof EventSource === "undefined") {
+  throw new Error("Contract events need Node's EventSource. Start the oracle with --experimental-eventsource.");
+}
 
 const storage = await openSqliteStorage(dataDir);
 const wallet = oracleKey
