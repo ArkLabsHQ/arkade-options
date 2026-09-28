@@ -1,4 +1,5 @@
-import { cpSync, mkdirSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { cpSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -19,7 +20,12 @@ await esbuild.build({
 });
 
 mkdirSync(path.join(dist, "viz"), { recursive: true });
-cpSync(path.join(root, "app/index.html"), path.join(dist, "index.html"));
+const hash = createHash("sha256").update(readFileSync(path.join(dist, "app.js"))).digest("hex").slice(0, 10);
+const html = readFileSync(path.join(root, "app/index.html"), "utf8").replace(
+  'src="./app.js"',
+  `src="./app.js?${hash}"`,
+);
+writeFileSync(path.join(dist, "index.html"), html);
 cpSync(path.join(root, "app/desk.css"), path.join(dist, "desk.css"));
 cpSync(path.join(root, "viz/index.html"), path.join(dist, "viz/index.html"));
 cpSync(path.join(root, "app/settle-math.js"), path.join(dist, "viz/settle-math.js"));

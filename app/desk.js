@@ -157,6 +157,7 @@ function btcToSats(text) {
 }
 
 let pinnedExpiry = 0;
+let termsTouched = false;
 
 function expiryUnix() {
   if (state.tenorSec > 0) {
@@ -500,7 +501,7 @@ function renderSell() {
     btn.setAttribute("aria-pressed", String(on));
   });
   $("kind-copy").textContent = kindCopy();
-  $("expiry-when").textContent = state.spotCents == null ? "" : fmtWhen(expiryUnix());
+  $("expiry-when").textContent = fmtWhen(expiryUnix());
   const sats = sizeSats();
   const err = state.spotCents == null ? "" : sizeError(sats);
   $("size-error").textContent = err;
@@ -800,6 +801,7 @@ async function copyToClipboard(button, text) {
 }
 
 function adoptQuote() {
+  if (termsTouched) return;
   const latest = visiblePositions()
     .filter((position) => position.kind === state.kind && position.address)
     .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))[0];
@@ -1319,6 +1321,7 @@ function bind() {
     btn.addEventListener("click", () => {
       const tenor = Number(btn.dataset.tenor || 0);
       const days = Number(btn.dataset.days || 0);
+      termsTouched = true;
       if (tenor) {
         if (state.tenorSec === tenor) return;
         state.tenorSec = tenor;
@@ -1338,6 +1341,7 @@ function bind() {
   listen("strikes", "click", (event) => {
     const btn = event.target.closest("button");
     if (!btn) return;
+    termsTouched = true;
     const index = Number(btn.dataset.index);
     const picked = ladder()[index];
     if (pinnedStrike != null && picked !== pinnedStrike) {
@@ -1352,7 +1356,10 @@ function bind() {
     }
     onTermsChanged();
   });
-  listen("size", "input", onTermsChanged);
+  listen("size", "input", () => {
+    termsTouched = true;
+    onTermsChanged();
+  });
   listen("confirm", "click", () => {
     void confirm();
   });
