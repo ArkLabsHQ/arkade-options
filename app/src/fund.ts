@@ -285,7 +285,7 @@ export async function registerIntent(req: FundRequest): Promise<string> {
   return bytesToHex(intent.pkScript);
 }
 
-export async function intentCoins(script: string): Promise<{ value: bigint; spent: boolean; spentBy: string }[] | null> {
+export async function intentCoins(script: string): Promise<{ value: bigint; spent: boolean; spentBy: string; txid: string }[] | null> {
   const manager = await contracts();
   const [row] = await manager.getContractsWithVtxos({ script });
   if (!row) return null;
@@ -293,6 +293,7 @@ export async function intentCoins(script: string): Promise<{ value: bigint; spen
     value: BigInt(coin.value),
     spent: Boolean(coin.isSpent || coin.spentBy),
     spentBy: coin.arkTxId || coin.spentBy || "",
+    txid: coin.txid || "",
   }));
 }
 

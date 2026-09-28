@@ -14,7 +14,7 @@ import { artifactLine } from "./src/program.ts";
 import { requestQuotes } from "./src/rfq.ts";
 import { deribitPremium, fetchSurface } from "../protocol/deribit.ts";
 import { bestQuote } from "./quote.js";
-import { DESK_STATUS, PINNED_DESKS, RELAYS } from "./rfq-config.js";
+import { PINNED_DESKS, RELAYS } from "./rfq-config.js";
 import { DUST, Q_MAX, Q_MIN, writerPayoff } from "./settle-math.js";
 import { readIntent, watchIntents } from "./src/watch.ts";
 
@@ -96,6 +96,9 @@ function persist() {
     refundable: Boolean(p.refundable),
     marketSats: p.marketSats ? p.marketSats.toString() : "",
     marketApy: p.marketApy,
+    fundingTxid: p.fundingTxid || "",
+    closeTxid: p.closeTxid || "",
+    settleTxid: p.settleTxid || "",
   }));
   localStorage.setItem(STORE, JSON.stringify(rows));
 }
@@ -677,9 +680,45 @@ function renderBlotter() {
     wrap.append(head);
     const steps = progressSteps(position.status);
     if (steps) wrap.append(steps);
+    const txs = txLinks(position);
+    if (txs) wrap.append(txs);
     if (state.selected === position.id) wrap.append(detail(position));
     host.append(wrap);
   }
+}
+
+function txLink(label, txid) {
+  if (!/^[0-9a-f]{64}$/.test(txid || "")) return null;
+  const row = document.createElement("p");
+  row.className = "tx-link";
+  const name = document.createElement("span");
+  name.textContent = label;
+  const link = document.createElement("a");
+  link.href = `https://explorer.mutinynet.arkade.sh/tx/${txid}`;
+  link.target = "_blank";
+  link.rel = "noopener";
+  link.textContent = `${txid.slice(0, 8)}…${txid.slice(-4)}`;
+  row.append(name, link);
+  return row;
+}
+
+function txLinks(position) {
+  const box = document.createElement("div");
+  box.className = "tx-links";
+  const funding = txLink("Funding", position.fundingTxid);
+  const refunded = position.status === "refunded";
+  const refund = refunded ? txLink("Refund", position.closeTxid) : null;
+  const filled = position.status === "filled" || position.status === "settled";
+  const settleId = refunded ? "" : (position.settleTxid || (filled ? position.closeTxid : ""));
+  const settle = txLink("Settle", settleId);
+  const payout = filled && position.settleTxid && position.closeTxid && position.closeTxid !== position.settleTxid
+    ? txLink("Payout", position.closeTxid)
+    : null;
+  if (!funding && !refund && !settle && !payout) return null;
+  for (const node of [funding, payout, settle, refund]) {
+    if (node) box.append(node);
+  }
+  return box;
 }
 
 function detail(position) {
@@ -1014,98 +1053,6 @@ function disconnect() {
   $("account-key").focus();
 }
 
-function tenorFromExpiry(expiry) {
-  const span = Number(expiry) - Math.floor(Date.now() / 1000);
-  if (span > 60 * 86400) return 90;
-  if (span > 14 * 86400) return 30;
-  return 7;
-}
-
-/** Filled trades the page never stored, recovered when this address is the writer. */
-async function adoptDeskPositions() {
-  if (!state.address || !DESK_STATUS) return;
-  let body;
-  try {
-    const res = await fetch(DESK_STATUS);
-    if (!res.ok) return;
-    body = await res.json();
-  } catch {
-    return;
-  }
-  const holder = body.pubkey;
-  const beaconTxid = body.beaconTxid;
-  if (!holder || !/^[0-9a-f]{64}$/.test(beaconTxid || "")) return;
-  const known = new Set(state.positions.map((position) => position.address));
-  const quotes = (body.quotes || []).filter((quote) => quote.status === "filled" && quote.intentAddress && !known.has(quote.intentAddress));
-  let changed = false;
-  for (const quote of quotes) {
-    const kinds = quote.kind === 0 || quote.kind === 1 ? [quote.kind] : [0, 1];
-    for (const kind of kinds) {
-      try {
-        const deposit = await depositAddress({
-          kind,
-          strike: BigInt(quote.strike),
-          collateral: BigInt(quote.collateral),
-          premium: BigInt(quote.premium),
-          expiry: BigInt(quote.expiry),
-          deadline: BigInt(quote.deadline),
-          writerAddress: state.address,
-          holderPkHex: holder,
-          beaconTxidHex: beaconTxid,
-          beaconGidx: body.beaconGidx ?? 0,
-        });
-        if (deposit.address !== quote.intentAddress) continue;
-        const expiry = BigInt(quote.expiry);
-        const collateral = BigInt(quote.collateral);
-        const premiumSats = BigInt(quote.premium);
-        const createdAt = quote.deadline ? Number(quote.deadline) - 180 : Math.floor(Date.now() / 1000);
-        const span = Number(expiry) - createdAt;
-        const tenorSec = span > 0 && span < 86400 ? span : 0;
-        const days = tenorSec ? 0 : tenorFromExpiry(expiry);
-        state.positions.unshift({
-          id: crypto.randomUUID(),
-          side: 0,
-          kind,
-          strike: BigInt(quote.strike),
-          expiry,
-          collateral,
-          premiumSats,
-          premiumUsd: null,
-          solver: "Mutinynet",
-          status: "filled",
-          deadline: quote.deadline,
-          address: deposit.address,
-          holderPkHex: holder,
-          beaconTxid,
-          beaconGidx: body.beaconGidx ?? 0,
-          exit: deposit.exit,
-          vaultAddress: deposit.vaultAddress,
-          writerAddress: state.address,
-          payoutAddress: state.address,
-          days,
-          tenorSec,
-          createdAt,
-          apy: annualized(premiumSats, collateral, tenorSec ? tenorSec / 86400 : days),
-          uri: deposit.uri,
-          apyFrozen: true,
-          marketSats: null,
-          marketApy: null,
-        });
-        known.add(deposit.address);
-        changed = true;
-        break;
-      } catch {
-        // Another writer's quote does not derive this address.
-      }
-    }
-  }
-  if (!changed) return;
-  persist();
-  renderBlotter();
-  renderSell();
-  startWatch();
-}
-
 async function hydrateMissing() {
   let changed = false;
   for (const position of state.positions) {
@@ -1206,11 +1153,21 @@ function applyChain(position, update) {
   const next = CHAIN_STATUS[update.phase];
   if (!next) return;
   if (next === "locking" && position.status !== "locking") return;
-  const same = position.status === next && Boolean(position.refundable) === update.refundable;
+  const fundingTxid = update.fundingTxid || position.fundingTxid || "";
+  const closeTxid = update.closeTxid || position.closeTxid || "";
+  const settleTxid = next === "refunded" ? "" : (update.settleTxid || position.settleTxid || "");
+  const same = position.status === next
+    && Boolean(position.refundable) === update.refundable
+    && (position.fundingTxid || "") === fundingTxid
+    && (position.closeTxid || "") === closeTxid
+    && (position.settleTxid || "") === settleTxid;
   if (same) return;
   if (next === "deposited" || next === "filled" || next === "expired") freeze(position);
   position.status = next;
   position.refundable = update.refundable;
+  position.fundingTxid = fundingTxid;
+  position.closeTxid = closeTxid;
+  position.settleTxid = settleTxid;
   persist();
   renderBlotter();
   renderSell();
@@ -1224,6 +1181,7 @@ function watchRow(position) {
     premium: BigInt(position.premiumSats),
     deadline: Number(position.deadline),
     since: Number(position.createdAt) || 0,
+    vaultAddress: position.vaultAddress || "",
   };
 }
 
@@ -1294,7 +1252,7 @@ function tick() {
     if (!position.address || expiring.has(position.address)) continue;
     expiring.add(position.address);
     void readIntent(watchRow(position)).then((phase) => {
-      applyChain(position, { phase: phase.phase, refundable: phase.refundable });
+      applyChain(position, phase);
     }).catch(() => undefined).finally(() => expiring.delete(position.address));
   }
 }
@@ -1473,4 +1431,3 @@ setInterval(() => {
   void refreshPositionMarkets();
 }, REFRESH_MS);
 void hydrateMissing();
-void adoptDeskPositions();

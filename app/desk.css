@@ -546,6 +546,20 @@ a { color: var(--accent); }
 
 .position-status { color: var(--muted); font-size: 13px; }
 
+.tx-links { margin-top: 8px; }
+
+.tx-link {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 4px 0 0;
+  font-size: 13px;
+}
+
+.tx-link span { color: var(--muted); }
+
+.tx-link a { font-family: var(--mono); }
+
 .steps {
   display: flex;
   flex-wrap: wrap;

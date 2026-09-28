@@ -6,7 +6,25 @@ export type CoinView = {
   value: bigint;
   spent: boolean;
   spentBy: string;
+  /** Transaction that created this coin. */
+  txid?: string;
 };
+
+export type IntentView = {
+  phase: IntentPhase;
+  refundable: boolean;
+  /** Deposit that created the collateral coin. */
+  fundingTxid: string;
+  /** Transaction that spent it: the fill, or the refund. */
+  closeTxid: string;
+};
+
+const TXID = /^[0-9a-f]{64}$/;
+
+function txid(value: string | undefined): string {
+  const id = (value ?? "").toLowerCase();
+  return TXID.test(id) ? id : "";
+}
 
 export type TxOutput = {
   amount: bigint;
@@ -21,12 +39,17 @@ export function classifyIntent(input: {
   writerScript: string;
   now: number;
   deadline: number;
-}): { phase: IntentPhase; refundable: boolean } {
+}): IntentView {
   const writer = input.writerScript.toLowerCase();
   const live = input.coins.find((coin) => !coin.spent && coin.value >= input.collateral);
   if (live) {
     const open = input.now < input.deadline;
-    return { phase: open ? "funded" : "expired", refundable: !open };
+    return {
+      phase: open ? "funded" : "expired",
+      refundable: !open,
+      fundingTxid: txid(live.txid),
+      closeTxid: "",
+    };
   }
   const spent = input.coins
     .filter((coin) => coin.spent && coin.value >= input.collateral && coin.spentBy)
@@ -36,10 +59,20 @@ export function classifyIntent(input: {
     const paid = outputs.reduce((sum, output) => (
       output.script.toLowerCase() === writer ? sum + output.amount : sum
     ), 0n);
-    if (paid >= coin.value) return { phase: "refunded", refundable: false };
-    if (paid >= input.premium) return { phase: "filled", refundable: false };
+    const view = {
+      refundable: false,
+      fundingTxid: txid(coin.txid),
+      closeTxid: txid(coin.spentBy),
+    };
+    if (paid >= coin.value) return { phase: "refunded", ...view };
+    if (paid >= input.premium) return { phase: "filled", ...view };
   }
-  return { phase: input.now < input.deadline ? "open" : "expired", refundable: false };
+  return {
+    phase: input.now < input.deadline ? "open" : "expired",
+    refundable: false,
+    fundingTxid: "",
+    closeTxid: "",
+  };
 }
 
 function readVarint(bytes: Uint8Array, at: number): [number, number] {

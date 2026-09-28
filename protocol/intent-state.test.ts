@@ -18,7 +18,7 @@ test("a live intent coin after the deadline is refundable, not paid", () => {
     now: 2_000,
     deadline: 1_000,
   });
-  assert.deepEqual(seen, { phase: "expired", refundable: true });
+  assert.deepEqual(seen, { phase: "expired", refundable: true, fundingTxid: "", closeTxid: "" });
 });
 
 test("a live intent coin inside the window is waiting for payout", () => {
@@ -75,7 +75,35 @@ test("a fill with no intent coin still pays the writer", () => {
     now: 1_790_380_800,
     deadline: 1_790_380_900,
   });
-  assert.deepEqual(seen, { phase: "filled", refundable: false });
+  assert.deepEqual(seen, { phase: "filled", refundable: false, fundingTxid: "", closeTxid: "" });
+});
+
+test("the collateral coin names its funding transaction and the spend that closed it", () => {
+  const funding = "11".repeat(32);
+  const close = "22".repeat(32);
+  const refunded = classifyIntent({
+    coins: [{ value: 20_000n, spent: true, spentBy: close, txid: funding }],
+    spends: { [close]: [{ amount: 20_000n, script: writer }] },
+    collateral: 20_000n,
+    premium: 383n,
+    writerScript: writer,
+    now: 2_000,
+    deadline: 1_000,
+  });
+  assert.equal(refunded.phase, "refunded");
+  assert.equal(refunded.fundingTxid, funding);
+  assert.equal(refunded.closeTxid, close);
+  const waiting = classifyIntent({
+    coins: [{ value: 20_000n, spent: false, spentBy: "", txid: funding }],
+    spends: {},
+    collateral: 20_000n,
+    premium: 383n,
+    writerScript: writer,
+    now: 500,
+    deadline: 1_000,
+  });
+  assert.equal(waiting.fundingTxid, funding);
+  assert.equal(waiting.closeTxid, "");
 });
 
 test("the deposit transaction pays the intent, not the writer", () => {

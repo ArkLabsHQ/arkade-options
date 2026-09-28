@@ -8,6 +8,7 @@ import { intentCoins, onContractEvent } from "./fund.ts";
 export type WatchRow = {
   address: string;
   writerAddress?: string;
+  vaultAddress?: string;
   collateral: bigint;
   premium: bigint;
   deadline: number;
@@ -20,6 +21,9 @@ export type PhaseUpdate = {
   address: string;
   phase: IntentPhase;
   refundable: boolean;
+  fundingTxid: string;
+  closeTxid: string;
+  settleTxid: string;
 };
 
 const indexer = new RestIndexerProvider(ARK_URL);
@@ -70,7 +74,8 @@ async function payoutEvidence(writerScript: string, intentScript: string, since:
     }
     const input = view.inputs.find((item) => item.script.toLowerCase() === intentScript);
     if (!input) return;
-    const id = `payout-${index}`;
+    const id = ids[index] || "";
+    if (!id) return;
     found.push({ value: input.amount, spent: true, spentBy: id });
     spends[id] = view.outputs;
   });
@@ -91,8 +96,9 @@ export async function readIntent(row: WatchRow, now = Math.floor(Date.now() / 10
     ]);
     coins = [...live.vtxos, ...spent.vtxos].map((coin) => ({
       value: BigInt(coin.value),
-      spent: Boolean(coin.spentBy),
+      spent: Boolean(coin.spentBy || coin.isSpent),
       spentBy: coin.arkTxId || coin.spentBy || "",
+      txid: coin.txid || "",
     }));
   }
   const ids = [...new Set(coins.flatMap((coin) => coin.spent && coin.spentBy ? [coin.spentBy] : []))];
@@ -119,18 +125,38 @@ export async function readIntent(row: WatchRow, now = Math.floor(Date.now() / 10
     deadline: row.deadline,
   });
   const settled = seen.phase === "filled" || seen.phase === "refunded" || seen.phase === "funded" || seen.refundable;
-  if (settled || !writerScript) return seen;
-  const extra = await payoutEvidence(writerScript, intentScript, row.since ?? 0);
-  if (!extra.coins.length) return seen;
-  return classifyIntent({
-    coins: [...coins, ...extra.coins],
-    spends: { ...spends, ...extra.spends },
-    collateral: row.collateral,
-    premium: row.premium,
-    writerScript,
-    now,
-    deadline: row.deadline,
-  });
+  const classified = settled || !writerScript ? seen : await (async () => {
+    const extra = await payoutEvidence(writerScript, intentScript, row.since ?? 0);
+    if (!extra.coins.length) return seen;
+    return classifyIntent({
+      coins: [...coins, ...extra.coins],
+      spends: { ...spends, ...extra.spends },
+      collateral: row.collateral,
+      premium: row.premium,
+      writerScript,
+      now,
+      deadline: row.deadline,
+    });
+  })();
+  let settleTxid = "";
+  if (classified.phase === "filled") {
+    try {
+      settleTxid = await vaultSpend(row.vaultAddress);
+    } catch {
+      settleTxid = "";
+    }
+  }
+  return { ...classified, settleTxid };
+}
+
+async function vaultSpend(address: string | undefined): Promise<string> {
+  if (!address) return "";
+  const spent = await indexer.getVtxos({ scripts: [scriptOf(address)], spentOnly: true });
+  for (const coin of spent.vtxos ?? []) {
+    const id = (coin.arkTxId || coin.spentBy || "").toLowerCase();
+    if (/^[0-9a-f]{64}$/.test(id)) return id;
+  }
+  return "";
 }
 
 function addRow(owners: Map<string, WatchRow[]>, script: string, row: WatchRow) {
