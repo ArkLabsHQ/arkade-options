@@ -7,8 +7,9 @@ import { generateSecretKey } from "nostr-tools/pure";
 import { beaconIdOf } from "./beacon.ts";
 import { bindContracts, bindSwap, directPayoutKey } from "./contracts.ts";
 import { bytesToHex, hexToBytes, xOnly } from "./hex.ts";
-import { parseWire, premiumRefusal, requestRefusal, type RfqRequest } from "./messages.ts";
-import { nostrPubkey, openSealed, quoteRelay, seal } from "./nostr.ts";
+import { PAIR, POSITION_KIND } from "./constants.ts";
+import { parsePosition, parseWire, premiumRefusal, requestRefusal, type OptionPosition, type RfqRequest } from "./messages.ts";
+import { nostrPubkey, openSealed, positionEvent, quoteRelay, readPosition, seal } from "./nostr.ts";
 import { premiumSats } from "./pricing.ts";
 
 const key = (n: number) => SingleKey.fromHex(n.toString(16).padStart(64, "0"));
@@ -148,6 +149,46 @@ test("NIP-44 seals a quote to the recipient only", () => {
   assert.deepEqual(event.tags, [["p", nostrPubkey(desk)]]);
   assert.deepEqual(openSealed(desk, event), request);
   assert.equal(openSealed(client, event), null);
+});
+
+test("a filled vault is public on nostr and a sealed quote is not", () => {
+  const desk = generateSecretKey();
+  const position: OptionPosition = {
+    v: 1,
+    type: "option_position",
+    rfq_id: "11".repeat(32),
+    pair: PAIR,
+    kind: 0,
+    collateral: "10000000",
+    strike: "9700000",
+    expiry: 1_790_000_000,
+    exit: 2048,
+    writer_pubkey: "ab".repeat(32),
+    writer_pk_script: "5120" + "cd".repeat(32),
+    holder_pubkey: nostrPubkey(desk),
+    beacon_txid: "07".repeat(32),
+    beacon_gidx: 0,
+    vault_address: "tark1qqcpq7yq3e8hhsx6ml3fud93m7827qg",
+    fill_txid: "ee".repeat(32),
+  };
+  const event = positionEvent(desk, position, 1_790_000_000);
+  assert.equal(event.kind, POSITION_KIND);
+  assert.deepEqual(readPosition(event), position);
+  assert.equal(openSealed(generateSecretKey(), event), null);
+  const tampered = {
+    id: event.id,
+    pubkey: event.pubkey,
+    created_at: event.created_at,
+    kind: event.kind,
+    tags: event.tags,
+    content: event.content.replace(position.fill_txid, "ff".repeat(32)),
+    sig: event.sig,
+  };
+  assert.equal(readPosition(tampered), null);
+  const quoted = { ...position, holder_pubkey: "ff".repeat(32) };
+  const mismatched = positionEvent(desk, quoted, 1_790_000_000);
+  assert.equal(readPosition(mismatched), null);
+  assert.equal(parsePosition({ ...position, type: "rfq_quote" }), null);
 });
 
 test("a wire message with the wrong pair is dropped", () => {

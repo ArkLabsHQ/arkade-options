@@ -2,7 +2,7 @@
 
 The live Mutinynet oracle and desk are already up. Identifiers, addresses, and day-to-day steps are in the [README](../README.md). Use this when standing up a new one, or when a volume was replaced.
 
-Order: oracle (five pubkeys, fund, issue, deploy) → desk (`BEACON_TXID`) → fund the desk → pin the desk pubkey on the page.
+Order: oracle (five pubkeys, fund, issue, deploy) → desk (`BEACON_TXID`) → fund the desk → pin the desk pubkey on the page → settler. The app provider runs the settler. Anyone else can run another one against the same vaults.
 
 Never put `ORACLE_KEY`, the five source secrets, `ORACLE_ADMIN`, or `DESK_KEY` in the repo. The five source secrets stay off the server. Only their x-only pubkeys are stored.
 
@@ -140,6 +140,96 @@ Dokploy, building `master`:
 - Mount a volume at `/data`. The live name is `arkade-options-desk-data`. It holds `book.json` and `arkade.sqlite`.
 - `commit` in `GET /` must match the image you just built.
 
-`GET /` returns `commit`, `pubkey`, `address`, `balance`, `beaconTxid`, `beaconGidx`, and the quote book. Paste `pubkey` into `app/rfq-config.js` and push `master` so the page asks this desk. Leave `PINNED_DESKS` empty to price from Deribit in the browser only.
+`GET /` returns `commit`, `pubkey`, `address`, `balance`, `beaconTxid`, `beaconGidx`, and the quote book. Paste `pubkey` into `app/rfq-config.js` and push `master` so the page asks this desk. Leave `PINNED_DESKS` empty to price from Deribit in the browser only. A filled vault is also a public event on nostr.arkade.sh, which is what a settler reads.
 
 Fund `address` with Mutinynet sats for premiums. Collateral stays on the seller's side.
+
+## Settler
+
+The app provider runs this next to the oracle and the desk. An independent party runs the same process, with its own volume and its own key, and can settle the same contracts. `OptionVault.settle` is anyone-can-spend after expiry. The first valid spend wins. The other settler sees the vault already spent, records that txid, and stops.
+
+The settler does not use `DESK_KEY`, `book.json`, the desk float, or a desk URL. The RFQ stays a sealed ephemeral message to the client. A third party cannot open it, and the relay does not keep it.
+
+When a fill lands, the desk publishes the vault in the clear on `wss://nostr.arkade.sh`:
+
+| | |
+| --- | --- |
+| Kind | `30078` (NIP-78, replaceable) |
+| Tags | `t` = `arkade-option`, `d` = the rfq id |
+| Signer | The desk holder key, the same key as `holder_pubkey` |
+
+That event is the fill txid plus the contract parameters. Catching it is enough to settle with no further input. This is the path the provider's process uses, and the path any other process uses by subscribing to the same relay.
+
+A vault txid on its own is not enough. The indexer coin is an amount and a tweaked taproot key. The spending leaf, which holds the terms, is not on the unspent coin. The fill transaction reveals the intent, not the vault. Settlement has to rebuild `OptionVault` with the same constructor, or the tweaked key will not match the coin.
+
+The event carries:
+
+| Field | Role |
+| --- | --- |
+| `fill_txid` | Transaction that created the vault output |
+| `kind` | `0` covered call, `1` limited put |
+| `strike` | USD cents |
+| `expiry` | Unix time the vault may settle. Not the intent's fill deadline |
+| `collateral` | Sats locked in the vault |
+| `exit` | Exit delay, `2048` on Mutinynet |
+| `writer_pubkey`, `writer_pk_script` | Seller key and the script the seller is paid to |
+| `holder_pubkey` | Desk key. Must match the event signer |
+| `beacon_txid`, `beacon_gidx` | Oracle identity asset |
+| `vault_address` | Checked by rebuilding the contract. A mismatch is skipped |
+
+The price is not in the event. The settler reads it from the beacon coin, the same state packet `OptionVault.settle` reads. The beacon script (signers, `readFee`, address) comes from the oracle `GET /api/status`.
+
+### Run one
+
+```bash
+export ORACLE_URL=https://<oracle>
+pnpm settle
+```
+
+```bash
+docker build -f settle/Dockerfile -t arkade-options-settle .
+docker run --rm -p 8790:8790 -e ORACLE_URL -v settle-data:/data arkade-options-settle
+```
+
+Dokploy, building `master`:
+
+- Docker File `settle/Dockerfile`. Docker Context Path `/` or `/settle`. The image clones the repo, so either context works.
+- Port `8790`.
+- Set `ORACLE_URL` to the oracle origin. Do not set `DESK_KEY`.
+- Mount a volume at `/data`. Name it `arkade-options-settle-data`. It holds `progress.json` for this process only: events already seen, and vaults it has progressed. It does not write the desk book.
+- The live Mutinynet beacon was deployed with `readFee` 100. Set `SETTLE_KEY` (32-byte hex, a new key, not the desk key) and send that vtxo a coin of exactly 100 sats. The settler pays the read fee from that coin. A beacon deployed with `readFee` 0 needs no key.
+- `RELAYS` defaults to `wss://nostr.arkade.sh`. Leave it unset unless the desks publish somewhere else.
+- `GET /status` returns `commit`, `oracle`, `relay`, `watching`, and `settled`.
+
+One beacon coin settles one vault per pass. The next vault is the following tick, about two seconds later. A vault with no fixing yet does not block a later expiry. Settle before eight newer fixings replace that expiry on the beacon, or publish the expiry again.
+
+### Hand it a vault
+
+Same process. `POSITIONS` is a JSON file of the same records the event carries. The relay subscription stays on. Use the file when you already have the txid and the parameters and do not want to wait for the event. One object, an array, or `{ "positions": [ ... ] }` all work. Incomplete rows are skipped. The vault address is still checked before a spend.
+
+```bash
+export ORACLE_URL=https://<oracle>
+export POSITIONS=./vaults.json
+pnpm settle
+```
+
+```json
+{
+  "v": 1,
+  "type": "option_position",
+  "rfq_id": "<64-hex>",
+  "pair": "arkade:BTC->arkade:BTC-OPTION",
+  "kind": 0,
+  "collateral": "20000",
+  "strike": "9700000",
+  "expiry": 1790463992,
+  "exit": 2048,
+  "writer_pubkey": "<32-byte hex>",
+  "writer_pk_script": "<34-byte script hex>",
+  "holder_pubkey": "<32-byte hex>",
+  "beacon_txid": "<64-hex display txid>",
+  "beacon_gidx": 0,
+  "vault_address": "tark1...",
+  "fill_txid": "<64-hex>"
+}
+```

@@ -28,8 +28,10 @@ import { assertServerExit, bindContracts, directPayoutKey, payoutVtxo, type Term
 import { bytesToHex, hexToBytes } from "../protocol/hex.ts";
 import { intentProgram } from "../protocol/programs.ts";
 import {
+  parsePosition,
   premiumRefusal,
   requestRefusal,
+  type OptionPosition,
   type RfqQuote,
   type RfqRequest,
   type RfqStatus,
@@ -328,6 +330,55 @@ async function onMessage({ from, message }: Incoming) {
 
 const transport = connectTransport({ relays, secretKey: secret, onMessage });
 
+function filledPosition(row: QuoteRow): OptionPosition | null {
+  if (row.status !== "filled" || !row.fillTxid) return null;
+  return parsePosition({
+    v: 1,
+    type: "option_position",
+    rfq_id: row.rfqId,
+    pair: PAIR,
+    kind: row.kind,
+    collateral: row.collateral,
+    strike: row.strike,
+    expiry: row.expiry,
+    exit: row.exit,
+    writer_pubkey: row.writerPubkey,
+    writer_pk_script: row.writerPkScript,
+    holder_pubkey: row.holderPubkey,
+    beacon_txid: row.beaconTxid,
+    beacon_gidx: row.beaconGidx,
+    vault_address: row.vaultAddress,
+    fill_txid: row.fillTxid,
+  });
+}
+
+const announced = new Set<string>();
+let announcing = false;
+let announceError = "";
+
+/** The RFQ stays sealed. A filled vault is a public event any settler can read. */
+async function announceFilled() {
+  if (announcing) return;
+  announcing = true;
+  try {
+    for (const row of book.list()) {
+      const position = filledPosition(row);
+      if (!position || announced.has(position.rfq_id)) continue;
+      await transport.publishPosition(position);
+      announced.add(position.rfq_id);
+    }
+    announceError = "";
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (message !== announceError) {
+      announceError = message;
+      console.error("announce", message);
+    }
+  } finally {
+    announcing = false;
+  }
+}
+
 type FloatCoin = { txid: string; vout: number; value: number };
 
 const deskScriptHex = bytesToHex(deskScript.pkScript);
@@ -448,6 +499,7 @@ async function pump() {
           }
           if (fresh) countFill(hour, BigInt(row.premium), BigInt(row.collateral));
           console.log("filled", row.rfqId, outcome.txid ?? "");
+          void announceFilled();
           await refreshFloat();
         } else if (outcome.result === "expired") {
           book.mark(row.rfqId, "expired");
@@ -504,6 +556,7 @@ async function housekeeping() {
       await book.save();
       console.log("dropped", dropped, "quotes with no beacon");
     }
+    await announceFilled();
   } finally {
     polling = false;
   }
