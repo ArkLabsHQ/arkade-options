@@ -3,8 +3,6 @@ import { readFile } from "node:fs/promises";
 import {
   arkade,
   asset,
-  InMemoryContractRepository,
-  InMemoryWalletRepository,
   networks,
   RestArkProvider,
   RestEmulatorProvider,
@@ -21,6 +19,7 @@ import { ARK_URL, EMULATOR_URL, EXIT } from "../protocol/constants.ts";
 import { assertServerExit, bindContracts, payoutVtxo } from "../protocol/contracts.ts";
 import { bytesToHex, xOnly } from "../protocol/hex.ts";
 import { intentProgram } from "../protocol/programs.ts";
+import { openSqliteStorage } from "../protocol/sqlite-storage.ts";
 
 /**
  * Happy path on Mutinynet.
@@ -134,14 +133,15 @@ function row(bound: typeof fill, deadline: bigint): QuoteRow {
 }
 
 if (live) {
+  const storage = await openSqliteStorage(process.env.DATA_DIR?.trim() || "data", "e2e.sqlite");
   const writerWallet = await Wallet.create({
     identity: writer,
     arkServerUrl: ARK_URL,
     indexerUrl: ARK_URL,
     settlementConfig: false,
     storage: {
-      walletRepository: new InMemoryWalletRepository(),
-      contractRepository: new InMemoryContractRepository(),
+      walletRepository: storage.walletRepository,
+      contractRepository: storage.contractRepository,
     },
   });
   const funded = await writerWallet.send({

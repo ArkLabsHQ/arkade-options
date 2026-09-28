@@ -4,8 +4,8 @@ import {
   arkade,
   asset,
   ContractManager,
-  InMemoryContractRepository,
-  InMemoryWalletRepository,
+  IndexedDBContractRepository,
+  IndexedDBWalletRepository,
   networks,
   RestArkProvider,
   RestEmulatorProvider,
@@ -73,8 +73,8 @@ let managerPromise: Promise<ContractManager> | null = null;
 function contracts(): Promise<ContractManager> {
   managerPromise ??= ContractManager.create({
     indexerProvider: indexer,
-    contractRepository: new InMemoryContractRepository(),
-    walletRepository: new InMemoryWalletRepository(),
+    contractRepository: new IndexedDBContractRepository(),
+    walletRepository: new IndexedDBWalletRepository(),
     vtxoSyncMaxAgeMs: 60_000,
   });
   return managerPromise;
