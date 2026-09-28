@@ -2,35 +2,13 @@
 
 Cash-settled covered calls and limited puts on Mutinynet. The desk pays the premium. The seller sends collateral to the address on the page.
 
+Deploy order: oracle (issue the beacon) → desk (`BEACON_TXID`) → fund the desk → pin the desk pubkey on the page.
+
 ## Live
 
 - Page: <https://arkade.trade/>
 - Fund flow: <https://arkade.trade/viz/>
 - Desk: <https://arkadeoptions-desk-jxdh3j-37969b-138-199-218-130.traefik.me/>
-
-## Fund the desk
-
-```bash
-curl -k https://arkadeoptions-desk-jxdh3j-37969b-138-199-218-130.traefik.me/
-```
-
-- Send Mutinynet sats to `address`. That is the float.
-- Send enough for premiums, not for the seller's collateral.
-- `balance` stays `0` until the coins arrive.
-- A quote can go out at `0`. Fill retries when float arrives; until then the desk logs `float short`.
-- `beaconTxid` must match the oracle's identity asset. Copy it from the oracle dashboard or startup log.
-
-## Point the page at the desk
-
-Paste `pubkey` from the curl into `app/rfq-config.js`, then push `master`.
-
-```js
-export const PINNED_DESKS = [
-  { name: "Mutinynet", pubkey: "<pubkey>" },
-];
-```
-
-Leave `PINNED_DESKS` empty to see Deribit prices in the browser. Selling needs a desk: its quote names the beacon.
 
 ## Page
 
@@ -51,7 +29,111 @@ docker run --rm -p 8080:80 arkade-options
 - Open <http://127.0.0.1:8080/>
 - GitHub Pages publishes `dist/` on every push to `master`.
 
+## Oracle
+
+The beacon is a 5-signer committee plus one admin key. `ORACLE_KEY` is the admin: it issues the identity asset, deploys the beacon coin, and signs each fixing write. It is never auto-generated. The five source secrets stay off the server; only their x-only pubkeys are stored. The process never holds those five private keys.
+
+| Key | Role |
+| --- | --- |
+| `ORACLE_KEY` | Admin. Wallet, issue, deploy, publish. One 32-byte hex secret. |
+| Five source secrets | Sign price prints. Register the five x-only pubkeys once; keep the secrets for the print form or `/api/prints`. |
+
+Env: `ORACLE_KEY` and `ORACLE_ADMIN` (bearer for admin routes; unset disables them). `ARK_URL` defaults to `https://mutinynet.arkade.sh`. `EMULATOR_URL` defaults to the Mutinynet emulator. `DATA_DIR` is the store directory and `PORT` defaults to `8789`.
+
+```bash
+export ORACLE_KEY=$(openssl rand -hex 32)
+export ORACLE_ADMIN=$(openssl rand -hex 16)
+pnpm oracle
+```
+
+```bash
+export ORACLE_KEY=$(openssl rand -hex 32)
+export ORACLE_ADMIN=$(openssl rand -hex 16)
+docker build -f oracle/Dockerfile -t arkade-options-oracle .
+docker run --rm -p 8789:8789 -e ORACLE_KEY -e ORACLE_ADMIN -v oracle-data:/data arkade-options-oracle
+```
+
+Dokploy:
+
+- Dockerfile `oracle/Dockerfile`, build context the repository root.
+- Port `8789` behind the Dokploy HTTPS domain. The dashboard is `GET /`; browsers only let it sign over HTTPS or localhost.
+- Set `ORACLE_KEY` and `ORACLE_ADMIN`. Keep both. `ORACLE_KEY` is the only key that writes fixings on the beacon it deploys.
+- Mount a volume at `/data`. A fresh volume means a new beacon; keys, issue, and deploy run again.
+
+### Bootstrap the beacon
+
+Dashboard: open `https://<oracle>/`, paste the admin token, then Save keys → Issue → Deploy. Or curl the same order. Status is always `GET /api/status`.
+
+1. **Generate five source secrets** (local; not env on the server):
+
+```bash
+for i in 1 2 3 4 5; do openssl rand -hex 32; done
+```
+
+2. **Derive each x-only pubkey** (32-byte hex) from its secret. From the repo root after `pnpm install`:
+
+```bash
+node --input-type=module -e '
+import { schnorr } from "@noble/curves/secp256k1.js";
+import { hex } from "@scure/base";
+const secret = process.argv[1];
+if (!/^[0-9a-fA-F]{64}$/.test(secret)) throw new Error("32-byte hex secret");
+console.log(hex.encode(schnorr.getPublicKey(hex.decode(secret))));
+' <secret>
+```
+
+3. **Register the five pubkeys** (once; locked after deploy):
+
+```bash
+curl -X POST -H "Authorization: Bearer $ORACLE_ADMIN" -H "content-type: application/json" \
+  -d '{"pubkeys":["<pk1>","<pk2>","<pk3>","<pk4>","<pk5>"]}' \
+  https://<oracle>/api/keys
+```
+
+4. **Fund the oracle wallet.** `GET /api/status` returns `wallet`. Send Mutinynet sats there before issue (fees) and keep at least 330 sats for the beacon coin at deploy.
+
+5. **Issue** the identity asset (supply 1). `issueTxid` is the desk's `BEACON_TXID`:
+
+```bash
+curl -X POST -H "Authorization: Bearer $ORACLE_ADMIN" -H "content-type: application/json" \
+  -d '{}' https://<oracle>/api/issue
+```
+
+6. **Deploy** the unit into the beacon script:
+
+```bash
+curl -X POST -H "Authorization: Bearer $ORACLE_ADMIN" -H "content-type: application/json" \
+  -d '{}' https://<oracle>/api/deploy
+```
+
+`/api/status` then shows `pubkeys`, `assetId`, `issueTxid` (`BEACON_TXID`), `deployTxid`, and `address` (beacon). Copy `issueTxid` into the desk env.
+
+A Mutinynet test beacon was already issued and settled once with test keys (see `contracts/beacon.md`). A new oracle volume or a new `ORACLE_KEY` issues a new identity asset; do not reuse an old `BEACON_TXID` unless that coin and admin key still match.
+
+### Prints and publish
+
+An oracle print is `sha256(BTCUSD || price_le64 || time_le64)`. The dashboard signs in the browser: the secret is cleared after submit and is never sent to the server. Or post a signed print:
+
+```bash
+curl -X POST -H "content-type: application/json" \
+  -d '{"pubkey":"<xonly>","price":"<usd-cents>","time":<unix>,"sig":"<64-byte-hex>"}' \
+  https://<oracle>/api/prints
+```
+
+A fixing needs nine prints: three distinct committee signers in each of the open, mid, and close windows around the expiry. Threshold is 3-of-5, so a solo simulation needs all five secrets available even though only three sign each slice.
+
+After `expiry + 60`, publish:
+
+```bash
+curl -X POST -H "Authorization: Bearer $ORACLE_ADMIN" -H "content-type: application/json" \
+  -d '{"expiry":1790463992}' https://<oracle>/api/publish
+```
+
+The beacon keeps the eight newest fixings. Settle a vault before eight later expiries are published, or publish its expiry again.
+
 ## Desk
+
+Requires a deployed beacon. Set `BEACON_TXID` to the oracle's `issueTxid`.
 
 ```bash
 pnpm install
@@ -80,33 +162,29 @@ Dokploy:
 
 `GET /` and `GET /status` return the same JSON: `commit`, `pubkey`, `address`, `balance`, `beaconTxid`, `beaconGidx`.
 
-## Oracle
-
-`ORACLE_KEY` is an optional 32-byte hex key and is never generated. Its x-only pubkey is the beacon admin key. `ORACLE_ADMIN` is an optional bearer token; leave it unset to disable the admin routes. `ARK_URL` defaults to `https://mutinynet.arkade.sh`. `EMULATOR_URL` defaults to the Mutinynet emulator. `DATA_DIR` is the store directory and `PORT` defaults to `8789`.
+## Fund the desk
 
 ```bash
-pnpm oracle
+curl -k https://arkadeoptions-desk-jxdh3j-37969b-138-199-218-130.traefik.me/
 ```
 
-```bash
-docker build -f oracle/Dockerfile -t arkade-options-oracle .
-docker run --rm -p 8789:8789 -e ORACLE_KEY -e ORACLE_ADMIN -v oracle-data:/data arkade-options-oracle
+- Send Mutinynet sats to `address`. That is the float.
+- Send enough for premiums, not for the seller's collateral.
+- `balance` stays `0` until the coins arrive.
+- A quote can go out at `0`. Fill retries when float arrives; until then the desk logs `float short`.
+- `beaconTxid` must match the oracle's identity asset. Copy it from the oracle dashboard or `/api/status`.
+
+## Point the page at the desk
+
+Paste `pubkey` from the curl into `app/rfq-config.js`, then push `master`.
+
+```js
+export const PINNED_DESKS = [
+  { name: "Mutinynet", pubkey: "<pubkey>" },
+];
 ```
 
-Dokploy:
-
-- Dockerfile `oracle/Dockerfile`, build context the repository root.
-- Port `8789` behind the Dokploy HTTPS domain. The dashboard is `GET /`; browsers only let it sign over HTTPS or localhost.
-- Set `ORACLE_KEY` and `ORACLE_ADMIN`. Keep `ORACLE_KEY`: it is the only key that writes fixings on the beacon it deploys.
-- Mount a volume at `/data`.
-
-An oracle print is `sha256(BTCUSD || price_le64 || time_le64)`. After `expiry + 60`, publish the fixing:
-
-```bash
-curl -X POST -H "Authorization: Bearer $ORACLE_ADMIN" -d '{"expiry":1790463992}' https://<oracle>/api/publish
-```
-
-The beacon keeps the eight newest fixings. Settle a vault before eight later expiries are published, or publish its expiry again.
+Leave `PINNED_DESKS` empty to see Deribit prices in the browser. Selling needs a desk: its quote names the beacon.
 
 ## Check
 
