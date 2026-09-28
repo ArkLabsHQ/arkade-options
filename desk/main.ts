@@ -39,6 +39,7 @@ import { deribitPremium, fetchSurface, surfaceStatus } from "../protocol/deribit
 import { premiumSats } from "../protocol/pricing.ts";
 import { openSqliteStorage } from "../protocol/sqlite-storage.ts";
 import { Book, hasBeacon, type QuoteRow } from "./book.ts";
+import { countFill, countQuote, emptyHour, hourLine, msUntilNextHour } from "./digest.ts";
 import { fillQuote } from "./fill.ts";
 import { spotCents } from "./spot.ts";
 
@@ -56,6 +57,7 @@ import { spotCents } from "./spot.ts";
  *   DESK_STRIKE_CAP per-strike collateral cap in sats. Default 1 BTC
  *   DESK_TOTAL_CAP  total collateral cap in sats. Default 5 BTC
  *   DESK_VOL        optional vol override. Default is the Deribit mark.
+ *   DESK_LOG        set to debug to print each quote. Default is one line per hour.
  */
 
 function required(name: string): string {
@@ -92,6 +94,7 @@ if (!Number.isInteger(port) || port < 1) throw new Error("PORT");
 
 const identity = SingleKey.fromHex(deskKeyHex);
 const book = await Book.open(dataDir);
+let hour = emptyHour();
 const storage = await openSqliteStorage(dataDir);
 const beaconDisplay = beaconFromEnv();
 const indexer = new RestIndexerProvider(arkUrl);
@@ -285,7 +288,10 @@ async function onRequest(message: RfqRequest, from: string) {
     return;
   }
   await transport.publish(from, quoteMessage(row));
-  console.log("quote", row.rfqId, row.premium, row.intentAddress);
+  countQuote(hour);
+  if (process.env.DESK_LOG?.trim() === "debug") {
+    console.log("quote", row.rfqId, row.premium, row.intentAddress);
+  }
 }
 
 async function onStatus(rfqId: string, from: string) {
@@ -384,6 +390,7 @@ async function pump() {
           float: [...deskCoins.values()],
         });
         if (outcome.result === "filled") {
+          const fresh = row.status !== "filled";
           for (const coin of outcome.spent ?? []) deskCoins.delete(`${coin.txid}:${coin.vout}`);
           recount();
           book.mark(row.rfqId, "filled", outcome.txid);
@@ -396,6 +403,7 @@ async function pump() {
             const stuck = book.get(row.rfqId);
             if (stuck) delete stuck.fillTxid;
           }
+          if (fresh) countFill(hour, BigInt(row.premium), BigInt(row.collateral));
           console.log("filled", row.rfqId, outcome.txid ?? "");
         } else if (outcome.result === "expired") {
           book.mark(row.rfqId, "expired");
@@ -542,7 +550,20 @@ const timer = setInterval(() => {
 }, 2_000);
 void housekeeping();
 
+let hourEvery: ReturnType<typeof setInterval> | undefined;
+function logHour() {
+  console.log(hourLine(hour));
+  hour = emptyHour();
+}
+const hourTimer = setTimeout(() => {
+  logHour();
+  hourEvery = setInterval(logHour, 60 * 60 * 1000);
+}, msUntilNextHour());
+
 function shutdown() {
+  clearTimeout(hourTimer);
+  if (hourEvery) clearInterval(hourEvery);
+  if (hour.quotes || hour.filled) console.log(hourLine(hour));
   clearInterval(timer);
   contractManager.dispose();
   transport.close();
