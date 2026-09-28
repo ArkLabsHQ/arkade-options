@@ -153,7 +153,8 @@ test("an empty pending list is finalized from the indexer virtual txs", async ()
         };
       },
       async getVirtualTxs(ids) {
-        return { txs: ids.map((id) => byId.get(id) ?? "") };
+        // Mutinynet returns these sorted by txid, not in request order.
+        return { txs: ids.map((id) => byId.get(id) ?? "").reverse() };
       },
     } as Pick<IndexerProvider, "getVtxos" | "getVirtualTxs">,
     ark: {
@@ -174,4 +175,58 @@ test("an empty pending list is finalized from the indexer virtual txs", async ()
   assert.equal(deskSigned.id, checkpoints[1]!.id);
   assert.equal(foreignSigned.getInput(0).tapScriptSig?.length ?? 0, 0);
   assert.equal(deskSigned.getInput(0).tapScriptSig?.length, 1);
+});
+
+test("a missing offchain row is submitted again and then finalized", async () => {
+  const desk = key(7);
+  const server = Uint8Array.from(Buffer.from(SERVER, "hex"));
+  const script = payoutVtxo(await desk.xOnlyPublicKey(), server, EXIT);
+  const { arkTx, checkpoints } = buildOffchainTx(
+    [{
+      txid: "ab".repeat(32),
+      vout: 0,
+      value: 40_633,
+      tapLeafScript: script.forfeit(),
+      tapTree: script.encode(),
+    } as unknown as ArkTxInput],
+    [{ script: script.pkScript, amount: 40_633n }],
+    { script: new Uint8Array([0x51]), params: { timelock: { type: "seconds", value: EXIT }, pubkeys: [server] } } as never,
+  );
+  const arkRaw = base64.encode(arkTx.toPSBT());
+  const checkpointRaw = base64.encode(checkpoints[0]!.toPSBT());
+  const byId = new Map([[arkTx.id, arkRaw], [checkpoints[0]!.id, checkpointRaw]]);
+  const submitted: string[] = [];
+  const finalized: string[][] = [];
+  let attempts = 0;
+  const done = await finalizeDeskSpends({
+    identity: desk,
+    deskScript: script,
+    indexer: {
+      async getVtxos() {
+        return { vtxos: [{ txid: "ab".repeat(32), vout: 0, value: 40_633, isSpent: true, arkTxId: arkTx.id }] };
+      },
+      async getVirtualTxs(ids) {
+        return { txs: ids.map((id) => byId.get(id) ?? "") };
+      },
+    } as Pick<IndexerProvider, "getVtxos" | "getVirtualTxs">,
+    ark: {
+      async getPendingTxs() {
+        return [];
+      },
+      async finalizeTx(arkTxid, txs) {
+        attempts += 1;
+        if (attempts === 1) throw new Error(`TX_NOT_FOUND (19): offchain tx ${arkTxid} not found`);
+        finalized.push([arkTxid, ...txs]);
+      },
+      async submitTx(signedArkTx, checkpointTxs) {
+        submitted.push(signedArkTx, ...checkpointTxs);
+        return { arkTxid: arkTx.id, signedCheckpointTxs: [checkpointRaw] };
+      },
+    },
+  });
+  assert.deepEqual(done, [arkTx.id]);
+  assert.equal(submitted[0], arkRaw);
+  assert.equal(Transaction.fromPSBT(base64.decode(submitted[1]!)).id, checkpoints[0]!.id);
+  const signed = Transaction.fromPSBT(base64.decode(finalized[0]![1]!));
+  assert.equal(signed.getInput(0).tapScriptSig?.length, 1);
 });

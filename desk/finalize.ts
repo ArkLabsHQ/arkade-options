@@ -11,6 +11,11 @@ export type PendingArk = {
     message: { type: "get-pending-tx"; expire_at: number };
   }): Promise<{ arkTxid: string; signedCheckpointTxs: string[] }[]>;
   finalizeTx(arkTxid: string, finalCheckpointTxs: string[]): Promise<void>;
+  /** Present on RestArkProvider. Used when arkd has dropped the offchain row. */
+  submitTx?(signedArkTx: string, checkpointTxs: string[]): Promise<{
+    arkTxid: string;
+    signedCheckpointTxs: string[];
+  }>;
 };
 
 type Indexer = Pick<IndexerProvider, "getVtxos" | "getVirtualTxs">;
@@ -56,6 +61,25 @@ function prevTxid(tx: Transaction, index: number): string {
   return bytesToHex(raw);
 }
 
+function notFound(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  return /not found/i.test(message);
+}
+
+/** The indexer returns virtual txs sorted by txid, not in the order we asked. */
+function virtualTxsById(raws: string[]): Map<string, string> {
+  const found = new Map<string, string>();
+  for (const raw of raws) {
+    if (!raw) continue;
+    found.set(Transaction.fromPSBT(base64.decode(raw)).id, raw);
+  }
+  return found;
+}
+
+async function cosignedCheckpoints(identity: Identity, deskScript: Uint8Array, raws: string[]): Promise<string[]> {
+  return Promise.all(raws.map((raw) => cosignCheckpoint(identity, deskScript, raw)));
+}
+
 /** Arkd lists a pending spend only when the vtxo row carries ArkTxid. The indexer already has it. */
 async function finalizeFromIndexer(opts: {
   ark: PendingArk;
@@ -68,29 +92,38 @@ async function finalizeFromIndexer(opts: {
     console.error("finalize indexer has no ark tx for", coins.length, "coins");
     return [];
   }
-  const page = await opts.indexer.getVirtualTxs(ids);
+  const arkTxs = virtualTxsById((await opts.indexer.getVirtualTxs(ids)).txs);
   const finalized: string[] = [];
-  for (let i = 0; i < ids.length; i += 1) {
-    const arkTxid = ids[i]!;
-    const raw = page.txs[i];
+  for (const arkTxid of ids) {
+    const raw = arkTxs.get(arkTxid);
     if (!raw) {
       console.error("finalize virtual tx missing", arkTxid);
       continue;
     }
     try {
       const arkTx = Transaction.fromPSBT(base64.decode(raw));
-      if (arkTx.id !== arkTxid) throw new Error(`virtual tx ${arkTxid} came back as ${arkTx.id}`);
       const checkpointIds: string[] = [];
       for (let input = 0; input < arkTx.inputsLength; input += 1) checkpointIds.push(prevTxid(arkTx, input));
-      const fetched = await opts.indexer.getVirtualTxs(checkpointIds);
-      const checkpoints = await Promise.all(checkpointIds.map(async (id, index) => {
-        const checkpoint = fetched.txs[index];
+      const fetched = virtualTxsById((await opts.indexer.getVirtualTxs(checkpointIds)).txs);
+      const ordered = checkpointIds.map((id) => {
+        const checkpoint = fetched.get(id);
         if (!checkpoint) throw new Error(`checkpoint ${id} missing`);
-        const parsed = Transaction.fromPSBT(base64.decode(checkpoint));
-        if (parsed.id !== id) throw new Error(`checkpoint ${id} came back as ${parsed.id}`);
-        return cosignCheckpoint(opts.identity, opts.deskScript.pkScript, checkpoint);
-      }));
-      await opts.ark.finalizeTx(arkTxid, checkpoints);
+        return checkpoint;
+      });
+      const signed = await cosignedCheckpoints(opts.identity, opts.deskScript.pkScript, ordered);
+      try {
+        await opts.ark.finalizeTx(arkTxid, signed);
+      } catch (err) {
+        if (!notFound(err) || !opts.ark.submitTx) throw err;
+        console.error("finalize resubmit", arkTxid);
+        const submitted = await opts.ark.submitTx(raw, ordered);
+        const cosigned = await cosignedCheckpoints(
+          opts.identity,
+          opts.deskScript.pkScript,
+          submitted.signedCheckpointTxs,
+        );
+        await opts.ark.finalizeTx(submitted.arkTxid, cosigned);
+      }
       finalized.push(arkTxid);
     } catch (err) {
       console.error("finalize", arkTxid, err instanceof Error ? err.message : err);
