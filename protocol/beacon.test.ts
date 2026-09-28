@@ -38,7 +38,7 @@ const FIXTURE = {
   expiry: 1_700_000_000n,
   price: 10_000_000n,
   beaconSats: 330n,
-  readFee: 100n,
+  minValue: 330n,
   keyLag: 60n,
   threshold: 3n,
   domain: new TextEncoder().encode("BTCUSD-FIX"),
@@ -70,8 +70,6 @@ async function buildFixture() {
   const adminPk = await key(9).xOnlyPublicKey();
   const writerPk = await key(21).xOnlyPublicKey();
   const holderPk = await key(22).xOnlyPublicKey();
-  const deskKey = key(23);
-  const deskPk = await deskKey.xOnlyPublicKey();
   const checkpoint = CSVMultisigTapscript.decode(hexToBytes(CHECKPOINT_HEX));
 
   const assetId = asset.AssetId.create(FIXTURE.assetTxid, 0);
@@ -82,7 +80,7 @@ async function buildFixture() {
     threshold: FIXTURE.threshold,
     domain: FIXTURE.domain,
     keyLag: FIXTURE.keyLag,
-    readFee: FIXTURE.readFee,
+    minValue: FIXTURE.minValue,
     adminPk,
     serverKey,
     emulatorKey,
@@ -136,18 +134,14 @@ async function buildFixture() {
 
   const beaconTx = creatingTx(beacon.pkScript, FIXTURE.beaconSats, [statePacket(fixed)]);
   const vaultTx = creatingTx(vault.pkScript, FIXTURE.collateral);
-  const feeScript = new DefaultVtxo.Script({ pubKey: deskPk, serverPubKey: serverKey, csvTimelock: { type: "seconds", value: EXIT } });
-  const feeTx = creatingTx(feeScript.pkScript, FIXTURE.readFee);
   const split = settlementOutputs(holderPayoff(FIXTURE.kind, FIXTURE.price, FIXTURE.strike, FIXTURE.collateral), FIXTURE.collateral);
   const settle = buildSettle({
     vault: { script: vault.script, coin: coinOf(vaultTx, FIXTURE.collateral) },
     beacon: { script: beacon.script, coin: coinOf(beaconTx, FIXTURE.beaconSats), state: fixed, id: assetId },
-    readFee: FIXTURE.readFee,
     payouts: [
       { script: vault.holderPkScript, amount: split.holder },
       { script: vault.writerPkScript, amount: split.writer },
     ],
-    fee: { coin: coinOf(feeTx, FIXTURE.readFee), tapLeafScript: feeScript.forfeit(), tapTree: feeScript.encode() },
     checkpoint,
   });
 
@@ -238,7 +232,7 @@ test("bindings are deterministic Mutinynet addresses and refuse a bad committee"
     threshold: 3n,
     domain: FIXTURE.domain,
     keyLag: 60n,
-    readFee: 100n,
+    minValue: 330n,
     adminPk: signers[0]!,
     serverKey,
     emulatorKey,
@@ -247,6 +241,7 @@ test("bindings are deterministic Mutinynet addresses and refuse a bad committee"
   assert.throws(() => bindBeacon({ ...base, threshold: 6n }), /threshold/);
   assert.throws(() => bindBeacon({ ...base, signers: [signers[0]!, signers[0]!, signers[2]!, signers[3]!, signers[4]!] }), /duplicate/);
   assert.throws(() => bindBeacon({ ...base, signers: signers.slice(0, 4) }), /5 signers/);
+  assert.throws(() => bindBeacon({ ...base, minValue: 300n }), /above 300/);
 });
 
 test("the deploy pays the unit to the beacon and any other asset to change", async () => {
@@ -270,13 +265,13 @@ test("the deploy pays the unit to the beacon and any other asset to change", asy
 test("the settle transaction has the documented layout", async () => {
   const built = await buildFixture();
   const tx = built.settle.arkTx;
-  assert.equal(tx.inputsLength, 3);
-  assert.deepEqual(built.settle.signIndexes, [2]);
-  assert.equal(built.settle.checkpoints.length, 3);
+  assert.equal(tx.inputsLength, 2);
+  assert.deepEqual(built.settle.signIndexes, []);
+  assert.equal(built.settle.checkpoints.length, 2);
   assert.equal(tx.outputsLength, 5);
   const out = (i: number) => tx.getOutput(i)!;
   assert.equal(bytesToHex(out(0).script!), bytesToHex(built.beacon.pkScript));
-  assert.equal(out(0).amount, FIXTURE.beaconSats + FIXTURE.readFee);
+  assert.equal(out(0).amount, FIXTURE.beaconSats);
   assert.equal(out(1).amount, built.split.holder);
   assert.equal(bytesToHex(out(1).script!), bytesToHex(built.vault.holderPkScript));
   assert.equal(out(2).amount, built.split.writer);

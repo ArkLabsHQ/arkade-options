@@ -229,7 +229,7 @@ test("a covered call locks, pays the writer, settles, and refunds a missed fill"
     threshold: 3n,
     domain: new TextEncoder().encode("BTCUSD-FIX"),
     keyLag: 0n,
-    readFee: 0n,
+    minValue: 330n,
     adminPk: oraclePks[0]!,
     serverKey: client.serverKey,
     emulatorKey: client.emulatorKey,
@@ -254,7 +254,6 @@ test("a covered call locks, pays the writer, settles, and refunds a missed fill"
       state: fixed,
       id: asset.AssetId.create(displayTxid, 0),
     },
-    readFee: 0n,
     payouts: [
       { script: bound.holderPkScript, amount: split.holder },
       { script: bound.writerPkScript, amount: split.writer },

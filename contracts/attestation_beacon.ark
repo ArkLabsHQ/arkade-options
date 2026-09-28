@@ -35,8 +35,9 @@ pragma arkade ^0.1.0;
 // sha256(domain + "migrate" + ctrlTxid + num2bin(ctrlGidx, 4) + num2bin(round, 8) + next).
 //
 // Every cooperative leaf continues the coin at output 0: same script (or
-// `next` for migrate), at least the same value, the asset unit, the packet.
-// `read` adds readFee sats to the coin.
+// `next` for migrate), at least the same value, at least minValue, the asset
+// unit, the packet. minValue must be above the 300-sat subdust line. `read`
+// adds nothing.
 
 contract AttestationBeacon(
   bytes32 ctrlTxid,
@@ -45,7 +46,7 @@ contract AttestationBeacon(
   int threshold,
   bytes domain,
   int keyLag,
-  int readFee,
+  int minValue,
   pubkey adminPk,
   int exit
 ) {
@@ -82,9 +83,16 @@ contract AttestationBeacon(
     require(valid >= threshold, "quorum");
   }
 
+  private function aboveSubdust() {
+    require(minValue > 300, "subdust");
+  }
+
   private function continues(bytes state) {
+    aboveSubdust();
     require(size(state) == SIZE, "state size");
     require(substr(state, 0, 1) == 0x01, "state version");
+    require(tx.outputs[0].value >= tx.input.current.value, "value");
+    require(tx.outputs[0].value >= minValue, "minimum");
     require(tx.outputs[0].scriptPubKey == tx.input.current.scriptPubKey, "script");
     require(tx.outputs[0].assets.lookup(ctrlTxid, ctrlGidx) == 1, "identity asset");
   }
@@ -203,7 +211,6 @@ contract AttestationBeacon(
     require(substr(next, SLOTS, 8) == num2bin(key, 8), "slot key");
     require(substr(next, VALUE_AT, 32) == num2bin(twap, 32), "slot value");
     require(substr(next, HISTORY_AT, HISTORY) == substr(prev, SLOTS, HISTORY), "history");
-    require(tx.outputs[0].value >= tx.input.current.value, "value");
     let opMsg = sha256(ctrlTxid + next);
     require(checkSigFromStack(opSig, adminPk, opMsg), "operator");
     continues(next);
@@ -213,7 +220,6 @@ contract AttestationBeacon(
     require(selfIndex == this.activeInputIndex, "self index");
     bytes state = tx.packet(STATE);
     require(state == tx.inputs[selfIndex].packet(STATE), "state carried");
-    require(tx.outputs[0].value >= tx.input.current.value + readFee, "read fee");
     continues(state);
   }
 
@@ -227,8 +233,10 @@ contract AttestationBeacon(
     let msg = sha256(domain + "migrate" + ctrlTxid + num2bin(ctrlGidx, 4) + num2bin(round, 8) + next);
     quorum(msg, sigs);
     require(checkSigFromStack(opSig, adminPk, msg), "oracle service");
+    aboveSubdust();
     require(tx.outputs[0].scriptPubKey == next, "next script");
     require(tx.outputs[0].value >= tx.input.current.value, "value");
+    require(tx.outputs[0].value >= minValue, "minimum");
     require(tx.outputs[0].assets.lookup(ctrlTxid, ctrlGidx) == 1, "identity asset");
   }
 

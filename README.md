@@ -52,7 +52,7 @@ curl -k https://arkadeoptions-oracle-bhuczu-39c492-138-199-218-130.traefik.me/ap
 curl -k https://arkadeoptions-desk-jxdh3j-37969b-138-199-218-130.traefik.me/
 ```
 
-Oracle `balance` is spendable sats on the admin wallet. The beacon coin itself is separate (330 sats, plus 100 for every read). Desk `balance` is the float. `beaconTxid` on the desk must stay `76ba2970…da89`.
+Oracle `balance` is spendable sats on the admin wallet. The beacon coin itself is separate. Desk `balance` is the float. `beaconTxid` on the desk must stay `76ba2970…da89` until a new beacon is deployed.
 
 Fund the desk at its deposit address. Send enough for premiums. The seller's collateral does not come from this float. `balance` stays `0` until the coins arrive. A quote can go out at `0`; the fill waits and the desk logs `float short`.
 
@@ -90,11 +90,13 @@ Desk logs: one line per UTC hour, `hour N quotes, N filled, N premium paid, N co
 | `threshold` | How many of the five committee keys must sign a `migrate`. Attest is separate: each of the three price slices needs three distinct signers. |
 | `domain` | Hex of the ASCII string `BTCUSD-FIX`. It is mixed into the migrate signature so a signature for this beacon cannot authorize a move of another one. Price prints use `BTCUSD`, not this string. |
 | `keyLag` | Seconds after the expiry key before `attest` is allowed. `60` means a fixing cannot be published until the close window has ended. |
-| `readFee` | Sats added to the beacon coin on every `read`. See below. |
+| `readFee` | On this deployed coin only: 100 sats added to the beacon on every `read`. The contract in this repo no longer has this field. |
 | `adminPk` | X-only pubkey of `ORACLE_KEY`. The only key that may write a fixing. It signs `sha256(ctrlTxid \|\| nextPacket)`. |
 | `exit` | Seconds the admin must wait before a unilateral exit of the beacon coin to Bitcoin. `2048` is Mutinynet's `unilateralExitDelay`. |
 
-`readFee` is 100 sats. Settlement spends the beacon with the `read` leaf, which copies the price packet into that transaction and requires no signature, so anyone can do it. The script requires the continued beacon output to be worth at least its current value plus 100 sats. The settler attaches a 100-sat coin, and those 100 sats stay on the beacon. They are not paid to the admin wallet. The cost stops a free spend that would move the coin and lengthen the off-chain ancestry every later settlement inherits. The coin starts at 330 sats and grows by 100 per read.
+The coin at `76ba2970…da89` was deployed with `readFee` 100. A settlement of that coin still attaches 100 sats, and those sats stay on the beacon. They are not paid to the admin wallet.
+
+The contract in this repo replaced that field with `minValue`. A read copies the price packet and adds nothing. Output 0 must be worth at least the input and at least `minValue`, and `minValue` must be above the 300-sat subdust line. The service sets it to 330, the same as the beacon coin. That script is a different address. Publishing or settling against `76ba2970…da89` with this build will not match the coin. Issue and deploy a new beacon, then point the desk at the new `issueTxid`, before using it.
 
 The status object omits `ctrlGidx` (it is `0`, the `0000` suffix on `assetId`) and the five signers (they are the top-level `pubkeys`).
 

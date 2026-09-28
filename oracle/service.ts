@@ -10,7 +10,7 @@ import { base64 } from "@scure/base";
 
 import { fixing, oraclePreimage, sliceError, windows } from "../app/settle-math.js";
 import { beaconIdOf, bindBeacon, decodeState, genesisOutputs, nextState, priceValue, publishDigest, statePacketOf } from "../protocol/beacon.ts";
-import { EXIT, PRICE_MAX } from "../protocol/constants.ts";
+import { DUST_SATS, EXIT, PRICE_MAX } from "../protocol/constants.ts";
 import { buildAttest, submit, type AttestSlice } from "../protocol/cospend.ts";
 import { bytesToHex, hexToBytes } from "../protocol/hex.ts";
 import { loadStore, saveStore, type StoredPrint } from "./store.ts";
@@ -23,7 +23,7 @@ import { loadStore, saveStore, type StoredPrint } from "./store.ts";
 const DOMAIN = new TextEncoder().encode("BTCUSD-FIX");
 const THRESHOLD = 3n;
 const KEY_LAG = 60n;
-const READ_FEE = 100n;
+const MIN_VALUE = DUST_SATS;
 // About a year of daily expiries at three prints each. The oldest print of that oracle goes first.
 const PRINTS_PER_ORACLE = 1_000;
 const CSP = "default-src 'none'; script-src 'self'; connect-src 'self'; style-src 'self'; frame-ancestors 'none'";
@@ -208,7 +208,7 @@ export async function createOracle(deps: OracleDeps) {
       threshold: THRESHOLD,
       domain: DOMAIN,
       keyLag: KEY_LAG,
-      readFee: READ_FEE,
+      minValue: MIN_VALUE,
       adminPk,
       exit: EXIT,
       serverKey: deps.wallet.arkServerPublicKey,
@@ -240,7 +240,7 @@ export async function createOracle(deps: OracleDeps) {
         threshold: Number(THRESHOLD),
         domain: bytesToHex(DOMAIN),
         keyLag: Number(KEY_LAG),
-        readFee: Number(READ_FEE),
+        minValue: Number(MIN_VALUE),
         adminPk: adminPk ? bytesToHex(adminPk) : null,
         exit: Number(EXIT),
       },

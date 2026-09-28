@@ -140,28 +140,21 @@ export type BeaconCoin = {
 
 /**
  * Settle a beacon vault: the vault at input 0, the beacon at input 1 through
- * `read`, an optional fee coin the identity signs at input 2. Output 0 continues
- * the beacon with the read fee added; payouts follow.
+ * `read`. Output 0 continues the beacon at the same value; payouts follow.
+ * The script refuses a continuation below `minValue`.
  */
 export function buildSettle(input: {
   vault: { script: arkade.ArkadeProgramScript; coin: Coin };
   beacon: BeaconCoin;
-  readFee: bigint;
   payouts: { script: Uint8Array; amount: bigint }[];
-  fee?: SignedSpend;
   checkpoint: CSVMultisigTapscript.Type;
 }): Built {
   const spends: Spend[] = [
     { script: input.vault.script, fn: "settle", coin: input.vault.coin },
     { script: input.beacon.script, fn: "read", callArgs: { selfIndex: 1n }, coin: input.beacon.coin },
   ];
-  if (input.readFee > 0n) {
-    if (!input.fee) throw new Error("a fee coin is required when readFee > 0");
-    if (BigInt(input.fee.coin.value) !== input.readFee) throw new Error("fee coin must equal readFee");
-    spends.push(input.fee);
-  }
   const outputs = [
-    { script: input.beacon.script.pkScript, amount: BigInt(input.beacon.coin.value) + input.readFee },
+    { script: input.beacon.script.pkScript, amount: BigInt(input.beacon.coin.value) },
     ...input.payouts,
   ];
   return build(spends, outputs, [unitTransfer(input.beacon.id, 1, 0), statePacket(input.beacon.state)], input.checkpoint);

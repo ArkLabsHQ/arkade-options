@@ -23,7 +23,7 @@ Identity is an asset unit, state is a packet, and the covenant holding the unit 
 
 ### Identity
 
-`AttestationBeacon(ctrlTxid, ctrlGidx, signers[5], threshold, domain, keyLag, readFee, adminPk, exit)`. The beacon coin carries one unit of the asset `(ctrlTxid, ctrlGidx)`. The vault commits to `(beaconTxid, beaconGidx)` and to nothing else about the oracle.
+`AttestationBeacon(ctrlTxid, ctrlGidx, signers[5], threshold, domain, keyLag, minValue, adminPk, exit)`. The beacon coin carries one unit of the asset `(ctrlTxid, ctrlGidx)`. The vault commits to `(beaconTxid, beaconGidx)` and to nothing else about the oracle. `minValue` must be above 300 sats. The service deploys 330.
 
 The script cannot see the issuance. The desk trusts the asset id it is given (see §4, a second identity unit).
 
@@ -47,7 +47,7 @@ The packet is one stack element. `OP_INSPECTINPUTPACKET` rejects more than 520 b
 
 A key that fell off the eight slots may be attested again. The oracle signatures still verify. The oracle-service signature (`adminPk`, the `ORACLE_KEY` pubkey, not the Arkade Service) covers the whole next packet, so it has to be made again for the new history.
 
-`read(selfIndex)`. `selfIndex` is the beacon's own input index. The current transaction carries a packet equal to the beacon's own. Output 0 keeps the script and the asset unit and gains `readFee` sats. No signature: anyone may read. A read pins nothing else about its transaction: not the number of inputs, not who else is in it.
+`read(selfIndex)`. `selfIndex` is the beacon's own input index. The current transaction carries a packet equal to the beacon's own. Output 0 keeps the script, the asset unit, and at least the input value, and that value is at least `minValue`. A read adds no sats. No signature: anyone may read. A read pins nothing else about its transaction: not the number of inputs, not who else is in it.
 
 `migrate(next, sigs[5], opSig)`. Beacon at input 0. `threshold` signers and `adminPk` sign `sha256(domain + "migrate" + ctrlTxid + num2bin(ctrlGidx, 4) + num2bin(round, 8) + next)`, with `round` read from the current packet, so a migrate signature is good for one state only. Output 0 pays the 32-byte program `next` with the asset unit and at least the value; the packet is carried unchanged. The consumer does not change.
 
@@ -74,9 +74,9 @@ in 0  beacon (attest)            out 0  beacon, same script, ≥ 330 sats, 1 uni
 Settle:
 
 ```
-in 0  vault (settle)             out 0  beacon, same script, 330 + readFee sats, 1 unit
+in 0  vault (settle)             out 0  beacon, same script, same sats, 1 unit
 in 1  beacon (read, selfIndex 1) out 1  holder or writer leg
-in 2  fee coin, when readFee > 0 out 2  writer leg, when both legs are above dust
+                                 out 2  writer leg, when both legs are above dust
                                  out 3  extension: asset packet, state packet copy, emulator packet with two entries
                                  out 4  anchor
 ```
@@ -100,7 +100,7 @@ The marker design was not taken here because a marker unit can be re-homed by wh
 
 Script, `attestation_beacon.ark`:
 
-- Nine oracle signatures over `sha256(BTCUSD || price || time)`, three distinct signers in each slice, the TWAP, and `adminPk` over `sha256(ctrlTxid || next)`. Distinct signers. Round + 1. Key above 1800 and absent from the slots. Clock past `key + keyLag` when enabled. Slot value `num2bin(twap, 32)`. History shift of 280 bytes. Continuation of script, value, and asset unit on output 0. Attest and migrate at input 0. A read carries the packet unchanged and pays `readFee`. `migrate` needs a threshold of the five signers and `adminPk`.
+- Nine oracle signatures over `sha256(BTCUSD || price || time)`, three distinct signers in each slice, the TWAP, and `adminPk` over `sha256(ctrlTxid || next)`. Distinct signers. Round + 1. Key above 1800 and absent from the slots. Clock past `key + keyLag` when enabled. Slot value `num2bin(twap, 32)`. History shift of 280 bytes. Continuation of script, value, and asset unit on output 0. Attest and migrate at input 0. A read carries the packet unchanged and adds nothing. Output 0 is at least `minValue`, and `minValue` is above 300. `migrate` needs a threshold of the five signers and `adminPk`.
 
 Script, `option_vault.ark`:
 
@@ -126,7 +126,7 @@ Emulator:
 | Fixing published before the settlement minute closes | blocked when `keyLag ≥ 0`: `checkTime(key + keyLag)`. Lateness is not bounded. |
 | Consumer attaches a forged previous transaction for input 1 | not blocked by any script. The VM's `OP_INSPECTINPUTPACKET` takes the previous transaction from its fetcher without comparing a hash; the compiler's test harness maps it by outpoint with no check, and a probe against that harness accepted a forged previous transaction. Whether the emulator service binds the attached transaction to the input, through the checkpoint hop, is unverified here. Everything that reads a previous packet, this design and the LayerZero example alike, rests on it. |
 | Two settlements race for the beacon | one is rejected and rebuilt on the new outpoint. Bounded, not impossible. |
-| Someone reads the beacon to move it | costs `readFee` per read. Bounded, not blocked. Each read also lengthens the beacon's off-chain ancestry, which every payout that read it inherits at exit; the oracle service renews the beacon coin to keep that short. |
+| Someone reads the beacon to move it | free. The coin cannot be shrunk, and it cannot continue below `minValue`. Each read still lengthens the beacon's off-chain ancestry, which every payout that read it inherits at exit; the oracle service renews the beacon coin to keep that short. |
 | Oracle prints replayed on another beacon | not blocked: the print digest names no beacon. The oracle service's digest names `ctrlTxid` and the next packet, so the write itself does not replay. |
 | Old migrate signatures replayed | blocked: the digest names the round. |
 | Migrate to a script that lies | needs the committee threshold and the oracle service together. That is the trust a consumer accepts by committing to the asset id. |
@@ -156,5 +156,5 @@ The desk and the page bind `OptionVault` to the beacon id they are given (`BEACO
 - The emulator service binds the attached previous transaction of each input to that input, across the checkpoint hop. Submit a settle with a forged previous transaction to Mutinynet and require rejection.
 - Asset claims are rejected on boarding inputs and on any input whose prevout is not an Arkade transaction output.
 - An asset-bearing coin survives a batch refresh, and which spend does it. `read` at input 0 is the intended renewal shape. Server key rotation (`deprecatedSigners` in `/v1/info`) needs a `migrate` to a script with the new server key before each cutoff.
-- A two-covenant settle with no user-signed input is accepted by `RestEmulatorProvider.submitTx`. The Mutinynet settle had one, the fee coin.
+- A two-covenant settle with no user-signed input is accepted by `RestEmulatorProvider.submitTx`. The earlier Mutinynet settle also carried a fee coin, because that script charged `readFee`.
 - Operator rate limits on `read`, and the measured exit chain length after N reads.

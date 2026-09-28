@@ -42,7 +42,7 @@ Dokploy, building `master`:
 
 ### Bootstrap the beacon
 
-Dashboard: open `https://<oracle>/`, paste the admin token, then Save keys → Issue → Deploy. Or curl the same order. Status is `GET /api/status`. The constructor that lands in `args` (`threshold` 3, `keyLag` 60, `readFee` 100, `exit` 2048, domain `BTCUSD-FIX`) is fixed in the service. It is explained in the README.
+Dashboard: open `https://<oracle>/`, paste the admin token, then Save keys → Issue → Deploy. Or curl the same order. Status is `GET /api/status`. The constructor that lands in `args` (`threshold` 3, `keyLag` 60, `minValue` 330, `exit` 2048, domain `BTCUSD-FIX`) is fixed in the service. `minValue` must be above 300. A read adds nothing. It is explained in the README. The beacon already on Mutinynet was deployed with `readFee` 100 and is a different script.
 
 1. **Generate five source secrets** locally. Do not set them as env on the server.
 

@@ -187,13 +187,13 @@
         <dt>Premium</dt><dd>1,000 sats</dd>
         <dt>Strike K</dt><dd>9,700,000 cents ($97,000.00)</dd>
         <dt>Fixture price</dt><dd>10,000,000 cents ($100,000.00)</dd>
-        <dt>Beacon coin</dt><dd>330 sats, read fee 100 sats</dd>
+        <dt>Beacon coin</dt><dd>330 sats. Minimum 330, above the 300-sat subdust line. A read adds nothing</dd>
         <dt>Exit</dt><dd>2,048 seconds, unilateral leaves only</dd>
         <dt>Contract dust</dt><dd>330 sats, strict</dd>
         <dt>Fill window</dt><dd>deadline = now + 180 seconds</dd>
         <dt>Quote validity</dt><dd>30 seconds, the RFQ field, not the script</dd>
       </dl>
-      <p class="note">Q, premium, strike, and price are the lifecycle fixture and the values of the Mutinynet run. The beacon coin and the 100-sat read fee are the beacon test fixture. The 180-second deadline is <code>LOCK_S</code>. The 30 seconds is <code>QUOTE_TTL_S</code>, stored as <code>validUntil</code>. <code>bindContracts</code> always sets intent side to 0.</p>
+      <p class="note">Q, premium, strike, and price are the lifecycle fixture and the values of the Mutinynet run. The beacon coin is 330 sats, which is the minimum, above the 300-sat subdust line. The 180-second deadline is <code>LOCK_S</code>. The 30 seconds is <code>QUOTE_TTL_S</code>, stored as <code>validUntil</code>. <code>bindContracts</code> always sets intent side to 0.</p>
     </div>
     <div>
       <h3>Live Mutinynet, 2026-09-27</h3>
@@ -283,7 +283,7 @@
       <div class="coin beacon covenant gain" data-sat="330" data-asset="unit:1" data-party="beacon">
         <div class="who"><svg class="lock" viewBox="0 0 16 16" aria-hidden="true"><path d="M5 7V5a3 3 0 0 1 6 0v2M3 7h10v7H3z" fill="none" stroke="currentColor"/></svg>AttestationBeacon · output 0</div>
         <strong>330</strong> sats
-        <p>Gain. 1 identity unit. Round 0, eight empty slots. Five oracle keys, key lag 60, read fee 100, admin key <code>ORACLE_KEY</code>.</p>
+        <p>Gain. 1 identity unit. Round 0, eight empty slots. Five oracle keys, key lag 60, minimum 330, admin key <code>ORACLE_KEY</code>.</p>
       </div>
       <div class="coin oracle" data-sat="99670" data-party="oracle">
         <div class="who">Oracle service · change</div>
@@ -524,24 +524,19 @@
         <strong>330</strong> sats
         <p>1 identity unit. Leaf <code>read</code>, witness <code>selfIndex = 1</code>. State carried, not rewritten.</p>
       </div>
-      <div class="coin fee loss" data-sat="100" data-party="fee">
-        <div class="who">Fee payer · forfeit</div>
-        <strong>100</strong> sats
-        <p>Loss. Required because this beacon’s <code>readFee</code> is 100. Anyone can fund it. The script does not name the desk.</p>
-      </div>
     </div>
     <div class="spine">
       <div class="tid">settle</div>
-      <div id="settle-shape">3 in → 3 out</div>
-      <div id="settle-cons">20,430 = 20,430</div>
+      <div id="settle-shape">2 in → 3 out</div>
+      <div id="settle-cons">20,330 = 20,330</div>
       <div class="ok">sats in = out</div>
       <div class="ok">unit in = out</div>
     </div>
     <div class="col outputs" id="settle-outputs">
-      <div class="coin beacon covenant gain" data-sat="430" data-asset="unit:1" data-party="beacon" data-role="beacon-out">
+      <div class="coin beacon covenant" data-sat="330" data-asset="unit:1" data-party="beacon" data-role="beacon-out">
         <div class="who"><svg class="lock" viewBox="0 0 16 16" aria-hidden="true"><path d="M5 7V5a3 3 0 0 1 6 0v2M3 7h10v7H3z" fill="none" stroke="currentColor"/></svg>AttestationBeacon · output 0</div>
-        <strong data-amt="beacon">430</strong> sats
-        <p>Gain of 100. Same script, same unit, same state. The 330 continued. The read fee was added.</p>
+        <strong data-amt="beacon">330</strong> sats
+        <p>Unchanged. Same script, same unit, same state, same 330 sats. A read adds nothing. The script requires at least <code>minValue</code>, and <code>minValue</code> must be above 300.</p>
       </div>
       <div class="coin desk gain" data-sat="600" data-party="desk" data-role="holder-out">
         <div class="who">Holder · output 1</div>
@@ -559,7 +554,7 @@
       </div>
     </div>
   </section>
-  <p>On Mutinynet the fee coin was the 1,000-sat premium output. <code>buildSettle</code> wants a coin of exactly the read fee, so the run used <code>build</code> with a fourth output of 900 change: <a href="https://explorer.mutinynet.arkade.sh/tx/ff7dfad446af6d85a6e229fadae0a87ecbb03f5ff55a935658e064eeb25b0206">ff7dfa…</a>, 3 in → 4 out, 21,330 = 21,330. The holder’s 600 and the writer’s 19,400 are the same.</p>
+  <p>That Mutinynet settlement used the previous script, which added a 100-sat read fee. The fee coin was the 1,000-sat premium output, and the run used <code>build</code> with a fourth output of 900 change: <a href="https://explorer.mutinynet.arkade.sh/tx/ff7dfad446af6d85a6e229fadae0a87ecbb03f5ff55a935658e064eeb25b0206">ff7dfa…</a>, 3 in → 4 out, 21,330 = 21,330. The holder’s 600 and the writer’s 19,400 are the same.</p>
   <div class="wide">
     <table>
       <caption>What each covenant checks in this one transaction</caption>
@@ -569,16 +564,15 @@
         <tr><td>Clock</td><td><code>checkTime(expiry)</code></td><td>None on this leaf.</td></tr>
         <tr><td>Identity</td><td>Input 1 holds 1 unit of the committed asset</td><td>Output 0 holds 1 unit of the beacon’s own asset</td></tr>
         <tr><td>State</td><td>Input 1’s packet is 329 bytes, version 0x01, and the newest slot whose key equals the expiry supplies the price</td><td>The current packet equals the packet on its own input</td></tr>
-        <tr><td>Value</td><td>Payouts at outputs 1 and 2, or one of them when a leg is dust</td><td>Output 0 value ≥ input value + read fee</td></tr>
+        <tr><td>Value</td><td>Payouts at outputs 1 and 2, or one of them when a leg is dust</td><td>Output 0 value ≥ input value and ≥ <code>minValue</code>. <code>minValue</code> &gt; 300</td></tr>
         <tr><td>Script</td><td>The payout programs committed at creation</td><td>Output 0 script equals the input script</td></tr>
       </tbody>
     </table>
   </div>
   <ul class="nets">
     <li class="writer"><div class="who">Writer, exact fill then this settle</div><strong class="up">+400</strong><div>premium 1,000 + 19,400 − 20,000 locked</div></li>
-    <li class="desk"><div class="who">Desk, exact fill then this settle</div><strong class="down">−400</strong><div>paid 1,000, receives 600. The 100 read fee is not the desk unless the desk paid it.</div></li>
-    <li class="fee"><div class="who">Fee payer</div><strong class="down">−100</strong></li>
-    <li class="beacon"><div class="who">Beacon coin</div><strong class="up">+100</strong></li>
+    <li class="desk"><div class="who">Desk, exact fill then this settle</div><strong class="down">−400</strong><div>paid 1,000, receives 600.</div></li>
+    <li class="beacon"><div class="who">Beacon coin</div><strong>unchanged</strong><div>330 sats. A read adds nothing.</div></li>
   </ul>
 </article>
 
@@ -597,24 +591,19 @@
         <strong>330</strong> sats
         <p>1 unit. Read.</p>
       </div>
-      <div class="coin fee loss" data-sat="100" data-party="fee">
-        <div class="who">Fee payer</div>
-        <strong>100</strong> sats
-        <p>Loss.</p>
-      </div>
     </div>
     <div class="spine">
       <div class="tid">settle</div>
-      <div>3 in → 2 out</div>
-      <div>20,430 = 20,430</div>
+      <div>2 in → 2 out</div>
+      <div>20,330 = 20,330</div>
       <div class="ok">sats in = out</div>
       <div class="ok">unit in = out</div>
     </div>
     <div class="col outputs">
-      <div class="coin beacon covenant gain" data-sat="430" data-asset="unit:1" data-party="beacon">
+      <div class="coin beacon covenant gain" data-sat="330" data-asset="unit:1" data-party="beacon">
         <div class="who"><svg class="lock" viewBox="0 0 16 16" aria-hidden="true"><path d="M5 7V5a3 3 0 0 1 6 0v2M3 7h10v7H3z" fill="none" stroke="currentColor"/></svg>AttestationBeacon</div>
-        <strong>430</strong> sats
-        <p>Gain of 100. State unchanged.</p>
+        <strong>330</strong> sats
+        <p>Unchanged. State unchanged.</p>
       </div>
       <div class="coin writer gain" data-sat="20000" data-party="writer">
         <div class="who">Writer · output 1</div>
@@ -640,16 +629,15 @@
     <div class="col inputs">
       <div class="coin vault covenant loss" data-sat="20000" data-party="vault"><div class="who">OptionVault</div><strong>20,000</strong> sats<p>Loss. Price 9,862,736 cents.</p></div>
       <div class="coin beacon covenant" data-sat="330" data-asset="unit:1" data-party="beacon"><div class="who">AttestationBeacon</div><strong>330</strong> sats<p>1 unit.</p></div>
-      <div class="coin fee loss" data-sat="100" data-party="fee"><div class="who">Fee payer</div><strong>100</strong> sats<p>Loss.</p></div>
     </div>
     <div class="spine">
       <div class="tid">settle · fold</div>
-      <div>3 in → 2 out</div>
-      <div>20,430 = 20,430</div>
+      <div>2 in → 2 out</div>
+      <div>20,330 = 20,330</div>
       <div class="ok">sats in = out</div>
     </div>
     <div class="col outputs">
-      <div class="coin beacon covenant gain" data-sat="430" data-asset="unit:1" data-party="beacon"><div class="who">AttestationBeacon</div><strong>430</strong> sats<p>Gain of 100.</p></div>
+      <div class="coin beacon covenant gain" data-sat="330" data-asset="unit:1" data-party="beacon"><div class="who">AttestationBeacon</div><strong>330</strong> sats<p>Unchanged.</p></div>
       <div class="coin writer gain" data-sat="20000" data-party="writer"><div class="who">Writer</div><strong>20,000</strong> sats<p>Gain. Payoff 330 is not paid as its own output.</p></div>
       <div class="tail">
         <div class="coin protocol opreturn" data-sat="0" data-party="protocol"><div class="who">Extension</div><strong>0</strong> sats</div>
@@ -661,16 +649,15 @@
     <div class="col inputs">
       <div class="coin vault covenant loss" data-sat="20000" data-party="vault"><div class="who">OptionVault</div><strong>20,000</strong> sats<p>Loss. Price 9,863,237 cents.</p></div>
       <div class="coin beacon covenant" data-sat="330" data-asset="unit:1" data-party="beacon"><div class="who">AttestationBeacon</div><strong>330</strong> sats<p>1 unit.</p></div>
-      <div class="coin fee loss" data-sat="100" data-party="fee"><div class="who">Fee payer</div><strong>100</strong> sats<p>Loss.</p></div>
     </div>
     <div class="spine">
       <div class="tid">settle · split</div>
-      <div>3 in → 3 out</div>
-      <div>20,430 = 20,430</div>
+      <div>2 in → 3 out</div>
+      <div>20,330 = 20,330</div>
       <div class="ok">sats in = out</div>
     </div>
     <div class="col outputs">
-      <div class="coin beacon covenant gain" data-sat="430" data-asset="unit:1" data-party="beacon"><div class="who">AttestationBeacon</div><strong>430</strong> sats<p>Gain of 100.</p></div>
+      <div class="coin beacon covenant gain" data-sat="330" data-asset="unit:1" data-party="beacon"><div class="who">AttestationBeacon</div><strong>330</strong> sats<p>Unchanged.</p></div>
       <div class="coin desk gain" data-sat="331" data-party="desk"><div class="who">Holder</div><strong>331</strong> sats<p>Gain. First split above dust.</p></div>
       <div class="coin writer gain" data-sat="19669" data-party="writer"><div class="who">Writer</div><strong>19,669</strong> sats<p>Gain. 20,000 − 331.</p></div>
       <div class="tail">
@@ -692,16 +679,15 @@
     <div class="col inputs">
       <div class="coin vault covenant loss" data-sat="20000" data-party="vault"><div class="who">OptionVault · kind 1</div><strong>20,000</strong> sats<p>Loss.</p></div>
       <div class="coin beacon covenant" data-sat="330" data-asset="unit:1" data-party="beacon"><div class="who">AttestationBeacon</div><strong>330</strong> sats<p>1 unit. Key equals this put’s expiry.</p></div>
-      <div class="coin fee loss" data-sat="100" data-party="fee"><div class="who">Fee payer</div><strong>100</strong> sats<p>Loss.</p></div>
     </div>
     <div class="spine">
       <div class="tid">settle</div>
-      <div>3 in → 2 out</div>
-      <div>20,430 = 20,430</div>
+      <div>2 in → 2 out</div>
+      <div>20,330 = 20,330</div>
       <div class="ok">sats in = out</div>
     </div>
     <div class="col outputs">
-      <div class="coin beacon covenant gain" data-sat="430" data-asset="unit:1" data-party="beacon"><div class="who">AttestationBeacon</div><strong>430</strong> sats<p>Gain of 100.</p></div>
+      <div class="coin beacon covenant gain" data-sat="330" data-asset="unit:1" data-party="beacon"><div class="who">AttestationBeacon</div><strong>330</strong> sats<p>Unchanged.</p></div>
       <div class="coin desk gain" data-sat="20000" data-party="desk"><div class="who">Holder · output 1</div><strong>20,000</strong> sats<p>Gain. The whole vault coin.</p></div>
       <div class="tail">
         <div class="coin protocol opreturn" data-sat="0" data-party="protocol"><div class="who">Extension</div><strong>0</strong> sats</div>
@@ -1017,7 +1003,7 @@
       <tr><td>OptionVault.close</td><td>Writer, holder, server, emulator.</td><td>No caller.</td><td>None.</td></tr>
       <tr><td>OptionVault.unilateral</td><td>Writer, after 2,048 seconds.</td><td>No caller.</td><td>None.</td></tr>
       <tr><td>AttestationBeacon.attest</td><td>Nine oracle prints and the oracle service key inside the script. Server and emulator.</td><td><code>buildAttest</code>, from <code>POST /api/publish</code></td><td>Output 0: same script, value, and identity unit. New state.</td></tr>
-      <tr><td>AttestationBeacon.read</td><td>Server and emulator. No oracle signature.</td><td><code>buildSettle</code></td><td>Output 0: same script and unit, value ≥ input + read fee, packet unchanged.</td></tr>
+      <tr><td>AttestationBeacon.read</td><td>Server and emulator. No oracle signature.</td><td><code>buildSettle</code></td><td>Output 0: same script and unit, value ≥ input and ≥ minValue, packet unchanged.</td></tr>
       <tr><td>AttestationBeacon.migrate</td><td>3 of the 5 oracle keys and the oracle service key inside the script. Server and emulator.</td><td>No caller.</td><td>Output 0: the signed next program, value, and unit. Packet unchanged.</td></tr>
       <tr><td>AttestationBeacon.unilateral</td><td>Admin, the oracle service key, after 2,048 seconds.</td><td>No caller.</td><td>None.</td></tr>
       <tr><td>NonInteractiveSwap.swap</td><td>Taker inside the script. Server and emulator.</td><td>No caller. <code>bindSwap</code> derives an address.</td><td>Output 0 maker program and want asset. Output 1 taker script and offer asset.</td></tr>
@@ -1041,7 +1027,7 @@
   <ul class="checks">
     <li>The premium output exists before the vault output. Finalize will not pay the vault without paying the writer at least the premium.</li>
     <li>Settle pays from one slot whose key equals the expiry, newest first, using the integer formula above, and folds a leg of 330 sats or less.</li>
-    <li>Settle sees that price only by spending the identity unit. The beacon’s read leaf carries the packet unchanged and adds the read fee on output 0.</li>
+    <li>Settle sees that price only by spending the identity unit. The beacon’s read leaf carries the packet unchanged and adds nothing on output 0.</li>
     <li>Attest stores only the TWAP of the nine prints it checks: three distinct oracles per slice, the latest print of each slice inside its window and all three within 60 seconds, medians weighted 900, 900, and 60. It needs the oracle service’s signature over the new packet.</li>
     <li>Attest moves the round by one, refuses a key already in a slot, and continues the same script and the same unit.</li>
     <li>Migrate needs three of the five oracle keys and the oracle service key, and continues the unit and the packet onto the signed next program. The vault’s constructor does not contain the beacon script or the committee keys.</li>
@@ -1053,7 +1039,7 @@
     <li>The oracles’ prices match the market. The script checks nine signatures and the arithmetic, not where the prices came from. The Mutinynet prints came from test keys.</li>
     <li>Which valid prints are used. When more than three oracles sign inside a slice, the oracle service picks the three. The script accepts any valid three.</li>
     <li>A print names no beacon, so an oracle’s signature is valid on every beacon that lists its key. That is the design.</li>
-    <li>The oracle service publishes the expiry key before it falls out of the eight slots, and someone pays the read fee and submits the settle. Lateness of a fixing is not bounded. A version byte other than 0x01 fails settle and leaves the coin to the writer’s unilateral leaf after the delay.</li>
+    <li>The oracle service publishes the expiry key before it falls out of the eight slots, and someone submits the settle. A read is free. Lateness of a fixing is not bounded. A version byte other than 0x01 fails settle and leaves the coin to the writer’s unilateral leaf after the delay.</li>
     <li>Three oracle keys and the oracle service together can migrate the unit to any program. Vaults then settle from whatever packet that program writes.</li>
     <li>The server and the emulator sign every covenant leaf, and the scripts hold only if the emulator runs them before it signs. The emulator binds each input’s previous transaction to that input; the script cannot see a forged previous packet, and that binding was not re-checked here.</li>
     <li>Close, every unilateral leaf, and side 1 have no caller. Unpinned outputs are drawn at the input amount so the picture balances.</li>
@@ -1069,7 +1055,6 @@ import { holderPayoff, settlementOutputs } from "./settle-math.js";
 
 const Q = 20_000n;
 const K = 9_700_000n;
-const FEE = 100n;
 const BEACON = 330n;
 const kindEl = document.querySelector("#kind");
 const priceEl = document.querySelector("#price");
@@ -1119,8 +1104,8 @@ function render() {
   const kind = Number(kindEl.value);
   const ph = holderPayoff(kind, price, K, Q);
   const out = settlementOutputs(ph, Q);
-  const totalIn = Q + BEACON + FEE;
-  const beaconOut = BEACON + FEE;
+  const totalIn = Q + BEACON;
+  const beaconOut = BEACON;
   draw(kind, price);
   holderOut.hidden = out.holder === 0n;
   writerOut.hidden = out.writer === 0n;
@@ -1129,7 +1114,7 @@ function render() {
   holderOut.querySelector("[data-amt='holder']").textContent = fmt(out.holder);
   writerOut.querySelector("[data-amt='writer']").textContent = fmt(out.writer);
   const outs = 1 + (out.holder > 0n ? 1 : 0) + (out.writer > 0n ? 1 : 0);
-  shape.textContent = `3 in → ${outs} out`;
+  shape.textContent = `2 in → ${outs} out`;
   cons.textContent = `${fmt(totalIn)} = ${fmt(beaconOut + out.holder + out.writer)}`;
   const kindName = kind === 0 ? "covered call" : "limited put";
   shown.textContent = `Input: kind ${kind} (${kindName}), price ${fmt(price)} cents. Holder payoff ${fmt(ph)} sats. Shape: ${out.mode}.`;

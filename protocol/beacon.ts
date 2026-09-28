@@ -122,7 +122,8 @@ export type BeaconArgs = {
   threshold: bigint;
   domain: Uint8Array;
   keyLag: bigint;
-  readFee: bigint;
+  /** Continued output must be worth at least this many sats, and this must be above 300. */
+  minValue: bigint;
   adminPk: Uint8Array;
   exit?: bigint;
   serverKey: Uint8Array;
@@ -146,6 +147,7 @@ function checkCommittee(signers: readonly Uint8Array[], threshold: bigint) {
 
 export function bindBeacon(input: BeaconArgs): Bound {
   checkCommittee(input.signers, input.threshold);
+  if (input.minValue <= 300n) throw new Error("minValue must be above 300 sats");
   if (input.emulatorKey.length !== 33) throw new Error("emulator key must be 33 bytes");
   const serverKey = xOnly(input.serverKey);
   const args: Record<string, bigint | Uint8Array> = {
@@ -154,7 +156,7 @@ export function bindBeacon(input: BeaconArgs): Bound {
     threshold: input.threshold,
     domain: input.domain,
     keyLag: input.keyLag,
-    readFee: input.readFee,
+    minValue: input.minValue,
     adminPk: xOnly(input.adminPk),
     exit: input.exit ?? EXIT,
     server: serverKey,
