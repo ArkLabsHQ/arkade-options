@@ -66,6 +66,8 @@ curl -k -X POST -H "Authorization: Bearer $ORACLE_ADMIN" -H "content-type: appli
 
 The beacon keeps the eight newest fixings. Settle a vault before eight later expiries are published, or publish that expiry again.
 
+Set `ORACLE_URL` on the desk to the oracle's origin. After expiry the desk reads `/api/status` for the beacon script, fetches the beacon coin, and settles each filled vault from the fixing in that coin's state. The holder and the writer are paid by the same rule as the vault. Unset, the desk leaves the vault for someone else to spend.
+
 Desk logs: one line per UTC hour, `hour N quotes, N filled, N premium paid, N collateral locked` (sats). A fill still logs immediately with its txid. `DESK_LOG=debug` prints each quote.
 
 ## Beacon args

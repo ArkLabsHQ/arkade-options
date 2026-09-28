@@ -137,6 +137,7 @@ Dokploy, building `master`:
 - Set `DESK_KEY` (32-byte hex) and keep it. Set `BEACON_TXID`. The process exits if the txid is missing or not 64 hex characters.
 - Set `BEACON_GIDX` only when the identity asset is not at vout `0`.
 - Optional: `DESK_STRIKE_CAP` (default 1 BTC), `DESK_TOTAL_CAP` (default 5 BTC), `DESK_VOL` (override the Deribit mark), `DESK_LOG=debug` (print each quote; default is the hourly digest).
+- Optional: `ORACLE_URL`, the oracle origin (`https://<oracle>` or an in-cluster `http://…:8789`). When set, the desk settles filled vaults after expiry by reading that oracle's beacon. A read fee above zero needs a desk coin of that exact size. Unset skips settlement.
 - Mount a volume at `/data`. The live name is `arkade-options-desk-data`. It holds `book.json` and `arkade.sqlite`.
 - `commit` in `GET /` must match the image you just built.
 

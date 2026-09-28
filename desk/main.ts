@@ -41,6 +41,8 @@ import { openSqliteStorage } from "../protocol/sqlite-storage.ts";
 import { Book, hasBeacon, type QuoteRow } from "./book.ts";
 import { countFill, countQuote, emptyHour, hourLine, msUntilNextHour } from "./digest.ts";
 import { fillQuote } from "./fill.ts";
+import { fetchOracleStatus, oracleOrigin, parseOracleBeacon } from "./oracle.ts";
+import { duePositions, settleQuote } from "./settle.ts";
 import { spotCents } from "./spot.ts";
 
 /**
@@ -58,6 +60,7 @@ import { spotCents } from "./spot.ts";
  *   DESK_TOTAL_CAP  total collateral cap in sats. Default 5 BTC
  *   DESK_VOL        optional vol override. Default is the Deribit mark.
  *   DESK_LOG        set to debug to print each quote. Default is one line per hour.
+ *   ORACLE_URL      optional http(s) origin. When set, filled vaults settle after expiry.
  */
 
 function required(name: string): string {
@@ -86,6 +89,7 @@ const caps = {
   perStrike: bigintEnv("DESK_STRIKE_CAP", 100_000_000n),
   total: bigintEnv("DESK_TOTAL_CAP", 500_000_000n),
 };
+const oracleUrl = process.env.ORACLE_URL?.trim() ? oracleOrigin(process.env.ORACLE_URL.trim()) : "";
 const volOverride = process.env.DESK_VOL?.trim() ? Number(process.env.DESK_VOL) : null;
 if (volOverride != null && !(volOverride > 0 && volOverride < 5)) {
   throw new Error("DESK_VOL must be a vol between 0 and 5");
@@ -456,8 +460,101 @@ async function housekeeping() {
       await book.save();
       console.log("dropped", dropped, "quotes with no beacon");
     }
+    await settleOpen();
   } finally {
     polling = false;
+  }
+}
+
+const noted = new Set<string>();
+
+function once(key: string, line: string, error = false) {
+  if (noted.has(key)) return;
+  noted.add(key);
+  if (error) console.error(line);
+  else console.log(line);
+}
+
+/**
+ * One settle per pass. The beacon coin moves, so the next vault has to read
+ * the new outpoint. A vault with no fixing yet does not block a later expiry.
+ */
+async function settleOpen() {
+  const now = Math.floor(Date.now() / 1000);
+  const due = duePositions(book.list(), now);
+  if (!due.length) return;
+  if (!oracleUrl) {
+    once("oracle-url", "settle off: ORACLE_URL is unset");
+    return;
+  }
+  let parsed;
+  try {
+    parsed = parseOracleBeacon(await fetchOracleStatus(oracleUrl, AbortSignal.timeout(10_000)), beaconDisplay.txid, beaconDisplay.gidx);
+  } catch (err) {
+    once("oracle-fetch", `settle oracle ${err instanceof Error ? err.message : err}`);
+    return;
+  }
+  if (!parsed.ok) {
+    once(`oracle-parse:${parsed.error}`, `settle oracle ${parsed.error}`);
+    return;
+  }
+  noted.delete("oracle-fetch");
+  if (!client.indexer || !client.emulator) {
+    once("oracle-client", "settle needs the indexer and the emulator");
+    return;
+  }
+  for (const row of due) {
+    try {
+      const outcome = await settleQuote({
+        chain: client.indexer,
+        serverKey: client.serverKey,
+        emulatorKey: client.emulatorKey!,
+        emulator: client.emulator,
+        checkpoint: client.checkpoint,
+        identity: client.identity,
+        row,
+        terms: termsFor(row),
+        beacon: parsed.beacon,
+        now,
+        feeCoins: [...deskCoins.values()],
+        feeScript: deskScript,
+      });
+      if (outcome.result === "settled") {
+        if (outcome.fee) {
+          deskCoins.delete(`${outcome.fee.txid}:${outcome.fee.vout}`);
+          recount();
+        }
+        book.noteSettle(row.rfqId, outcome.txid);
+        try {
+          await book.save();
+        } catch (err) {
+          console.error("book save", row.rfqId, err instanceof Error ? err.message : err);
+        }
+        console.log("settled", row.rfqId, outcome.txid);
+        return;
+      }
+      if (outcome.result === "short") {
+        once(`short:${row.rfqId}`, `settle fee short ${row.rfqId}`, true);
+        return;
+      }
+      if (outcome.result === "mismatch") {
+        once(`mismatch:${row.rfqId}`, `settle ${row.rfqId} beacon mismatch`, true);
+        continue;
+      }
+      if (outcome.result === "unfixed") {
+        once(`unfixed:${row.rfqId}`, `settle waiting ${row.rfqId} no fixing`);
+        continue;
+      }
+      if (outcome.reason === "beacon") {
+        once("beacon-coin", "settle waiting beacon coin");
+        return;
+      }
+      once(`wait:${row.rfqId}:${outcome.reason}`, `settle waiting ${row.rfqId} ${outcome.reason}`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      once(`err:${row.rfqId}:${message}`, `settle ${row.rfqId} ${message}`, true);
+      return;
+    }
   }
 }
 
@@ -523,6 +620,7 @@ function statusBody() {
       intentAddress: row.intentAddress,
       vaultAddress: row.vaultAddress,
       fillTxid: row.fillTxid ?? null,
+      settleTxid: row.settleTxid ?? null,
     })),
   });
 }
@@ -546,6 +644,7 @@ server.listen(port, () => {
   console.log(`desk ${pubkey}`);
   console.log(`address ${address}`);
   console.log(`beacon ${beaconDisplay.txid}:${beaconDisplay.gidx}`);
+  if (oracleUrl) console.log(`oracle ${oracleUrl}`);
   console.log(`status http://127.0.0.1:${port}/status`);
 });
 
