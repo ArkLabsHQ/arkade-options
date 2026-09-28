@@ -61,10 +61,20 @@ function prevTxid(tx: Transaction, index: number): string {
   return bytesToHex(raw);
 }
 
-function notFound(err: unknown): boolean {
-  const message = err instanceof Error ? err.message : String(err);
-  return /not found/i.test(message);
+function messageOf(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }
+
+function notFound(err: unknown): boolean {
+  return /not found/i.test(messageOf(err));
+}
+
+function alreadySpent(err: unknown): boolean {
+  return /already spent/i.test(messageOf(err));
+}
+
+// Arkd spent these inputs and then lost the offchain row. Submit and finalize both refuse.
+const stuckArkTxs = new Set<string>();
 
 /** The indexer returns virtual txs sorted by txid, not in the order we asked. */
 function virtualTxsById(raws: string[]): Map<string, string> {
@@ -126,7 +136,17 @@ async function finalizeFromIndexer(opts: {
       }
       finalized.push(arkTxid);
     } catch (err) {
-      console.error("finalize", arkTxid, err instanceof Error ? err.message : err);
+      if (alreadySpent(err)) {
+        stuckArkTxs.add(arkTxid);
+        console.error(
+          "finalize stuck",
+          arkTxid,
+          "arkd marked an input spent and has no offchain tx to finish:",
+          messageOf(err),
+        );
+        continue;
+      }
+      console.error("finalize", arkTxid, messageOf(err));
     }
   }
   return finalized;
@@ -145,6 +165,7 @@ export async function finalizeDeskSpends(opts: {
   });
   const coins = (page.vtxos ?? []).filter((coin) => coin.txid && coin.isSpent !== false);
   if (!coins.length) return [];
+  if (coins.every((coin) => coin.arkTxId && stuckArkTxs.has(coin.arkTxId))) return [];
   const intent = await ownershipProof(opts.identity, opts.deskScript, coins);
   const pending = await opts.ark.getPendingTxs(intent);
   const finalized: string[] = [];

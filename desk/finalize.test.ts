@@ -230,3 +230,55 @@ test("a missing offchain row is submitted again and then finalized", async () =>
   const signed = Transaction.fromPSBT(base64.decode(finalized[0]![1]!));
   assert.equal(signed.getInput(0).tapScriptSig?.length, 1);
 });
+
+test("an already-spent input is not submitted again", async () => {
+  const desk = key(8);
+  const server = Uint8Array.from(Buffer.from(SERVER, "hex"));
+  const script = payoutVtxo(await desk.xOnlyPublicKey(), server, EXIT);
+  const { arkTx, checkpoints } = buildOffchainTx(
+    [{
+      txid: "cd".repeat(32),
+      vout: 0,
+      value: 40_633,
+      tapLeafScript: script.forfeit(),
+      tapTree: script.encode(),
+    } as unknown as ArkTxInput],
+    [{ script: script.pkScript, amount: 40_633n }],
+    { script: new Uint8Array([0x51]), params: { timelock: { type: "seconds", value: EXIT }, pubkeys: [server] } } as never,
+  );
+  const byId = new Map([
+    [arkTx.id, base64.encode(arkTx.toPSBT())],
+    [checkpoints[0]!.id, base64.encode(checkpoints[0]!.toPSBT())],
+  ]);
+  let submits = 0;
+  let pendingReads = 0;
+  const opts = {
+    identity: desk,
+    deskScript: script,
+    indexer: {
+      async getVtxos() {
+        return { vtxos: [{ txid: "cd".repeat(32), vout: 0, value: 40_633, isSpent: true, arkTxId: arkTx.id }] };
+      },
+      async getVirtualTxs(ids: string[]) {
+        return { txs: ids.map((id) => byId.get(id) ?? "") };
+      },
+    } as Pick<IndexerProvider, "getVtxos" | "getVirtualTxs">,
+    ark: {
+      async getPendingTxs() {
+        pendingReads += 1;
+        return [];
+      },
+      async finalizeTx() {
+        throw new Error(`TX_NOT_FOUND (19): offchain tx ${arkTx.id} not found`);
+      },
+      async submitTx() {
+        submits += 1;
+        throw new Error("VTXO_ALREADY_SPENT (6): cdcdcdcd:0 already spent");
+      },
+    },
+  };
+  assert.deepEqual(await finalizeDeskSpends(opts), []);
+  assert.deepEqual(await finalizeDeskSpends(opts), []);
+  assert.equal(submits, 1);
+  assert.equal(pendingReads, 1);
+});
