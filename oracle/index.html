@@ -15,11 +15,12 @@
     <ol id="keys"></ol>
   </section>
   <section>
-    <p class="muted">Admin token stays in this field. It is sent only as a bearer on keys, issue, and deploy.</p>
+    <p class="muted">Admin token stays in this field. It is sent only as a bearer on keys, issue, recover, and deploy.</p>
     <label>Admin token <input id="token" type="password" autocomplete="off"></label>
     <label>Five x-only pubkeys, one per line <textarea id="pubkeys" rows="5"></textarea></label>
     <button id="save" type="button">Save keys</button>
     <button id="issue" type="button">Issue</button>
+    <button id="recover" type="button">Recover pending</button>
     <button id="deploy" type="button">Deploy</button>
     <p id="admin-error" class="err"></p>
   </section>

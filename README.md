@@ -38,7 +38,7 @@ The beacon is a 5-signer committee plus one admin key. `ORACLE_KEY` is the admin
 | `ORACLE_KEY` | Admin. Wallet, issue, deploy, publish. One 32-byte hex secret. |
 | Five source secrets | Sign price prints. Register the five x-only pubkeys once; keep the secrets for the print form or `/api/prints`. |
 
-Env: `ORACLE_KEY` and `ORACLE_ADMIN` (bearer for admin routes; unset disables them). `ARK_URL` defaults to `https://mutinynet.arkade.sh`. `EMULATOR_URL` defaults to the Mutinynet emulator. `DATA_DIR` is the store directory and `PORT` defaults to `8789`.
+Env: `ORACLE_KEY` and `ORACLE_ADMIN` (bearer for admin routes; unset disables them). `ARK_URL` defaults to `https://mutinynet.arkade.sh`. `EMULATOR_URL` defaults to the Mutinynet emulator. `DATA_DIR` holds `oracle.json` and `arkade.sqlite` (SDK wallet); `PORT` defaults to `8789`.
 
 ```bash
 export ORACLE_KEY=$(openssl rand -hex 32)
@@ -58,7 +58,7 @@ Dokploy:
 - Build type Dockerfile. **Docker File** `oracle/Dockerfile` (or `./Dockerfile` if the context is the oracle folder). **Docker Context Path** `/oracle` or `/`. Do not use the repository-root `./Dockerfile`: that image is the desk (port `8788`) and will 502 behind an oracle domain on `8789`.
 - Port `8789` behind the Dokploy HTTPS domain. The dashboard is `GET /`; browsers only let it sign over HTTPS or localhost.
 - Set `ORACLE_KEY` and `ORACLE_ADMIN`. Keep both. `ORACLE_KEY` is the only key that writes fixings on the beacon it deploys.
-- Mount a volume at `/data`. A fresh volume means a new beacon; keys, issue, and deploy run again.
+- Mount a volume at `/data` (keeps `oracle.json` and `arkade.sqlite`). A fresh volume means a new beacon; keys, issue, and deploy run again.
 - If Traefik shows Bad Gateway, open Logs: exited replicas mean the wrong image or a crash on boot. Confirm the container listens on `8789` and that Advanced → Docker File is not the root desk `Dockerfile`.
 
 ### Bootstrap the beacon
@@ -91,13 +91,20 @@ curl -X POST -H "Authorization: Bearer $ORACLE_ADMIN" -H "content-type: applicat
   https://<oracle>/api/keys
 ```
 
-4. **Fund the oracle wallet.** `GET /api/status` returns `wallet`. Send Mutinynet sats there before issue (fees) and keep at least 330 sats for the beacon coin at deploy.
+4. **Fund the oracle wallet.** `GET /api/status` returns `wallet` and `balance`. Send Mutinynet sats to `wallet` and wait until `balance` is at least `330` before Issue. An empty wallet returns `{"error":"fund wallet"}` (not a Traefik failure). Keep enough left after issue for the 330-sat beacon coin at deploy.
 
 5. **Issue** the identity asset (supply 1). `issueTxid` is the desk's `BEACON_TXID`:
 
 ```bash
 curl -X POST -H "Authorization: Bearer $ORACLE_ADMIN" -H "content-type: application/json" \
   -d '{}' https://<oracle>/api/issue
+```
+
+The oracle and desk persist the SDK wallet on SQLite (`DATA_DIR/arkade.sqlite`), never in memory. Issue uses the SDK submit+finalize path. If the process dies after `submitTx` and before `finalizeTx`, the explorer shows an unfinalized spend and `balance` stays `0`. Call recover (or redeploy — boot recovers automatically), then check `/api/status`:
+
+```bash
+curl -X POST -H "Authorization: Bearer $ORACLE_ADMIN" -H "content-type: application/json" \
+  -d '{}' https://<oracle>/api/recover
 ```
 
 6. **Deploy** the unit into the beacon script:
@@ -157,7 +164,7 @@ Dokploy:
 - Set `DESK_KEY` to a 32-byte hex key and keep it.
 - Set `BEACON_TXID` to the 64-hex display txid printed by the oracle (`BEACON_TXID …` on the dashboard, or `issueTxid` in `/api/status`). Required: the desk exits immediately if this is absent or malformed.
 - Set `BEACON_GIDX` only if the identity asset is not at vout `0` (optional, default `0`).
-- Mount a volume at `/data`.
+- Mount a volume at `/data` (quote book + `arkade.sqlite`).
 - Redeploy after a desk change. An older image refuses a pasted address.
 - `commit` in `GET /` must change. A cached image can stay on `16d579f`.
 

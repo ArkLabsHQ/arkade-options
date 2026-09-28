@@ -7,8 +7,6 @@ import {
   asset,
   ContractManager,
   DefaultVtxo,
-  InMemoryContractRepository,
-  InMemoryWalletRepository,
   networks,
   RestArkProvider,
   RestEmulatorProvider,
@@ -39,6 +37,7 @@ import {
 import { connectTransport, nostrPubkey, type Incoming } from "../protocol/nostr.ts";
 import { deribitPremium, fetchSurface, surfaceStatus } from "../protocol/deribit.ts";
 import { premiumSats } from "../protocol/pricing.ts";
+import { openSqliteStorage } from "../protocol/sqlite-storage.ts";
 import { Book, type QuoteRow } from "./book.ts";
 import { fillQuote } from "./fill.ts";
 import { spotCents } from "./spot.ts";
@@ -93,6 +92,7 @@ if (!Number.isInteger(port) || port < 1) throw new Error("PORT");
 
 const identity = SingleKey.fromHex(deskKeyHex);
 const book = await Book.open(dataDir);
+const storage = await openSqliteStorage(dataDir);
 const beaconDisplay = beaconFromEnv();
 const indexer = new RestIndexerProvider(arkUrl);
 if (typeof EventSource === "undefined") {
@@ -100,8 +100,8 @@ if (typeof EventSource === "undefined") {
 }
 const contractManager = await ContractManager.create({
   indexerProvider: indexer,
-  contractRepository: new InMemoryContractRepository(),
-  walletRepository: new InMemoryWalletRepository(),
+  contractRepository: storage.contractRepository,
+  walletRepository: storage.walletRepository,
   vtxoSyncMaxAgeMs: 60_000,
 });
 const client = await arkade.Arkade.connect({
