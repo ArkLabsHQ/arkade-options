@@ -42,7 +42,7 @@ Dokploy, building `master`:
 
 ### Bootstrap the beacon
 
-Dashboard: open `https://<oracle>/`, paste the admin token, then Save keys → Issue → Deploy. Or curl the same order. Status is `GET /api/status`. The constructor that lands in `args` (`threshold` 3, `keyLag` 60, `readFee` 0, `minValue` 330, `exit` 2048, domain `BTCUSD-FIX`) is fixed in the service. `readFee` 0 is the testnet setting. `minValue` must be above 300. The beacon already on Mutinynet was deployed with `readFee` 100 and is a different script.
+Dashboard: open `https://<oracle>/`, paste the admin token, then Save keys → Issue → Deploy. Or curl the same order. Status is `GET /api/status`. The constructor that lands in `args` (`threshold` 3, `keyLag` 60, `readFee` 100, `exit` 2048, domain `BTCUSD-FIX`) is the one already deployed at `76ba2970…da89`. Do not change it. A different constructor is a different script.
 
 1. **Generate five source secrets** locally. Do not set them as env on the server.
 
@@ -197,7 +197,7 @@ Dokploy, building `master`:
 - Port `8790`.
 - Set `ORACLE_URL` to the oracle origin. Do not set `DESK_KEY`.
 - Mount a volume at `/data`. Name it `arkade-options-settle-data`. It holds `progress.json` for this process only: events already seen, and vaults it has progressed. It does not write the desk book.
-- The live Mutinynet beacon was deployed with `readFee` 100. Set `SETTLE_KEY` (32-byte hex, a new key, not the desk key) and send that vtxo a coin of exactly 100 sats. The settler pays the read fee from that coin. A beacon deployed with `readFee` 0 needs no key.
+- The live Mutinynet beacon charges `readFee` 100. Set `SETTLE_KEY` (32-byte hex, a new key, not the desk key) and send that vtxo a coin of exactly 100 sats. The settler pays the read fee from that coin.
 - `RELAYS` defaults to `wss://nostr.arkade.sh`. Leave it unset unless the desks publish somewhere else.
 - `GET /status` returns `commit`, `oracle`, `relay`, `watching`, and `settled`.
 

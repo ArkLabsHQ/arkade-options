@@ -141,7 +141,7 @@ export type BeaconCoin = {
 /**
  * Settle a beacon vault: the vault at input 0, the beacon at input 1 through
  * `read`. Output 0 continues the beacon, plus `readFee` when that fee is set.
- * A fee of 0 needs no extra coin. The script also refuses a continuation below `minValue`.
+ * A fee of 0 needs no extra coin.
  */
 export function buildSettle(input: {
   vault: { script: arkade.ArkadeProgramScript; coin: Coin };

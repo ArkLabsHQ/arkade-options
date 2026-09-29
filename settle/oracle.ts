@@ -16,7 +16,6 @@ export type BeaconSpec = {
   domain: Uint8Array;
   keyLag: bigint;
   readFee: bigint;
-  minValue: bigint;
   adminPk: Uint8Array;
   exit: bigint;
 };
@@ -97,7 +96,6 @@ export function parseOracleBeacon(body: unknown, beaconTxid?: string, gidx = 0):
   const threshold = whole(args.threshold);
   const keyLag = whole(args.keyLag);
   const readFee = whole(args.readFee);
-  const minValue = whole(args.minValue);
   const exit = whole(args.exit);
   const domain = typeof args.domain === "string" && args.domain.length > 0 && args.domain.length % 2 === 0 && HEX.test(args.domain)
     ? hexBytes(args.domain, args.domain.length / 2)
@@ -105,7 +103,6 @@ export function parseOracleBeacon(body: unknown, beaconTxid?: string, gidx = 0):
   const adminPk = hexBytes(args.adminPk, 32);
   if (threshold == null || threshold < 1n || threshold > 5n) return { ok: false, error: "threshold" };
   if (keyLag == null || readFee == null || exit == null || !domain || !adminPk) return { ok: false, error: "oracle args" };
-  if (minValue == null || minValue <= 300n) return { ok: false, error: "min value" };
   return {
     ok: true,
     beacon: {
@@ -116,7 +113,6 @@ export function parseOracleBeacon(body: unknown, beaconTxid?: string, gidx = 0):
       domain,
       keyLag,
       readFee,
-      minValue,
       adminPk,
       exit,
     },

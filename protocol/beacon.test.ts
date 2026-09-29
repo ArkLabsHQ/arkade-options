@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-import { arkade, asset, CSVMultisigTapscript, DefaultVtxo, Extension, SingleKey, Transaction } from "@arkade-os/sdk";
+import { arkade, asset, CSVMultisigTapscript, defaultEmulatorPubkey, DefaultVtxo, Extension, networks, SingleKey, Transaction } from "@arkade-os/sdk";
 
 import { holderPayoff, settlementOutputs } from "../app/settle-math.js";
 
@@ -39,7 +39,6 @@ const FIXTURE = {
   price: 10_000_000n,
   beaconSats: 330n,
   readFee: 0n,
-  minValue: 330n,
   keyLag: 60n,
   threshold: 3n,
   domain: new TextEncoder().encode("BTCUSD-FIX"),
@@ -82,7 +81,6 @@ async function buildFixture() {
     domain: FIXTURE.domain,
     keyLag: FIXTURE.keyLag,
     readFee: FIXTURE.readFee,
-    minValue: FIXTURE.minValue,
     adminPk,
     serverKey,
     emulatorKey,
@@ -236,7 +234,6 @@ test("bindings are deterministic Mutinynet addresses and refuse a bad committee"
     domain: FIXTURE.domain,
     keyLag: 60n,
     readFee: 0n,
-    minValue: 330n,
     adminPk: signers[0]!,
     serverKey,
     emulatorKey,
@@ -245,7 +242,33 @@ test("bindings are deterministic Mutinynet addresses and refuse a bad committee"
   assert.throws(() => bindBeacon({ ...base, threshold: 6n }), /threshold/);
   assert.throws(() => bindBeacon({ ...base, signers: [signers[0]!, signers[0]!, signers[2]!, signers[3]!, signers[4]!] }), /duplicate/);
   assert.throws(() => bindBeacon({ ...base, signers: signers.slice(0, 4) }), /5 signers/);
-  assert.throws(() => bindBeacon({ ...base, minValue: 300n }), /above 300/);
+});
+
+test("the deployed Mutinynet beacon is the readFee 100 script", () => {
+  const signers = [
+    "8b839812711b1e8c0f3599d198cf0b1b1156a8632a992523a6f136ec1e31a8d7",
+    "40f855e05bb2f95ca83757f8b48016725181385851abbf4b2142ad12ba60fb0b",
+    "afd2ad5556dbb7a3485218d4acd86c5ed4a3e5f3c1cbdd7ecf1e26e34c0aa164",
+    "07fc9faaf31b49549b3bab719c3837987cd5aec026f93a017bdf8816705963bb",
+    "1c37841579dc5cecfe9fdcf43ed2c701b3d634e953a840aadb1a4804ac915e5c",
+  ].map((item) => hexToBytes(item));
+  const bound = bindBeacon({
+    id: beaconIdOf(asset.AssetId.create("76ba29707601e65f696a3ac36f2b6eaf68d33cfb8506385500b67118e761da89", 0)),
+    signers,
+    threshold: 3n,
+    domain: new TextEncoder().encode("BTCUSD-FIX"),
+    keyLag: 60n,
+    readFee: 100n,
+    adminPk: hexToBytes("e96d459a88359d713db09e7b226644b84765ac33b0b84f4cb60bc9d39ffb5bbe"),
+    exit: EXIT,
+    serverKey: hexToBytes("03301078808e4f7bc0dadfe29e34b1df8eaf0108ef06b1722274075ebc107a127a"),
+    emulatorKey: hexToBytes(defaultEmulatorPubkey(networks.mutinynet)),
+  });
+  assert.equal(bytesToHex(bound.pkScript), "5120584234407b2eb72d86ef3a3a70b4437313504435c2b87ad64a4c485dcb3944a4");
+  assert.equal(
+    bound.address,
+    "tark1qqcpq7yq3e8hhsx6ml3fud93m7827qggaurtzu3zwsr4a0qs0gf85kzzx3q8kt4h9krw7w36wz6yxucn2pzrts4c0tty5nzgth9nj39y2v8p8v",
+  );
 });
 
 test("the deploy pays the unit to the beacon and any other asset to change", async () => {

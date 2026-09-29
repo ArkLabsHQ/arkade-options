@@ -10,7 +10,7 @@ import { base64 } from "@scure/base";
 
 import { fixing, oraclePreimage, sliceError, windows } from "../app/settle-math.js";
 import { beaconIdOf, bindBeacon, decodeState, genesisOutputs, nextState, priceValue, publishDigest, statePacketOf } from "../protocol/beacon.ts";
-import { DUST_SATS, EXIT, PRICE_MAX } from "../protocol/constants.ts";
+import { EXIT, PRICE_MAX } from "../protocol/constants.ts";
 import { buildAttest, submit, type AttestSlice } from "../protocol/cospend.ts";
 import { bytesToHex, hexToBytes } from "../protocol/hex.ts";
 import { loadStore, saveStore, type StoredPrint } from "./store.ts";
@@ -23,9 +23,8 @@ import { loadStore, saveStore, type StoredPrint } from "./store.ts";
 const DOMAIN = new TextEncoder().encode("BTCUSD-FIX");
 const THRESHOLD = 3n;
 const KEY_LAG = 60n;
-// Mutinynet testing does not charge a read. The parameter stays so a later beacon can.
-const READ_FEE = 0n;
-const MIN_VALUE = DUST_SATS;
+// The coin already deployed on Mutinynet. A different fee is a different script.
+const READ_FEE = 100n;
 // About a year of daily expiries at three prints each. The oldest print of that oracle goes first.
 const PRINTS_PER_ORACLE = 1_000;
 const CSP = "default-src 'none'; script-src 'self'; connect-src 'self'; style-src 'self'; frame-ancestors 'none'";
@@ -211,7 +210,6 @@ export async function createOracle(deps: OracleDeps) {
       domain: DOMAIN,
       keyLag: KEY_LAG,
       readFee: READ_FEE,
-      minValue: MIN_VALUE,
       adminPk,
       exit: EXIT,
       serverKey: deps.wallet.arkServerPublicKey,
@@ -244,7 +242,6 @@ export async function createOracle(deps: OracleDeps) {
         domain: bytesToHex(DOMAIN),
         keyLag: Number(KEY_LAG),
         readFee: Number(READ_FEE),
-        minValue: Number(MIN_VALUE),
         adminPk: adminPk ? bytesToHex(adminPk) : null,
         exit: Number(EXIT),
       },
