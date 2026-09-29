@@ -2,7 +2,7 @@ import { ArkAddress, RestIndexerProvider } from "@arkade-os/sdk";
 
 import { ARK_URL } from "../../protocol/constants.ts";
 import { bytesToHex } from "../../protocol/hex.ts";
-import { classifyIntent, coinsForIntent, psbtView, type CoinView, type IntentPhase, type TxOutput } from "../../protocol/intent-state.ts";
+import { classifyIntent, psbtView, type CoinView, type IntentPhase, type TxOutput } from "../../protocol/intent-state.ts";
 import { intentCoins, onContractEvent } from "./fund.ts";
 
 export type WatchRow = {
@@ -85,10 +85,7 @@ async function payoutEvidence(writerScript: string, intentScript: string, since:
 export async function readIntent(row: WatchRow, now = Math.floor(Date.now() / 1000)): Promise<Omit<PhaseUpdate, "address">> {
   const intentScript = scriptOf(row.address).toLowerCase();
   const writerScript = row.writerAddress ? scriptOf(row.writerAddress) : "";
-  const managed = await intentCoins(intentScript);
-  const covered = (managed ?? []).some((coin) => !coin.spent && coin.value >= row.collateral);
-  const indexed = covered ? [] : await intentVtxos(intentScript);
-  const coins = coinsForIntent(managed, indexed, row.collateral);
+  const coins = (await intentCoins(intentScript)) ?? [];
   const ids = [...new Set(coins.flatMap((coin) => coin.spent && coin.spentBy ? [coin.spentBy] : []))];
   const spends: Record<string, TxOutput[]> = {};
   if (ids.length && writerScript) {
@@ -147,19 +144,6 @@ export async function readIntent(row: WatchRow, now = Math.floor(Date.now() / 10
     }
   }
   return { ...outcome, settleTxid };
-}
-
-async function intentVtxos(script: string): Promise<CoinView[]> {
-  const [live, spent] = await Promise.all([
-    indexer.getVtxos({ scripts: [script], spendableOnly: true }),
-    indexer.getVtxos({ scripts: [script], spentOnly: true }),
-  ]);
-  return [...live.vtxos, ...spent.vtxos].map((coin) => ({
-    value: BigInt(coin.value),
-    spent: Boolean(coin.spentBy || coin.isSpent),
-    spentBy: coin.arkTxId || coin.spentBy || "",
-    txid: coin.txid || "",
-  }));
 }
 
 async function payoutLanded(writerScript: string, txid: string): Promise<boolean> {

@@ -31,17 +31,6 @@ export type TxOutput = {
   script: string;
 };
 
-/**
- * The indexer subscription does not replay coins that arrived before the listener attached.
- * An empty cache on that first read is not proof the deposit is missing.
- */
-export function coinsForIntent(managed: CoinView[] | null, indexed: CoinView[], collateral: bigint): CoinView[] {
-  const known = managed ?? [];
-  const covered = known.some((coin) => !coin.spent && coin.value >= collateral);
-  if (covered) return known;
-  return indexed.length ? indexed : known;
-}
-
 export function classifyIntent(input: {
   coins: CoinView[];
   spends: Record<string, TxOutput[]>;
