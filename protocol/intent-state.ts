@@ -32,8 +32,8 @@ export type TxOutput = {
 };
 
 /**
- * The contract manager learns about coins from the indexer subscription, which can lag the
- * send. An empty or short cache is not proof the deposit is missing; use the indexer read.
+ * The indexer subscription does not replay coins that arrived before the listener attached.
+ * An empty cache on that first read is not proof the deposit is missing.
  */
 export function coinsForIntent(managed: CoinView[] | null, indexed: CoinView[], collateral: bigint): CoinView[] {
   const known = managed ?? [];
