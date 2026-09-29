@@ -648,7 +648,6 @@ function renderBlotter() {
   if (!host) return;
   host.replaceChildren();
   const rows = visiblePositions();
-  $("blotter-count").textContent = rows.length ? String(rows.length) : "";
   if (!rows.length) {
     const p = document.createElement("p");
     p.className = "empty";
@@ -730,13 +729,13 @@ function txLink(label, txid) {
 function txLinks(position) {
   const box = document.createElement("div");
   box.className = "tx-links";
-  const funding = txLink("Funding", position.fundingTxid);
+  const funding = txLink("Deposit tx", position.fundingTxid);
   const refunded = position.status === "refunded";
-  const refund = refunded ? txLink("Refund", position.closeTxid) : null;
+  const refund = refunded ? txLink("Refund tx", position.closeTxid) : null;
   const filled = position.status === "filled" || position.status === "settled";
-  const completed = filled ? txLink("Completed", position.closeTxid) : null;
+  const completed = filled ? txLink("Payout tx", position.closeTxid) : null;
   const settlement = position.settleTxid && position.settleTxid !== position.closeTxid
-    ? txLink("Settlement", position.settleTxid)
+    ? txLink("Settlement tx", position.settleTxid)
     : null;
   if (!funding && !refund && !completed && !settlement) return null;
   for (const node of [funding, completed, settlement, refund]) {
