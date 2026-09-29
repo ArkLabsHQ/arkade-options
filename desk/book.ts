@@ -60,6 +60,49 @@ export function liveQuote(row: QuoteRow, now: number): boolean {
   return false;
 }
 
+export type QuoteFilter = "live" | "open" | "filled" | "expired" | "all";
+
+/** Expired rows and fills whose vault has already expired. The book does not need them. */
+export function finishedQuote(row: QuoteRow, now: number): boolean {
+  if (row.status === "expired") return true;
+  return row.status === "filled" && Boolean(row.fillTxid) && row.expiry <= now;
+}
+
+export function quoteCounts(rows: readonly QuoteRow[], now: number): {
+  live: number;
+  open: number;
+  filled: number;
+  expired: number;
+  total: number;
+} {
+  const counts = { live: 0, open: 0, filled: 0, expired: 0, total: rows.length };
+  for (const row of rows) {
+    if (row.status === "open") counts.open += 1;
+    else if (row.status === "filled") counts.filled += 1;
+    else counts.expired += 1;
+    if (liveQuote(row, now)) counts.live += 1;
+  }
+  return counts;
+}
+
+export function pageQuotes(rows: readonly QuoteRow[], opts: {
+  filter: QuoteFilter;
+  now: number;
+  offset: number;
+  limit: number;
+}): { quotes: QuoteRow[]; total: number; offset: number; limit: number } {
+  const matched: QuoteRow[] = [];
+  for (const row of rows) {
+    if (opts.filter === "all" || (opts.filter === "live" ? liveQuote(row, opts.now) : row.status === opts.filter)) {
+      matched.push(row);
+    }
+  }
+  matched.sort((a, b) => b.createdAt - a.createdAt || (a.rfqId < b.rfqId ? 1 : -1));
+  const offset = Math.max(0, opts.offset);
+  const limit = Math.max(0, opts.limit);
+  return { quotes: matched.slice(offset, offset + limit), total: matched.length, offset, limit };
+}
+
 export class Book {
   private rows: QuoteRow[] = [];
   private readonly file: string;
@@ -87,6 +130,18 @@ export class Book {
 
   list(): QuoteRow[] {
     return this.rows;
+  }
+
+  /** Remove quotes that can no longer fill or count toward exposure. */
+  prune(now: number): QuoteRow[] {
+    const removed: QuoteRow[] = [];
+    const kept: QuoteRow[] = [];
+    for (const row of this.rows) {
+      if (finishedQuote(row, now)) removed.push(row);
+      else kept.push(row);
+    }
+    if (removed.length) this.rows = kept;
+    return removed;
   }
 
   exposure(now: number): { total: bigint; byStrike: Map<string, bigint> } {

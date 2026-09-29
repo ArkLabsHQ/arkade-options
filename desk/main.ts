@@ -40,7 +40,7 @@ import { connectTransport, nostrPubkey, type Incoming } from "../protocol/nostr.
 import { deribitPremium, fetchSurface, surfaceStatus } from "../protocol/deribit.ts";
 import { premiumSats } from "../protocol/pricing.ts";
 import { openSqliteStorage } from "../protocol/sqlite-storage.ts";
-import { Book, hasBeacon, openPremium, type QuoteRow } from "./book.ts";
+import { Book, hasBeacon, openPremium, pageQuotes, quoteCounts, type QuoteFilter, type QuoteRow } from "./book.ts";
 import { countFill, countQuote, emptyHour, hourLine, msUntilNextHour } from "./digest.ts";
 import { finalizeDeskSpends } from "./finalize.ts";
 import { fillQuote } from "./fill.ts";
@@ -97,6 +97,11 @@ if (!Number.isInteger(port) || port < 1) throw new Error("PORT");
 
 const identity = SingleKey.fromHex(deskKeyHex);
 const book = await Book.open(dataDir);
+const forgotten = book.prune(Math.floor(Date.now() / 1000));
+if (forgotten.length) {
+  await book.save();
+  console.log("dropped", forgotten.length, "finished quotes");
+}
 let hour = emptyHour();
 const storage = await openSqliteStorage(dataDir);
 const beaconDisplay = beaconFromEnv();
@@ -557,9 +562,12 @@ async function housekeeping() {
       // Poll unsettled quotes: EventSource can miss a coin; recovery needs another look after a crash.
       queueFill(row.rfqId);
     }
-    if (dropped) {
+    const finished = book.prune(Math.floor(Date.now() / 1000));
+    for (const row of finished) await forgetScript(row.rfqId);
+    if (dropped || finished.length) {
       await book.save();
-      console.log("dropped", dropped, "quotes with no beacon");
+      if (dropped) console.log("dropped", dropped, "quotes with no beacon");
+      if (finished.length) console.log("dropped", finished.length, "finished quotes");
     }
     await announceFilled();
   } finally {
@@ -605,7 +613,27 @@ function revision(): string {
   }
 }
 
+function quoteView(row: QuoteRow) {
+  return {
+    rfqId: row.rfqId,
+    status: row.status,
+    kind: row.kind,
+    collateral: row.collateral,
+    premium: row.premium,
+    strike: row.strike,
+    expiry: row.expiry,
+    deadline: row.deadline,
+    intentAddress: row.intentAddress,
+    vaultAddress: row.vaultAddress,
+    fillTxid: row.fillTxid ?? null,
+  };
+}
+
+const QUOTE_PAGE = 50;
+
 function statusBody() {
+  const now = Math.floor(Date.now() / 1000);
+  const page = pageQuotes(book.list(), { filter: "live", now, offset: 0, limit: QUOTE_PAGE });
   return JSON.stringify({
     commit: revision(),
     pubkey,
@@ -618,34 +646,59 @@ function statusBody() {
     pricing: volOverride != null
       ? { source: "override", vol: volOverride }
       : { source: "deribit", ...surfaceStatus() },
-    quotes: book.list().map((row) => ({
-      rfqId: row.rfqId,
-      status: row.status,
-      kind: row.kind,
-      collateral: row.collateral,
-      premium: row.premium,
-      strike: row.strike,
-      expiry: row.expiry,
-      deadline: row.deadline,
-      intentAddress: row.intentAddress,
-      vaultAddress: row.vaultAddress,
-      fillTxid: row.fillTxid ?? null,
-    })),
+    quoteCounts: quoteCounts(book.list(), now),
+    quotes: page.quotes.map(quoteView),
+    quotePage: { status: "live", total: page.total, limit: page.limit, offset: page.offset },
   });
 }
 
+function quotesBody(params: URLSearchParams): { status: number; body: string } {
+  const raw = params.get("status") ?? "live";
+  const filter = raw === "live" || raw === "open" || raw === "filled" || raw === "expired" || raw === "all"
+    ? raw as QuoteFilter
+    : undefined;
+  if (!filter) return { status: 400, body: JSON.stringify({ error: "status must be live, open, filled, expired, or all" }) };
+  const offset = queryCount(params.get("offset"), 0, 1_000_000);
+  const limit = queryCount(params.get("limit"), QUOTE_PAGE, 100);
+  const now = Math.floor(Date.now() / 1000);
+  const page = pageQuotes(book.list(), { filter, now, offset, limit });
+  return {
+    status: 200,
+    body: JSON.stringify({
+      status: filter,
+      total: page.total,
+      limit: page.limit,
+      offset: page.offset,
+      quotes: page.quotes.map(quoteView),
+    }),
+  };
+}
+
+function queryCount(value: string | null, fallback: number, max: number): number {
+  if (value == null || value === "") return fallback;
+  if (!/^\d+$/.test(value)) return fallback;
+  return Math.min(max, Number(value));
+}
+
 const server = http.createServer((req, res) => {
-  const url = req.url?.split("?")[0];
-  if (url !== "/" && url !== "/status") {
-    res.writeHead(404, { "content-type": "application/json" });
-    res.end(JSON.stringify({ error: "not found" }));
-    return;
+  const parsed = new URL(req.url ?? "/", "http://127.0.0.1");
+  const path = parsed.pathname;
+  let status = 200;
+  let body: string;
+  if (path === "/" || path === "/status") body = statusBody();
+  else if (path === "/quotes") {
+    const page = quotesBody(parsed.searchParams);
+    status = page.status;
+    body = page.body;
+  } else {
+    status = 404;
+    body = JSON.stringify({ error: "not found" });
   }
-  res.writeHead(200, {
+  res.writeHead(status, {
     "content-type": "application/json",
     "access-control-allow-origin": "*",
   });
-  res.end(statusBody());
+  res.end(body);
 });
 
 server.listen(port, () => {

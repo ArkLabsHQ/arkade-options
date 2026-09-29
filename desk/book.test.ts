@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { Book, hasBeacon, openPremium, type QuoteRow } from "./book.ts";
+import { Book, finishedQuote, hasBeacon, openPremium, pageQuotes, type QuoteRow } from "./book.ts";
 
 function row(patch: Partial<QuoteRow> = {}): QuoteRow {
   return {
@@ -37,6 +37,37 @@ test("openPremium sums quotes the desk has not filled yet", () => {
     row({ rfqId: "bb".repeat(32), premium: "5", status: "filled" }),
     row({ rfqId: "cc".repeat(32), premium: "7", deadline: 100 }),
   ], 1_200), 10n);
+});
+
+test("pageQuotes returns the newest page and skips finished history", () => {
+  const rows = [
+    row({ rfqId: "aa".repeat(32), createdAt: 1, status: "expired" }),
+    row({ rfqId: "bb".repeat(32), createdAt: 3, premium: "9" }),
+    row({ rfqId: "cc".repeat(32), createdAt: 2, premium: "8" }),
+  ];
+  const page = pageQuotes(rows, { filter: "live", now: 1_200, offset: 0, limit: 1 });
+  assert.equal(page.total, 2);
+  assert.equal(page.quotes[0]?.rfqId, "bb".repeat(32));
+  const next = pageQuotes(rows, { filter: "live", now: 1_200, offset: 1, limit: 1 });
+  assert.equal(next.quotes[0]?.rfqId, "cc".repeat(32));
+  assert.equal(finishedQuote(rows[0]!, 1_200), true);
+});
+
+test("prune drops expired quotes and keeps an open one", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "arkade-book-"));
+  try {
+    const book = await Book.open(dir);
+    const caps = { perStrike: 50_000_000n, total: 50_000_000n };
+    assert.equal(book.hold(row(), caps, 1_200), true);
+    assert.equal(book.hold(row({ rfqId: "bb".repeat(32) }), caps, 1_200), true);
+    book.mark("aa".repeat(32), "expired");
+    const removed = book.prune(1_200);
+    assert.equal(removed.length, 1);
+    assert.equal(book.list().length, 1);
+    assert.equal(book.get("bb".repeat(32))?.status, "open");
+  } finally {
+    await rm(dir, { recursive: true });
+  }
 });
 
 test("exposure counts open quotes and unexpired fills, and the cap refuses the next one", async () => {

@@ -45,7 +45,7 @@ afd2ad5556dbb7a3485218d4acd86c5ed4a3e5f3c1cbdd7ecf1e26e34c0aa164
 
 ## Day to day
 
-Oracle status is `GET /api/status`. Desk status is `GET /` (same body as `GET /status`).
+Oracle status is `GET /api/status`. Desk status is `GET /` (same body as `GET /status`). That body lists live quotes only, one page of 50. Finished quotes are not kept. `GET /quotes?status=live&limit=50&offset=0` is the next page (`status` is `live`, `open`, `filled`, or `all`).
 
 ```bash
 curl -k https://arkadeoptions-oracle-bhuczu-39c492-138-199-218-130.traefik.me/api/status
@@ -54,7 +54,7 @@ curl -k https://arkadeoptions-desk-jxdh3j-37969b-138-199-218-130.traefik.me/
 
 Oracle `balance` is spendable sats on the admin wallet. The beacon coin itself is separate. Desk `balance` is the float. `beaconTxid` on the desk must stay `76ba2970…da89` until a new beacon is deployed.
 
-Fund the desk at its deposit address. Send enough for premiums. The seller's collateral does not come from this float. `balance` stays `0` until the coins arrive. A quote can go out at `0`; the fill waits and the desk logs `float short`.
+Fund the desk at its deposit address. Send enough for premiums. The seller's collateral does not come from this float. `balance` stays `0` until the coins arrive. The desk refuses a quote it cannot pay and logs `float short`.
 
 An oracle print is `sha256(BTCUSD || price_le64 || time_le64)`. Sign it in the oracle dashboard. The secret stays in the browser. A fixing needs nine prints: three distinct committee signers in the open, mid, and close windows around the expiry. Publish only after `expiry + 60`:
 
