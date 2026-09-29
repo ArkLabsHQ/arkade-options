@@ -16,10 +16,10 @@ const publish = () => {
   const hash = existsSync(jsPath)
     ? createHash("sha256").update(readFileSync(jsPath)).digest("hex").slice(0, 10)
     : "dev";
-  const html = readFileSync(path.join(root, "app/index.html"), "utf8").replace(
-    'src="./app.js"',
-    `src="./app.js?${hash}"`,
-  );
+  const cssHash = createHash("sha256").update(readFileSync(path.join(root, "app/desk.css"))).digest("hex").slice(0, 10);
+  const html = readFileSync(path.join(root, "app/index.html"), "utf8")
+    .replace('src="./app.js"', `src="./app.js?${hash}"`)
+    .replace('href="desk.css"', `href="desk.css?${cssHash}"`);
   writeFileSync(path.join(dist, "index.html"), html);
   cpSync(path.join(root, "app/desk.css"), path.join(dist, "desk.css"));
   cpSync(path.join(root, "viz/index.html"), path.join(dist, "viz/index.html"));
@@ -34,6 +34,7 @@ const ctx = await esbuild.context({
   outfile: path.join(dist, "app.js"),
   platform: "browser",
   target: "es2022",
+  alias: { "node:crypto": path.join(root, "app/src/browser-crypto.ts") },
   sourcemap: true,
   logLevel: "info",
   plugins: [

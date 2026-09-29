@@ -16,6 +16,7 @@ import { deribitPremium, fetchSurface } from "../protocol/deribit.ts";
 import { bestQuote } from "./quote.js";
 import { PINNED_DESKS, RELAYS } from "./rfq-config.js";
 import { DUST, Q_MAX, Q_MIN, writerPayoff } from "./settle-math.js";
+import { settleFromPage } from "./src/settle.ts";
 import { readIntent, watchIntents } from "./src/watch.ts";
 
 const STORE = "arkade-options-desk-v1";
@@ -99,6 +100,9 @@ function persist() {
     fundingTxid: p.fundingTxid || "",
     closeTxid: p.closeTxid || "",
     settleTxid: p.settleTxid || "",
+    writerKeep: p.writerKeep || "",
+    deskTake: p.deskTake || "",
+    settleCents: p.settleCents || "",
   }));
   localStorage.setItem(STORE, JSON.stringify(rows));
 }
@@ -692,6 +696,8 @@ function renderBlotter() {
         foot.append(line);
       }
       if (txs) foot.append(txs);
+      const settle = settleButton(position);
+      if (settle) foot.append(settle);
       wrap.append(foot);
     }
     if (state.selected === position.id) wrap.append(detail(position));
@@ -699,10 +705,77 @@ function renderBlotter() {
   }
 }
 
+function canSettle(position) {
+  if (position.status !== "filled") return false;
+  if (!position.vaultAddress || !position.holderPkHex || !position.beaconTxid) return false;
+  const expiry = Number(position.expiry) || 0;
+  if (!expiry || expiry > Math.floor(Date.now() / 1000)) return false;
+  if (position.settleTxid && position.settleTxid !== position.closeTxid) return false;
+  return true;
+}
+
+function settleNote(outcome) {
+  if (outcome.result === "unfixed") return "The oracle has not published this expiry yet.";
+  if (outcome.result === "short") return "The beacon read needs a fee coin.";
+  if (outcome.result === "mismatch") return "This option is on a different beacon.";
+  if (outcome.result === "waiting" && outcome.reason === "early") return "Wait until expiry.";
+  if (outcome.result === "waiting" && outcome.reason === "beacon") return "The beacon coin is not ready.";
+  if (outcome.result === "waiting") return "The vault coin is not ready.";
+  return "Could not settle.";
+}
+
+async function settlePosition(position, button) {
+  button.disabled = true;
+  const previous = button.textContent;
+  button.textContent = "Settling";
+  try {
+    const outcome = await settleFromPage({
+      ...(await fundRequest(position)),
+      fillTxid: position.closeTxid || undefined,
+    });
+    if (outcome.result !== "settled") {
+      button.disabled = false;
+      button.textContent = settleNote(outcome);
+      return;
+    }
+    position.status = "settled";
+    position.settleTxid = outcome.txid;
+    if (outcome.writer != null) position.writerKeep = outcome.writer.toString();
+    if (outcome.holder != null) position.deskTake = outcome.holder.toString();
+    if (outcome.price != null) position.settleCents = outcome.price.toString();
+    persist();
+    renderBlotter();
+  } catch (err) {
+    button.disabled = false;
+    button.textContent = err instanceof Error ? err.message : previous;
+  }
+}
+
+function settleButton(position) {
+  if (!canSettle(position)) return null;
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "copy-uri";
+  button.textContent = "Settle";
+  button.addEventListener("click", () => {
+    void settlePosition(position, button);
+  });
+  return button;
+}
+
 function outcomeLine(position) {
   const expiry = Number(position.expiry) || 0;
   const now = Math.floor(Date.now() / 1000);
-  if (position.status === "settled") return "The vault was settled. That transaction splits the collateral.";
+  if (position.status === "settled") {
+    if (position.writerKeep) {
+      const you = BigInt(position.writerKeep);
+      const desk = BigInt(position.deskTake || 0);
+      const price = position.settleCents ? ` Price $${fmtUsdFromCents(BigInt(position.settleCents))}.` : "";
+      if (desk === 0n) return `You keep the collateral, ${fmtBtc(you)} BTC.${price}`;
+      return `You keep ${fmtBtc(you)} BTC. The desk receives ${fmtBtc(desk)} BTC.${price}`;
+    }
+    return "The vault was settled. That transaction splits the collateral.";
+  }
   if (position.status === "filled" && expiry && expiry <= now) {
     return "Expired. The collateral is still in the vault, so no one has won it yet.";
   }

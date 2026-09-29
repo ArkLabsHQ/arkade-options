@@ -259,7 +259,16 @@ async function build(req: FundRequest) {
   if (intent.address !== bound.intentAddress || vault.address !== bound.vaultAddress) {
     throw new Error("The contract address does not match the local derivation.");
   }
-  return { bound, intent, vault, holderPk, beaconTxidHex, beaconGidx, exit };
+  return { bound, intent, vault, holderPk, beaconTxidHex, beaconGidx, exit, client, terms };
+}
+
+/** The same contract the quote was built from, plus the connected Arkade client. */
+export async function openContract(req: FundRequest) {
+  const built = await build(req);
+  if (!built.client.emulator || !built.client.emulatorKey || !built.client.indexer) {
+    throw new Error("The emulator is missing.");
+  }
+  return built;
 }
 
 /** Mutinynet address the seller funds. Collateral stays with the seller until finalize. */

@@ -472,6 +472,10 @@ a { color: var(--accent); }
   padding: 6px 10px;
 }
 
+.copy-uri { cursor: pointer; transition: transform 160ms var(--ease); }
+
+.copy-uri:active:not(:disabled) { transform: scale(0.98); }
+
 .copy-uri:disabled { opacity: 0.38; cursor: not-allowed; }
 
 .spot .network {

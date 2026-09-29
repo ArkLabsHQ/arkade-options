@@ -32,7 +32,15 @@ export type SettleOutcome =
   | { result: "unfixed" }
   | { result: "short" }
   | { result: "mismatch" }
-  | { result: "settled"; txid: string; fee?: { txid: string; vout: number } };
+  | {
+    result: "settled";
+    txid: string;
+    fee?: { txid: string; vout: number };
+    /** Present when this call built the payout. Absent when the vault was already spent. */
+    price?: bigint;
+    holder?: bigint;
+    writer?: bigint;
+  };
 
 type FeeCoin = { txid: string; vout: number; value: number | bigint };
 
@@ -231,9 +239,21 @@ export async function settleQuote(env: {
     checkpoint: env.checkpoint,
   });
   const submitted = await submit(built, env.emulator as EmulatorProvider, env.identity);
+  const holderScript = bytesToHex(bound.holderPkScript);
+  const writerScript = bytesToHex(bound.writerPkScript);
+  let holder = 0n;
+  let writer = 0n;
+  for (const output of payout.payouts) {
+    const script = bytesToHex(output.script);
+    if (script === holderScript) holder = output.amount;
+    if (script === writerScript) writer = output.amount;
+  }
   return {
     result: "settled",
     txid: submitted.txid,
     fee: feeCoin ? { txid: feeCoin.txid, vout: feeCoin.vout } : undefined,
+    price,
+    holder,
+    writer,
   };
 }
