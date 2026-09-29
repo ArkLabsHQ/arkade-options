@@ -94,9 +94,18 @@ export async function fillQuote(opts: {
     { script: bound.vaultPkScript, amount: collateral },
   ]);
   if (surplus > 0n) spend.change(opts.deskScript.pkScript);
-  const sent = await spend.send();
+  // Covenant send() posts to the emulator and returns. The emulator submits to arkd
+  // only when it is the last signer, and it may do that submit and then fail its own
+  // finalize. The thrown error still leaves the inputs spent, so a failed send has to
+  // go through the same finalize path as a successful one.
+  let sent: { txid: string; signedArkTx: string; signedCheckpointTxs: string[] } | undefined;
+  try {
+    sent = await spend.send();
+  } catch (err) {
+    console.error("fill send", opts.row.rfqId, err instanceof Error ? err.message : err);
+  }
   const identity = opts.client.identity;
-  const settled = opts.ark && identity
+  const settled = sent && opts.ark && identity
     ? await settleEmulatorTx({
       ark: opts.ark,
       identity,
@@ -106,11 +115,13 @@ export async function fillQuote(opts: {
       signedCheckpointTxs: sent.signedCheckpointTxs,
     })
     : false;
+  let recovered: string[] = [];
   if (!settled) {
-    await finishSpend(opts, picked);
+    recovered = await finishSpend(opts, picked);
     if (await floatStillLocked(opts.client, opts.deskScript, picked)) return { result: "waiting" };
+    if (!sent && !recovered.length) return { result: "waiting" };
   }
-  return { result: "filled", txid: sent.txid, spent: picked };
+  return { result: "filled", txid: sent?.txid || recovered[0] || "", spent: picked };
 }
 
 /**
@@ -122,11 +133,12 @@ async function finishSpend(opts: {
   client: Client;
   deskScript: DefaultVtxo.Script;
   ark?: PendingArk;
-}, picked: Coin[]) {
+}, picked: Coin[]): Promise<string[]> {
   const indexer = opts.client.indexer;
   const identity = opts.client.identity;
-  if (!opts.ark || !indexer || !identity) return;
+  if (!opts.ark || !indexer || !identity) return [];
   const want = new Set(picked.map((coin) => `${coin.txid}:${coin.vout}`));
+  const finalized: string[] = [];
   for (let attempt = 0; attempt < 5; attempt += 1) {
     try {
       const done = await finalizeDeskSpends({
@@ -135,15 +147,17 @@ async function finishSpend(opts: {
         identity,
         deskScript: opts.deskScript,
       });
+      finalized.push(...done);
       if (done.length) console.log("finalized", done.join(","));
     } catch (err) {
       console.error("finalize", err instanceof Error ? err.message : err);
     }
     const pending = await pendingOutpoints(indexer, opts.deskScript);
-    if (![...want].some((id) => pending.has(id))) return;
+    if (![...want].some((id) => pending.has(id))) return finalized;
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
   console.error("finalize still pending", [...want].join(","));
+  return finalized;
 }
 
 /** If finalize already landed but the book never saved, classify the spend as filled. */
