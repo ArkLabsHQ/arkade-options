@@ -716,7 +716,6 @@ function canSettle(position) {
 
 function settleNote(outcome) {
   if (outcome.result === "unfixed") return "The oracle has not published this expiry yet.";
-  if (outcome.result === "short") return "The beacon read needs a fee coin.";
   if (outcome.result === "mismatch") return "This option is on a different beacon.";
   if (outcome.result === "waiting" && outcome.reason === "early") return "Wait until expiry.";
   if (outcome.result === "waiting" && outcome.reason === "beacon") return "The beacon coin is not ready.";

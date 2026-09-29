@@ -15,7 +15,7 @@ import { beaconIdOf } from "../protocol/beacon.ts";
 import { fillQuote } from "../desk/fill.ts";
 import type { QuoteRow } from "../desk/book.ts";
 import { btcAmount } from "../app/src/fund.ts";
-import { ARK_URL, EMULATOR_URL, EXIT } from "../protocol/constants.ts";
+import { ARK_URL, BEACON_READ_FEE, EMULATOR_URL, EXIT } from "../protocol/constants.ts";
 import { assertServerExit, bindContracts, payoutVtxo } from "../protocol/contracts.ts";
 import { bytesToHex, xOnly } from "../protocol/hex.ts";
 import { intentProgram } from "../protocol/programs.ts";
@@ -86,6 +86,7 @@ const shared = {
   writerPk,
   holderPk,
   beacon: beaconIdOf(asset.AssetId.create(beaconDisplay, beaconGidx)),
+  readFee: BEACON_READ_FEE,
   serverKey: writerClient.serverKey,
   emulatorKey: writerClient.emulatorKey,
 };

@@ -11,12 +11,9 @@ import { bytesToHex } from "../protocol/hex.ts";
 export type BeaconSpec = {
   assetId: string;
   address: string;
-  signers: Uint8Array[];
-  threshold: bigint;
   domain: Uint8Array;
   keyLag: bigint;
   readFee: bigint;
-  minValue: bigint;
   adminPk: Uint8Array;
   exit: bigint;
 };
@@ -82,41 +79,26 @@ export function parseOracleBeacon(body: unknown, beaconTxid?: string, gidx = 0):
   if (bytesToHex(parsed.txid) !== issue) return { ok: false, error: "oracle asset" };
   if (expected && Number(parsed.groupIndex) !== gidx) return { ok: false, error: "oracle beacon" };
   if (typeof root.address !== "string" || !root.address.startsWith("tark1")) return { ok: false, error: "oracle address" };
-  if (!Array.isArray(root.pubkeys) || root.pubkeys.length !== 5) return { ok: false, error: "five pubkeys" };
-  const signers: Uint8Array[] = [];
-  for (const item of root.pubkeys) {
-    const key = hexBytes(item, 32);
-    if (!key) return { ok: false, error: "pubkey" };
-    signers.push(key);
-  }
-  if (new Set(signers.map((key) => bytesToHex(key))).size !== 5) return { ok: false, error: "duplicate pubkey" };
   const args = record(root.args);
   if (!args) return { ok: false, error: "oracle args" };
   const ctrl = typeof args.ctrlTxid === "string" ? args.ctrlTxid.toLowerCase() : "";
   if (ctrl !== bytesToHex(beaconIdOf(parsed).txid)) return { ok: false, error: "ctrl txid" };
-  const threshold = whole(args.threshold);
   const keyLag = whole(args.keyLag);
   const readFee = whole(args.readFee);
-  const minValue = whole(args.minValue);
   const exit = whole(args.exit);
   const domain = typeof args.domain === "string" && args.domain.length > 0 && args.domain.length % 2 === 0 && HEX.test(args.domain)
     ? hexBytes(args.domain, args.domain.length / 2)
     : null;
   const adminPk = hexBytes(args.adminPk, 32);
-  if (threshold == null || threshold < 1n || threshold > 5n) return { ok: false, error: "threshold" };
   if (keyLag == null || readFee == null || exit == null || !domain || !adminPk) return { ok: false, error: "oracle args" };
-  if (minValue == null || minValue <= 300n) return { ok: false, error: "min value" };
   return {
     ok: true,
     beacon: {
       assetId: parsed.toString(),
       address: root.address,
-      signers,
-      threshold,
       domain,
       keyLag,
       readFee,
-      minValue,
       adminPk,
       exit,
     },

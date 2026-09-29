@@ -24,7 +24,7 @@ import {
 } from "./beacon.ts";
 import { EXIT } from "./constants.ts";
 import { bindContracts } from "./contracts.ts";
-import { buildAttest, buildSettle, encodeWitness, statePacket, type AttestSlice } from "./cospend.ts";
+import { buildAttest, buildSettle, encodeWitness, statePacket } from "./cospend.ts";
 import { bytesToHex, hexToBytes } from "./hex.ts";
 import { beaconProgram, vaultProgram } from "./programs.ts";
 
@@ -39,7 +39,6 @@ const FIXTURE = {
   price: 10_000_000n,
   beaconSats: 330n,
   readFee: 0n,
-  minValue: 330n,
   keyLag: 60n,
   threshold: 3n,
   domain: new TextEncoder().encode("BTCUSD-FIX"),
@@ -67,7 +66,6 @@ function coinOf(tx: Transaction, value: bigint) {
 async function buildFixture() {
   const serverKey = await key(1).xOnlyPublicKey();
   const emulatorKey = await key(2).compressedPublicKey();
-  const signers = await Promise.all([11, 12, 13, 14, 15].map((n) => key(n).xOnlyPublicKey()));
   const adminPk = await key(9).xOnlyPublicKey();
   const writerPk = await key(21).xOnlyPublicKey();
   const holderPk = await key(22).xOnlyPublicKey();
@@ -77,12 +75,9 @@ async function buildFixture() {
   const id: BeaconId = beaconIdOf(assetId);
   const beacon = bindBeacon({
     id,
-    signers,
-    threshold: FIXTURE.threshold,
     domain: FIXTURE.domain,
     keyLag: FIXTURE.keyLag,
     readFee: FIXTURE.readFee,
-    minValue: FIXTURE.minValue,
     adminPk,
     serverKey,
     emulatorKey,
@@ -115,21 +110,12 @@ async function buildFixture() {
   const genesis = creatingTx(beacon.pkScript, FIXTURE.beaconSats, [statePacket(genesisState())]);
   const fixed = nextState(genesisState(), FIXTURE.expiry, value);
   const dummy = new Uint8Array(64).fill(1);
-  const sliceAt = (times: bigint[], who: bigint[]): AttestSlice => ({
-    price: [FIXTURE.price, FIXTURE.price, FIXTURE.price],
-    time: times,
-    who,
-    sig: [dummy, dummy, dummy],
-  });
   const attest = buildAttest({
     beacon: { script: beacon.script, coin: coinOf(genesis, FIXTURE.beaconSats), state: genesisState(), id: assetId },
     key: FIXTURE.expiry,
-    slices: [
-      sliceAt([FIXTURE.expiry - 1780n, FIXTURE.expiry - 1770n, FIXTURE.expiry - 1760n], [0n, 1n, 2n]),
-      sliceAt([FIXTURE.expiry - 940n, FIXTURE.expiry - 930n, FIXTURE.expiry - 920n], [1n, 2n, 3n]),
-      sliceAt([FIXTURE.expiry + 10n, FIXTURE.expiry + 20n, FIXTURE.expiry + 30n], [2n, 3n, 4n]),
-    ],
-    opSig: dummy,
+    price: FIXTURE.price,
+    time: FIXTURE.expiry,
+    sig: dummy,
     next: fixed,
     checkpoint,
   });
@@ -201,7 +187,7 @@ test("the beacon leaves check what the design says", () => {
   const count = (asm: readonly unknown[] | undefined, name: string) => (asm ?? []).filter((token) => token === name).length;
   const beacon = beaconProgram();
   const attest = beacon.functions.attest?.arkadeScript?.asm;
-  assert.equal(count(attest, "CHECKSIGFROMSTACK"), 10);
+  assert.equal(count(attest, "CHECKSIGFROMSTACK"), 1);
   assert.equal(count(attest, "INSPECTINPUTPACKET"), 1);
   assert.equal(count(attest, "INSPECTPACKET"), 1);
   assert.equal(count(attest, "CHECKTIME"), 1);
@@ -209,7 +195,7 @@ test("the beacon leaves check what the design says", () => {
   const read = beacon.functions.read?.arkadeScript?.asm;
   assert.equal(count(read, "INSPECTINPUTPACKET"), 1);
   assert.equal(count(read, "CHECKSIGFROMSTACK"), 0);
-  assert.equal(count(beacon.functions.migrate?.arkadeScript?.asm, "CHECKSIGFROMSTACK"), 6);
+  assert.equal(count(beacon.functions.migrate?.arkadeScript?.asm, "CHECKSIGFROMSTACK"), 1);
   assert.equal(beacon.functions.migrate?.arkadeScript?.witness?.[0], "opSig");
   assert.deepEqual(Object.keys(beacon.functions), ["attest", "read", "migrate", "unilateral"]);
 });
@@ -228,24 +214,16 @@ test("bindings are deterministic Mutinynet addresses and refuse a bad committee"
 
   const serverKey = await key(1).xOnlyPublicKey();
   const emulatorKey = await key(2).compressedPublicKey();
-  const signers = await Promise.all([11, 12, 13, 14, 15].map((n) => key(n).xOnlyPublicKey()));
-  const base = {
+  const againBound = bindBeacon({
     id: built.vault.args.beaconTxid ? { txid: built.vault.args.beaconTxid as Uint8Array, gidx: 0n } : { txid: new Uint8Array(32), gidx: 0n },
-    signers,
-    threshold: 3n,
     domain: FIXTURE.domain,
     keyLag: 60n,
     readFee: 0n,
-    minValue: 330n,
-    adminPk: signers[0]!,
+    adminPk: await key(9).xOnlyPublicKey(),
     serverKey,
     emulatorKey,
-  };
-  assert.throws(() => bindBeacon({ ...base, threshold: 0n }), /threshold/);
-  assert.throws(() => bindBeacon({ ...base, threshold: 6n }), /threshold/);
-  assert.throws(() => bindBeacon({ ...base, signers: [signers[0]!, signers[0]!, signers[2]!, signers[3]!, signers[4]!] }), /duplicate/);
-  assert.throws(() => bindBeacon({ ...base, signers: signers.slice(0, 4) }), /5 signers/);
-  assert.throws(() => bindBeacon({ ...base, minValue: 300n }), /above 300/);
+  });
+  assert.equal(againBound.address, built.beacon.address);
 });
 
 test("the deploy pays the unit to the beacon and any other asset to change", async () => {
@@ -304,6 +282,6 @@ test("the settle transaction has the documented layout", async () => {
   const attestExt = Extension.fromBytes(attest.getOutput(1)!.script!);
   assert.deepEqual(attestExt.getAssetPacket()!.groups[0]!.inputs.map((i) => i.input), [{ type: 1, vin: 0, amount: 1n }]);
   assert.equal(bytesToHex(attestExt.getPacketByType(STATE_TYPE)!.serialize()), bytesToHex(built.fixed));
-  assert.equal(attestExt.getEmulatorPacket()!.entries[0]!.witness![0], 38);
-  assert.deepEqual(built.beacon.script.functionByName("attest")!.def.arkadeScript?.witness?.slice(0, 4), ["opSig", "sig2.2", "sig2.1", "sig2.0"]);
+  assert.ok((attestExt.getEmulatorPacket()!.entries[0]!.witness?.length ?? 0) > 64);
+  assert.deepEqual(built.beacon.script.functionByName("attest")!.def.arkadeScript?.witness, ["sig", "time", "price", "key"]);
 });

@@ -17,6 +17,7 @@ import {
 import { beaconIdOf } from "../protocol/beacon-id.ts";
 import {
   ARK_URL,
+  BEACON_READ_FEE,
   DEFAULT_RELAYS,
   EMULATOR_URL,
   EXIT,
@@ -166,6 +167,7 @@ function termsFor(row: QuoteRow): Terms {
     payoutKey: directPayoutKey(row.writerPubkey, row.writerPkScript),
     holderPk: hexToBytes(row.holderPubkey),
     beacon: beaconIdOf(asset.AssetId.create(row.beaconTxid, row.beaconGidx)),
+    readFee: BEACON_READ_FEE,
     serverKey: client.serverKey,
     emulatorKey: client.emulatorKey!,
   };

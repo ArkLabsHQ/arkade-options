@@ -1,11 +1,11 @@
-import { arkade, asset, DefaultVtxo, Transaction, type CSVMultisigTapscript, type EmulatorProvider, type Identity } from "@arkade-os/sdk";
+import { arkade, asset, Transaction, type CSVMultisigTapscript, type EmulatorProvider } from "@arkade-os/sdk";
 import { base64 } from "@scure/base";
 
 import { holderPayoff, settlementOutputs } from "../app/settle-math.js";
 import { beaconIdOf, bin2num, bindBeacon, decodeState, statePacketOf } from "../protocol/beacon.ts";
 import { PRICE_MAX } from "../protocol/constants.ts";
 import { bindContracts, type Terms } from "../protocol/contracts.ts";
-import { buildSettle, submit, type SignedSpend } from "../protocol/cospend.ts";
+import { buildSettle, submit } from "../protocol/cospend.ts";
 import { bytesToHex } from "../protocol/hex.ts";
 import { vaultProgram } from "../protocol/programs.ts";
 import type { BeaconSpec } from "./oracle.ts";
@@ -30,7 +30,6 @@ export type Chain = {
 export type SettleOutcome =
   | { result: "waiting"; reason: "early" | "vault" | "beacon" }
   | { result: "unfixed" }
-  | { result: "short" }
   | { result: "mismatch" }
   | {
     result: "settled";
@@ -41,8 +40,6 @@ export type SettleOutcome =
     holder?: bigint;
     writer?: bigint;
   };
-
-type FeeCoin = { txid: string; vout: number; value: number | bigint };
 
 /** The price the vault reads: the first 8 bytes of the newest slot whose key is `expiry`. */
 export function slotPrice(state: Uint8Array, expiry: bigint): bigint | null {
@@ -67,13 +64,16 @@ export function settlePayouts(input: {
   strike: bigint;
   collateral: bigint;
   locked: bigint;
+  readFee?: bigint;
   holderScript: Uint8Array;
   writerScript: Uint8Array;
 }): { payouts: { script: Uint8Array; amount: bigint }[] } | { error: string } {
   if (input.locked < input.collateral) return { error: "underfunded" };
+  const readFee = input.readFee ?? 0n;
+  if (input.locked < readFee) return { error: "fee" };
   const ph = holderPayoff(input.kind, input.price, input.strike, input.collateral);
   if (ph > input.collateral) return { error: "holder overpaid" };
-  const split = settlementOutputs(ph, input.locked);
+  const split = settlementOutputs(ph, input.locked, readFee);
   if (split.mode === "split") {
     return {
       payouts: [
@@ -121,14 +121,11 @@ export async function settleQuote(env: {
   emulatorKey: Uint8Array;
   emulator: Pick<EmulatorProvider, "submitTx">;
   checkpoint: CSVMultisigTapscript.Type;
-  identity?: Identity;
   /** Creating tx of the vault, when the watcher knows which fill paid it. */
   fillTxid?: string;
   terms: Terms;
   beacon: BeaconSpec;
   now: number;
-  feeCoins?: readonly FeeCoin[];
-  feeScript?: DefaultVtxo.Script;
 }): Promise<SettleOutcome> {
   if (env.now < Number(env.terms.expiry)) return { result: "waiting", reason: "early" };
   const id = asset.AssetId.fromString(env.beacon.assetId);
@@ -155,12 +152,9 @@ export async function settleQuote(env: {
 
   const beaconBound = bindBeacon({
     id: beaconId,
-    signers: env.beacon.signers,
-    threshold: env.beacon.threshold,
     domain: env.beacon.domain,
     keyLag: env.beacon.keyLag,
     readFee: env.beacon.readFee,
-    minValue: env.beacon.minValue,
     adminPk: env.beacon.adminPk,
     exit: env.beacon.exit,
     serverKey: env.serverKey,
@@ -172,14 +166,7 @@ export async function settleQuote(env: {
   const beaconCoin = (found.vtxos ?? []).find((coin) => !spent(coin) && holdsUnit(coin, env.beacon.assetId));
   if (!beaconCoin) return { result: "waiting", reason: "beacon" };
 
-  let feeCoin: FeeCoin | undefined;
-  if (env.beacon.readFee > 0n) {
-    feeCoin = (env.feeCoins ?? []).find((coin) => BigInt(coin.value) === env.beacon.readFee);
-    if (!feeCoin || !env.feeScript || !env.identity) return { result: "short" };
-  }
-
   const ids = [vaultCoin.txid, beaconCoin.txid];
-  if (feeCoin) ids.push(feeCoin.txid);
   const raws = await env.chain.getVirtualTxs(ids);
   const txs = raws.txs ?? [];
   const vaultPrev = txOf(txs[0], vaultCoin.txid);
@@ -202,21 +189,11 @@ export async function settleQuote(env: {
     strike: env.terms.strike,
     collateral: env.terms.collateral,
     locked,
+    readFee: env.beacon.readFee,
     holderScript: bound.holderPkScript,
     writerScript: bound.writerPkScript,
   });
   if ("error" in payout) throw new Error(payout.error);
-
-  let fee: SignedSpend | undefined;
-  if (feeCoin && env.feeScript) {
-    const feePrev = txOf(txs[2], feeCoin.txid);
-    if (!feePrev) return { result: "waiting", reason: "vault" };
-    fee = {
-      coin: { txid: feeCoin.txid, vout: feeCoin.vout, value: feeCoin.value, prevTx: feePrev.toBytes(true, true) },
-      tapLeafScript: env.feeScript.forfeit(),
-      tapTree: env.feeScript.encode(),
-    };
-  }
 
   const script = new arkade.ArkadeProgramScript(vaultProgram(), bound.vault, {
     serverKey: env.serverKey,
@@ -235,10 +212,9 @@ export async function settleQuote(env: {
     },
     readFee: env.beacon.readFee,
     payouts: payout.payouts,
-    fee,
     checkpoint: env.checkpoint,
   });
-  const submitted = await submit(built, env.emulator as EmulatorProvider, env.identity);
+  const submitted = await submit(built, env.emulator as EmulatorProvider);
   const holderScript = bytesToHex(bound.holderPkScript);
   const writerScript = bytesToHex(bound.writerPkScript);
   let holder = 0n;
@@ -251,7 +227,6 @@ export async function settleQuote(env: {
   return {
     result: "settled",
     txid: submitted.txid,
-    fee: feeCoin ? { txid: feeCoin.txid, vout: feeCoin.vout } : undefined,
     price,
     holder,
     writer,

@@ -5,7 +5,7 @@ import { arkade, asset, Extension, Transaction, UnknownPacket } from "@arkade-os
 import { beaconIdOf, type BeaconId } from "./beacon-id.ts";
 import { DUST_SATS, EXIT } from "./constants.ts";
 import { addressOf } from "./contracts.ts";
-import { bytesToHex, xOnly } from "./hex.ts";
+import { xOnly } from "./hex.ts";
 import { beaconProgram } from "./programs.ts";
 
 export { beaconIdOf, type BeaconId };
@@ -21,8 +21,6 @@ export const SLOT_COUNT = 8;
 export const SLOT_SIZE = 40;
 export const SLOTS_AT = 9;
 export const SLOT_OFFSETS = Array.from({ length: SLOT_COUNT }, (_, i) => SLOTS_AT + SLOT_SIZE * i);
-export const SIGNER_COUNT = 5;
-
 export type Slot = { key: bigint; value: Uint8Array };
 export type BeaconState = { version: number; round: bigint; slots: Slot[] };
 
@@ -116,16 +114,20 @@ export function publishDigest(ctrlTxid: Uint8Array, next: Uint8Array): Uint8Arra
   return sha256(ctrlTxid, next);
 }
 
+const TICKER = new Uint8Array([0x42, 0x54, 0x43, 0x55, 0x53, 0x44]);
+
+/** Sample the beacon checks: `sha256(ctrlTxid || BTCUSD || price_le64 || time_le64)`. */
+export function sampleDigest(ctrlTxid: Uint8Array, price: bigint, time: bigint): Uint8Array {
+  if (ctrlTxid.length !== 32) throw new Error("ctrlTxid must be 32 bytes");
+  return sha256(ctrlTxid, TICKER, num2bin(price, 8), num2bin(time, 8));
+}
+
 export type BeaconArgs = {
   id: BeaconId;
-  signers: readonly Uint8Array[];
-  threshold: bigint;
   domain: Uint8Array;
   keyLag: bigint;
-  /** Sats a read adds to the beacon. Zero is a free read. */
+  /** Sats a read adds to the beacon. The vault being settled pays this. */
   readFee: bigint;
-  /** Continued output must be worth at least this many sats, and this must be above 300. */
-  minValue: bigint;
   adminPk: Uint8Array;
   exit?: bigint;
   serverKey: Uint8Array;
@@ -140,33 +142,19 @@ export type Bound = {
   script: arkade.ArkadeProgramScript;
 };
 
-function checkCommittee(signers: readonly Uint8Array[], threshold: bigint) {
-  if (signers.length !== SIGNER_COUNT) throw new Error(`${SIGNER_COUNT} signers`);
-  if (threshold < 1n || threshold > BigInt(SIGNER_COUNT)) throw new Error("threshold must be 1..5");
-  const seen = new Set(signers.map((key) => bytesToHex(xOnly(key))));
-  if (seen.size !== SIGNER_COUNT) throw new Error("duplicate signer");
-}
-
 export function bindBeacon(input: BeaconArgs): Bound {
-  checkCommittee(input.signers, input.threshold);
-  if (input.minValue <= 300n) throw new Error("minValue must be above 300 sats");
   if (input.emulatorKey.length !== 33) throw new Error("emulator key must be 33 bytes");
   const serverKey = xOnly(input.serverKey);
   const args: Record<string, bigint | Uint8Array> = {
     ctrlTxid: input.id.txid,
     ctrlGidx: input.id.gidx,
-    threshold: input.threshold,
     domain: input.domain,
     keyLag: input.keyLag,
     readFee: input.readFee,
-    minValue: input.minValue,
     adminPk: xOnly(input.adminPk),
     exit: input.exit ?? EXIT,
     server: serverKey,
   };
-  input.signers.forEach((key, index) => {
-    args[`signers.${index}`] = xOnly(key);
-  });
   const script = new arkade.ArkadeProgramScript(beaconProgram(), args, {
     serverKey,
     emulatorKey: input.emulatorKey,

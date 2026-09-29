@@ -52,11 +52,11 @@ test("derived intent and vault addresses stay pinned", async () => {
   const bound = bindContracts(terms);
   assert.equal(
     bound.intentAddress,
-    "tark1qqhsre0ptn9r28d07wzrldc08shs5x7aqhj6lzy2vauyaulppg4qrr6mz0grnvmrwtkfvh9flzl6k2juxvv6tzxauafl7zxg89nwwraega7ama",
+    "tark1qqhsre0ptn9r28d07wzrldc08shs5x7aqhj6lzy2vauyaulppg4qrw8e8gxqpf8uffxsl6fp7pxrt999p46rylk89mvpttr4ed9ju76y0rfw9p",
   );
   assert.equal(
     bound.vaultAddress,
-    "tark1qqhsre0ptn9r28d07wzrldc08shs5x7aqhj6lzy2vauyaulppg4qz7ta84zxe7xp4g3gzzuaxf8x3d5sslmwutzn9guq226hujf8vdgmg2ktcg",
+    "tark1qqhsre0ptn9r28d07wzrldc08shs5x7aqhj6lzy2vauyaulppg4qrqgmxp4q0dp4p05myrmtg3y8h2vplvax0j4q8ahe8gr3x5yavzd7dlvs5x",
   );
   assert.equal(bytesToHex(bound.writerPkScript), "51203d002da23716b1975b89b46563d89040a3c71d017593934bfb751b68a7cae991");
   assert.deepEqual(bindContracts(terms).intentPkScript, bound.intentPkScript);

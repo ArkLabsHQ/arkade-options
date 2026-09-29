@@ -9,12 +9,10 @@ import {
   RestArkProvider,
   RestEmulatorProvider,
   RestIndexerProvider,
-  SingleKey,
 } from "@arkade-os/sdk";
 
-import { ARK_URL, DEFAULT_RELAYS, EMULATOR_URL, EXIT } from "../protocol/constants.ts";
-import { bindContracts, payoutVtxo } from "../protocol/contracts.ts";
-import { bytesToHex } from "../protocol/hex.ts";
+import { ARK_URL, DEFAULT_RELAYS, EMULATOR_URL } from "../protocol/constants.ts";
+import { bindContracts } from "../protocol/contracts.ts";
 import type { OptionPosition } from "../protocol/messages.ts";
 import { quoteRelay, watchPositions } from "../protocol/nostr.ts";
 import { fetchOracleStatus, parseOracleBeacon, serviceOrigin } from "./oracle.ts";
@@ -28,9 +26,9 @@ import { settleQuote } from "./vault.ts";
  * or call a desk.
  *
  *   ORACLE_URL   oracle origin. The beacon script comes from /api/status.
+ *   ORACLE_ADMIN bearer for POST /api/publish. Without it, a missing fixing is only logged.
  *   RELAYS       default nostr.arkade.sh. Filled vaults are kind 30078.
  *   POSITIONS    optional JSON file of vaults to settle without waiting for an event.
- *   SETTLE_KEY   optional 32-byte hex. Signs the read-fee coin when readFee > 0.
  *   ARK_URL      default Mutinynet arkd
  *   EMULATOR_URL default Mutinynet emulator
  *   DATA_DIR     progress.json. Default ./data
@@ -47,28 +45,22 @@ const relayList = (process.env.RELAYS ?? DEFAULT_RELAYS.join(",")).split(",").ma
 const relay = quoteRelay(relayList);
 const positionsFile = process.env.POSITIONS?.trim() || "";
 const oracleUrl = serviceOrigin(required("ORACLE_URL"));
-const settleKey = process.env.SETTLE_KEY?.trim() ?? "";
-if (settleKey && !/^[0-9a-fA-F]{64}$/.test(settleKey)) throw new Error("SETTLE_KEY must be 32 bytes");
+const oracleAdmin = process.env.ORACLE_ADMIN?.trim() ?? "";
 const dataDir = process.env.DATA_DIR?.trim() || "data";
 const port = Number(process.env.PORT ?? "8790");
 const arkUrl = process.env.ARK_URL?.trim() || ARK_URL;
 const emulatorUrl = process.env.EMULATOR_URL?.trim() || EMULATOR_URL;
 if (!Number.isInteger(port) || port < 1) throw new Error("PORT");
 
-const identity = settleKey ? SingleKey.fromHex(settleKey) : undefined;
 const progress = await Progress.open(dataDir);
 const indexer = new RestIndexerProvider(arkUrl);
 const client = await arkade.Arkade.connect({
   arkade: new RestArkProvider(arkUrl),
   indexer,
   emulator: new RestEmulatorProvider(emulatorUrl),
-  identity,
   network: networks.mutinynet,
 });
 if (!client.emulatorKey || !client.emulator) throw new Error("emulator missing");
-
-const holderPk = identity ? await identity.xOnlyPublicKey() : undefined;
-const feeScript = holderPk ? payoutVtxo(holderPk, client.serverKey, EXIT) : undefined;
 
 let polling = false;
 let watching = 0;
@@ -100,13 +92,23 @@ function revision(): string {
   }
 }
 
-async function feeCoins() {
-  if (!feeScript || !client.indexer) return [];
-  const page = await client.indexer.getVtxos({
-    scripts: [bytesToHex(feeScript.pkScript)],
-    spendableOnly: true,
+async function askPublish(expiry: number) {
+  if (!oracleAdmin) {
+    once("oracle-admin", "ORACLE_ADMIN unset, so a missing fixing is not published", true);
+    return;
+  }
+  const res = await fetch(`${oracleUrl}/api/publish`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${oracleAdmin}`, "content-type": "application/json" },
+    body: JSON.stringify({ expiry }),
+    signal: AbortSignal.timeout(20_000),
   });
-  return page.vtxos ?? [];
+  if (res.ok) {
+    noted.delete(`unfixed:${expiry}`);
+    return;
+  }
+  const body = (await res.json().catch(() => ({}))) as { error?: string };
+  once(`publish:${expiry}:${body.error ?? res.status}`, `publish ${expiry} ${body.error ?? res.status}`, true);
 }
 
 async function loadManual() {
@@ -175,9 +177,8 @@ async function progressDue() {
   }
   noted.delete("oracle-fetch");
 
-  const coins = parsed.beacon.readFee > 0n ? await feeCoins() : [];
   for (const position of due) {
-    const terms = termsFor(position, client.serverKey, client.emulatorKey!);
+    const terms = termsFor(position, client.serverKey, client.emulatorKey!, parsed.beacon.readFee);
     if (bindContracts(terms).vaultAddress !== position.vaultAddress) {
       once(`addr:${position.id}`, `skip ${position.rfqId} vault address`, true);
       continue;
@@ -189,13 +190,10 @@ async function progressDue() {
         emulatorKey: client.emulatorKey!,
         emulator: client.emulator!,
         checkpoint: client.checkpoint,
-        identity,
         fillTxid: position.fillTxid,
         terms,
         beacon: parsed.beacon,
         now,
-        feeCoins: coins,
-        feeScript,
       });
       if (outcome.result === "settled") {
         progress.note(position.id, outcome.txid);
@@ -207,17 +205,14 @@ async function progressDue() {
         console.log("settled", position.rfqId, outcome.txid);
         return;
       }
-      if (outcome.result === "short") {
-        once("fee", "read fee coin missing", true);
-        return;
-      }
       if (outcome.result === "mismatch") {
         once(`mismatch:${position.id}`, `skip ${position.rfqId} beacon mismatch`, true);
         continue;
       }
       if (outcome.result === "unfixed") {
         once(`unfixed:${position.id}`, `waiting ${position.rfqId} no fixing`);
-        continue;
+        await askPublish(position.expiry);
+        return;
       }
       if (outcome.reason === "beacon") {
         once("beacon-coin", "waiting beacon coin");

@@ -1,8 +1,7 @@
 import { mkdir, open, readFile, rename } from "node:fs/promises";
 import path from "node:path";
 
-export type StoredPrint = {
-  pubkey: string;
+export type StoredSample = {
   price: string;
   time: number;
   sig: string;
@@ -10,25 +9,30 @@ export type StoredPrint = {
 
 export type StoredFixing = {
   expiry: number;
-  twap: string;
+  price: string;
   txid: string;
 };
 
 export type OracleFile = {
-  pubkeys: string[] | null;
   assetId: string | null;
   issueTxid: string | null;
   deployTxid: string | null;
-  prints: StoredPrint[];
+  samples: StoredSample[];
   fixings: StoredFixing[];
 };
 
-const empty = (): OracleFile => ({ pubkeys: null, assetId: null, issueTxid: null, deployTxid: null, prints: [], fixings: [] });
+const empty = (): OracleFile => ({ assetId: null, issueTxid: null, deployTxid: null, samples: [], fixings: [] });
 
 /** Only this service writes the file, so it is read back as is. */
 export async function loadStore(dir: string): Promise<OracleFile> {
   try {
-    return { ...empty(), ...(JSON.parse(await readFile(path.join(dir, "oracle.json"), "utf8")) as Partial<OracleFile>) };
+    const parsed = JSON.parse(await readFile(path.join(dir, "oracle.json"), "utf8")) as Partial<OracleFile>;
+    return {
+      ...empty(),
+      ...parsed,
+      samples: Array.isArray(parsed.samples) ? parsed.samples : [],
+      fixings: Array.isArray(parsed.fixings) ? parsed.fixings : [],
+    };
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
     return empty();

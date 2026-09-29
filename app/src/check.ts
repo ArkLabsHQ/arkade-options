@@ -63,6 +63,7 @@ const compiledVault = new arkade.ArkadeProgramScript(
     expiry: 1_800_000_000n,
     beaconTxid: key(2),
     beaconGidx: 0n,
+    readFee: 100n,
     exit: 512n,
     server: key(7),
   },

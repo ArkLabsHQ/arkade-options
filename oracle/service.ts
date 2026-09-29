@@ -4,30 +4,24 @@ import http from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { schnorr } from "@noble/curves/secp256k1.js";
 import { asset, ArkAddress, SingleKey, Transaction, type CSVMultisigTapscript, type EmulatorProvider } from "@arkade-os/sdk";
 import { base64 } from "@scure/base";
 
-import { fixing, oraclePreimage, sliceError, windows } from "../app/settle-math.js";
-import { beaconIdOf, bindBeacon, decodeState, genesisOutputs, nextState, priceValue, publishDigest, statePacketOf } from "../protocol/beacon.ts";
-import { DUST_SATS, EXIT, PRICE_MAX } from "../protocol/constants.ts";
-import { buildAttest, submit, type AttestSlice } from "../protocol/cospend.ts";
-import { bytesToHex, hexToBytes } from "../protocol/hex.ts";
-import { loadStore, saveStore, type StoredPrint } from "./store.ts";
+import { beaconIdOf, bindBeacon, decodeState, genesisOutputs, nextState, priceValue, sampleDigest, statePacketOf } from "../protocol/beacon.ts";
+import { BEACON_READ_FEE, EXIT, PRICE_MAX } from "../protocol/constants.ts";
+import { buildAttest, submit } from "../protocol/cospend.ts";
+import { bytesToHex } from "../protocol/hex.ts";
+import { loadStore, saveStore, type StoredSample } from "./store.ts";
 
 /**
- * Oracle desk. The process never stores a private key. ORACLE_KEY, when
- * configured, stays in memory and signs only sha256(ctrlTxid || nextState).
+ * One-key oracle. ORACLE_KEY stays in memory. It signs each BTCUSD sample and
+ * publishes the stored sample for an expiry. The secret is never on a request.
  */
 
 const DOMAIN = new TextEncoder().encode("BTCUSD-FIX");
-const THRESHOLD = 3n;
 const KEY_LAG = 60n;
-// Mutinynet testing does not charge a read. The parameter stays so a later beacon can.
-const READ_FEE = 0n;
-const MIN_VALUE = DUST_SATS;
-// About a year of daily expiries at three prints each. The oldest print of that oracle goes first.
-const PRINTS_PER_ORACLE = 1_000;
+const READ_FEE = BEACON_READ_FEE;
+const SAMPLE_CAP = 20_000;
 const CSP = "default-src 'none'; script-src 'self'; connect-src 'self'; style-src 'self'; frame-ancestors 'none'";
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -81,12 +75,12 @@ export type OracleDeps = {
   wallet?: OracleWallet;
   indexer?: OracleIndexer;
   emulator?: Pick<EmulatorProvider, "submitTx">;
+  /** BTCUSD in cents. The sampler stores one sample per call. */
+  quote?: () => Promise<bigint | null>;
+  /** How often to sample. Unset means the process only records prices it is given. */
+  sampleEveryMs?: number;
   now?: () => number;
 };
-
-function printHash(price: bigint, time: bigint): Uint8Array {
-  return new Uint8Array(createHash("sha256").update(oraclePreimage(price, time)).digest());
-}
 
 function authorized(header: string | undefined, token: string): boolean {
   const presented = header?.startsWith("Bearer ") ? header.slice("Bearer ".length) : "";
@@ -147,47 +141,6 @@ function whole(value: unknown, label: string): bigint {
   throw new HttpError(400, label);
 }
 
-function hexField(value: unknown, bytes: number, label: string): string {
-  const width = bytes * 2;
-  if (typeof value !== "string" || !new RegExp(`^[0-9a-fA-F]{${width}}$`).test(value)) throw new HttpError(400, label);
-  return value.toLowerCase();
-}
-
-function pickSlice(prints: readonly StoredPrint[], pubkeys: readonly string[], lo: bigint, hi: bigint): StoredPrint[] | null {
-  const eligible = prints
-    .filter((print) => {
-      const time = BigInt(print.time);
-      const price = BigInt(print.price);
-      return time > 0n && price > 0n && price <= PRICE_MAX && time <= hi && time >= lo - 60n;
-    })
-    .sort((a, b) => a.time - b.time || a.pubkey.localeCompare(b.pubkey));
-  const byIndex = new Map<number, StoredPrint[]>();
-  for (const print of eligible) {
-    const index = pubkeys.indexOf(print.pubkey);
-    if (index < 0) continue;
-    const list = byIndex.get(index) ?? [];
-    list.push(print);
-    byIndex.set(index, list);
-  }
-  const indexes = [...byIndex.keys()].sort((a, b) => a - b);
-  for (let i = 0; i < indexes.length; i += 1) {
-    for (let j = i + 1; j < indexes.length; j += 1) {
-      for (let k = j + 1; k < indexes.length; k += 1) {
-        const group = [indexes[i]!, indexes[j]!, indexes[k]!];
-        for (const a of byIndex.get(group[0]!)!) {
-          for (const b of byIndex.get(group[1]!)!) {
-            for (const c of byIndex.get(group[2]!)!) {
-              const chosen = [a, b, c];
-              if (sliceError(chosen.map((print) => BigInt(print.time)), lo, hi) === null) return chosen;
-            }
-          }
-        }
-      }
-    }
-  }
-  return null;
-}
-
 export async function createOracle(deps: OracleDeps) {
   if (deps.oracleKey && deps.oracleKey.length !== 32) throw new Error("ORACLE_KEY must be 32 bytes");
   if (deps.emulatorKey.length !== 33) throw new Error("emulator key must be 33 bytes");
@@ -202,16 +155,13 @@ export async function createOracle(deps: OracleDeps) {
   }
 
   async function bound() {
-    if (!store.pubkeys || !store.assetId || !deps.wallet || !adminPk) return null;
+    if (!store.assetId || !deps.wallet || !adminPk) return null;
     const id = asset.AssetId.fromString(store.assetId);
     return bindBeacon({
       id: beaconIdOf(id),
-      signers: store.pubkeys.map((pubkey) => hexToBytes(pubkey)),
-      threshold: THRESHOLD,
       domain: DOMAIN,
       keyLag: KEY_LAG,
       readFee: READ_FEE,
-      minValue: MIN_VALUE,
       adminPk,
       exit: EXIT,
       serverKey: deps.wallet.arkServerPublicKey,
@@ -230,8 +180,8 @@ export async function createOracle(deps: OracleDeps) {
     const beacon = id ? beaconIdOf(id) : null;
     const script = await bound();
     const balance = await walletBalance();
+    const latest = store.samples.reduce<StoredSample | null>((best, sample) => (!best || sample.time >= best.time ? sample : best), null);
     return {
-      pubkeys: store.pubkeys,
       assetId: store.assetId,
       issueTxid: store.issueTxid,
       deployTxid: store.deployTxid,
@@ -240,33 +190,20 @@ export async function createOracle(deps: OracleDeps) {
       address: script?.address ?? null,
       args: {
         ctrlTxid: beacon ? bytesToHex(beacon.txid) : null,
-        threshold: Number(THRESHOLD),
         domain: bytesToHex(DOMAIN),
         keyLag: Number(KEY_LAG),
         readFee: Number(READ_FEE),
-        minValue: Number(MIN_VALUE),
         adminPk: adminPk ? bytesToHex(adminPk) : null,
         exit: Number(EXIT),
       },
       fixings: store.fixings,
-      prints: store.prints,
+      samples: store.samples.length,
+      latest,
     };
   }
 
   async function save() {
     await saveStore(deps.dataDir, store);
-  }
-
-  async function setKeys(body: Record<string, unknown>) {
-    exact(body, ["pubkeys"]);
-    if (store.deployTxid) throw new HttpError(409, "keys locked");
-    if (store.pubkeys) throw new HttpError(409, "already set");
-    if (!Array.isArray(body.pubkeys) || body.pubkeys.length !== 5) throw new HttpError(400, "five pubkeys");
-    const pubkeys = body.pubkeys.map((item) => hexField(item, 32, "pubkey"));
-    if (new Set(pubkeys).size !== 5) throw new HttpError(400, "duplicate pubkey");
-    store.pubkeys = pubkeys;
-    await save();
-    return { pubkeys };
   }
 
   function asHttp(err: unknown, fallback: string): HttpError {
@@ -319,7 +256,6 @@ export async function createOracle(deps: OracleDeps) {
   }
 
   async function issue() {
-    if (!store.pubkeys) throw new HttpError(400, "keys first");
     if (store.assetId) throw new HttpError(409, "already issued");
     if (!deps.wallet || !deps.oracleKey) throw new HttpError(400, "ORACLE_KEY is required");
     if (deps.wallet.finalizePendingTxs) {
@@ -354,7 +290,6 @@ export async function createOracle(deps: OracleDeps) {
   }
 
   async function deploy() {
-    if (!store.pubkeys) throw new HttpError(400, "keys first");
     if (!store.assetId || !store.issueTxid) throw new HttpError(400, "issue first");
     if (store.deployTxid) throw new HttpError(409, "already deployed");
     if (!deps.wallet || !deps.oracleKey) throw new HttpError(400, "ORACLE_KEY is required");
@@ -372,42 +307,44 @@ export async function createOracle(deps: OracleDeps) {
     return { txid: submitted.arkTxid, address: script.address };
   }
 
-  async function addPrint(body: Record<string, unknown>) {
-    exact(body, ["pubkey", "price", "time", "sig"]);
-    if (!store.deployTxid) throw new HttpError(409, "not deployed");
-    if (!store.pubkeys) throw new HttpError(400, "keys first");
-    const pubkey = hexField(body.pubkey, 32, "pubkey");
-    if (!store.pubkeys.includes(pubkey)) throw new HttpError(400, "unknown pubkey");
-    const price = whole(body.price, "price");
-    const time = whole(body.time, "time");
+  async function recordSample(price: bigint, stamp: number) {
+    if (!deps.oracleKey || !adminPk) throw new HttpError(400, "ORACLE_KEY is required");
+    if (!store.assetId) throw new HttpError(409, "not issued");
     if (price <= 0n || price > PRICE_MAX) throw new HttpError(400, "price");
-    if (time <= 0n) throw new HttpError(400, "time");
-    if (!Number.isSafeInteger(Number(time))) throw new HttpError(400, "time");
-    const stamp = Number(time);
+    if (!Number.isSafeInteger(stamp) || stamp <= 0) throw new HttpError(400, "time");
     if (stamp > now()) throw new HttpError(400, "future timestamp");
-    if (store.prints.some((print) => print.pubkey === pubkey && print.time === stamp)) throw new HttpError(409, "duplicate print");
-    const sig = hexField(body.sig, 64, "sig");
-    let ok = false;
-    try {
-      ok = schnorr.verify(hexToBytes(sig), printHash(price, time), hexToBytes(pubkey));
-    } catch {
-      ok = false;
-    }
-    if (!ok) throw new HttpError(400, "bad sig");
-    store.prints.push({ pubkey, price: price.toString(), time: stamp, sig });
-    const mine = store.prints.filter((item) => item.pubkey === pubkey);
-    if (mine.length > PRINTS_PER_ORACLE) {
-      const oldest = mine.reduce((a, b) => (a.time <= b.time ? a : b));
-      store.prints.splice(store.prints.indexOf(oldest), 1);
-    }
+    if (store.samples.some((sample) => sample.time === stamp)) return { ok: true, time: stamp, price: price.toString(), duplicate: true };
+    const id = beaconIdOf(asset.AssetId.fromString(store.assetId));
+    const sig = bytesToHex(await SingleKey.fromHex(bytesToHex(deps.oracleKey)).signSchnorrDeterministic(sampleDigest(id.txid, price, BigInt(stamp))));
+    store.samples.push({ price: price.toString(), time: stamp, sig });
+    if (store.samples.length > SAMPLE_CAP) store.samples.splice(0, store.samples.length - SAMPLE_CAP);
     await save();
-    return { ok: true };
+    return { ok: true, time: stamp, price: price.toString() };
+  }
+
+  function chooseSample(expiry: number): StoredSample | null {
+    const hi = expiry + Number(KEY_LAG);
+    const close = store.samples.filter((sample) => sample.time >= expiry && sample.time <= hi);
+    const pool = close.length > 0 ? close : store.samples.filter((sample) => sample.time > 0 && sample.time <= hi);
+    if (!pool.length) return null;
+    return pool.reduce((best, sample) => (sample.time >= best.time ? sample : best));
+  }
+
+  function pricePage(query: URLSearchParams) {
+    const from = Number(query.get("from") ?? "0");
+    const to = Number(query.get("to") ?? String(now()));
+    const limit = Math.min(200, Math.max(1, Number(query.get("limit") ?? "50") || 50));
+    const rows = store.samples
+      .filter((sample) => sample.time >= from && sample.time <= to)
+      .sort((a, b) => b.time - a.time)
+      .slice(0, limit);
+    return { samples: rows };
   }
 
   async function publish(body: Record<string, unknown>) {
     exact(body, ["expiry"]);
     if (!deps.oracleKey || !adminPk) throw new HttpError(400, "ORACLE_KEY is required");
-    if (!store.deployTxid || !store.pubkeys || !store.assetId) throw new HttpError(409, "not deployed");
+    if (!store.deployTxid || !store.assetId) throw new HttpError(409, "not deployed");
     if (publishing) throw new HttpError(409, "publish in progress");
     publishing = true;
     try {
@@ -416,6 +353,8 @@ export async function createOracle(deps: OracleDeps) {
       if (!Number.isSafeInteger(Number(expiry))) throw new HttpError(400, "expiry");
       const expiryN = Number(expiry);
       if (BigInt(now()) < expiry + KEY_LAG) throw new HttpError(400, "before key time");
+      const sample = chooseSample(expiryN);
+      if (!sample) throw new HttpError(400, "no sample");
       if (!deps.wallet || !deps.indexer || !deps.emulator) throw new HttpError(400, "indexer required");
       const script = await bound();
       if (!script) throw new HttpError(400, "ORACLE_KEY is required");
@@ -427,25 +366,11 @@ export async function createOracle(deps: OracleDeps) {
       if (!prev) throw new HttpError(400, "creating tx missing");
       const state = statePacketOf(prev);
       if (decodeState(state).slots.some((slot) => slot.key === expiry)) throw new HttpError(409, "already a fixing");
-      const names = ["open", "mid", "close"] as const;
-      const bounds = windows(expiry);
-      const chosen: StoredPrint[][] = [];
-      for (const name of names) {
-        const slice = pickSlice(store.prints, store.pubkeys, bounds[name][0], bounds[name][1]);
-        if (!slice) throw new HttpError(400, `incomplete ${name}`);
-        chosen.push(slice);
-      }
-      const slices = chosen.map((slice): AttestSlice => ({
-        price: slice.map((print) => BigInt(print.price)),
-        time: slice.map((print) => BigInt(print.time)),
-        who: slice.map((print) => BigInt(store.pubkeys!.indexOf(print.pubkey))),
-        sig: slice.map((print) => hexToBytes(print.sig)),
-      }));
-      const fixed = fixing(expiry, slices);
-      if (fixed.error || fixed.twap == null) throw new HttpError(400, fixed.error ?? "twap");
-      const next = nextState(state, expiry, priceValue(fixed.twap));
+      const price = BigInt(sample.price);
+      const time = BigInt(sample.time);
       const id = beaconIdOf(asset.AssetId.fromString(store.assetId));
-      const opSig = await SingleKey.fromHex(bytesToHex(deps.oracleKey)).signSchnorrDeterministic(publishDigest(id.txid, next));
+      const sig = await SingleKey.fromHex(bytesToHex(deps.oracleKey)).signSchnorrDeterministic(sampleDigest(id.txid, price, time));
+      const next = nextState(state, expiry, priceValue(price));
       const built = buildAttest({
         beacon: {
           script: script.script,
@@ -454,38 +379,41 @@ export async function createOracle(deps: OracleDeps) {
           id: asset.AssetId.fromString(store.assetId),
         },
         key: expiry,
-        slices: [slices[0]!, slices[1]!, slices[2]!],
-        opSig,
+        price,
+        time,
+        sig,
         next,
         checkpoint: deps.wallet.serverUnrollScript,
       });
       const submitted = await submit(built, deps.emulator as EmulatorProvider);
-      store.fixings.push({ expiry: expiryN, twap: fixed.twap.toString(), txid: submitted.txid });
+      store.fixings.push({ expiry: expiryN, price: price.toString(), txid: submitted.txid });
       await save();
-      return { txid: submitted.txid, expiry: expiryN, twap: fixed.twap.toString() };
+      return { txid: submitted.txid, expiry: expiryN, price: price.toString(), time: sample.time };
     } finally {
       publishing = false;
     }
   }
 
   async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
-    const url = req.url?.split("?")[0] ?? "/";
+    const parsed = new URL(req.url ?? "/", "http://oracle");
+    const url = parsed.pathname;
     try {
       if (req.method === "GET" && url === "/") return sendFile(res, "index.html", "text/html; charset=utf-8");
       if (req.method === "GET" && url === "/page.js") return sendFile(res, "page.js", "text/javascript; charset=utf-8");
       if (req.method === "GET" && url === "/page.css") return sendFile(res, "page.css", "text/css; charset=utf-8");
       if (req.method === "GET" && url === "/api/status") return sendJson(res, 200, await status());
-      if (req.method === "POST" && (url === "/api/keys" || url === "/api/issue" || url === "/api/deploy" || url === "/api/recover")) {
+      if (req.method === "GET" && url === "/api/prices") return sendJson(res, 200, pricePage(parsed.searchParams));
+      if (req.method === "POST" && (url === "/api/issue" || url === "/api/deploy" || url === "/api/recover" || url === "/api/samples")) {
         requireAdmin(req);
         const body = asRecord(await readBody(req, 4096));
-        if (url === "/api/keys") return sendJson(res, 200, await setKeys(body));
+        if (url === "/api/samples") {
+          exact(body, ["price"]);
+          return sendJson(res, 200, await recordSample(whole(body.price, "price"), now()));
+        }
         exact(body, []);
         if (url === "/api/issue") return sendJson(res, 200, await issue());
         if (url === "/api/recover") return sendJson(res, 200, await recover());
         return sendJson(res, 200, await deploy());
-      }
-      if (req.method === "POST" && url === "/api/prints") {
-        return sendJson(res, 200, await addPrint(asRecord(await readBody(req, 4096))));
       }
       if (req.method === "POST" && url === "/api/publish") {
         requireAdmin(req);
@@ -508,10 +436,25 @@ export async function createOracle(deps: OracleDeps) {
   });
   const address = server.address();
   const port = typeof address === "object" && address ? address.port : 0;
+  const timer = deps.sampleEveryMs && deps.sampleEveryMs > 0
+    ? setInterval(() => {
+        void (async () => {
+          if (!deps.quote || !store.assetId) return;
+          const price = await deps.quote();
+          if (price == null) return;
+          await recordSample(price, now());
+        })().catch((err) => {
+          console.error("oracle sample", err instanceof Error ? err.message : err);
+        });
+      }, deps.sampleEveryMs)
+    : undefined;
   return {
     port,
     url: `http://127.0.0.1:${port}`,
-    close: () => new Promise<void>((resolve, reject) => server.close((err) => (err ? reject(err) : resolve()))),
+    close: () => new Promise<void>((resolve, reject) => {
+      if (timer) clearInterval(timer);
+      server.close((err) => (err ? reject(err) : resolve()));
+    }),
   };
 }
 
