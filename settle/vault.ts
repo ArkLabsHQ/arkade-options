@@ -160,7 +160,6 @@ export async function settleQuote(env: {
     domain: env.beacon.domain,
     keyLag: env.beacon.keyLag,
     readFee: env.beacon.readFee,
-    minValue: env.beacon.minValue,
     adminPk: env.beacon.adminPk,
     exit: env.beacon.exit,
     serverKey: env.serverKey,
