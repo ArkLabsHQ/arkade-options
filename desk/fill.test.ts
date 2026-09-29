@@ -15,6 +15,10 @@ test("recoverFilled classifies a spent intent via indexer history and fill.b64",
   const client = {
     indexer: {
       async getVtxos(filter: { scripts?: string[]; spentOnly?: boolean }) {
+        if (filter.scripts?.[0] === writer) {
+          assert.equal(filter.spentOnly, undefined);
+          return { vtxos: [{ txid: fillId, value: 414 }] };
+        }
         assert.equal(filter.spentOnly, true);
         assert.deepEqual(filter.scripts, [intentScript]);
         return {
@@ -39,4 +43,25 @@ test("recoverFilled classifies a spent intent via indexer history and fill.b64",
     deadline: 1_790_380_900,
   });
   assert.equal(txid, fillId);
+});
+
+test("recoverFilled waits until the premium output exists as a vtxo", async () => {
+  const client = {
+    indexer: {
+      async getVtxos(filter: { scripts?: string[]; spentOnly?: boolean }) {
+        if (filter.scripts?.[0] === writer) return { vtxos: [] };
+        return { vtxos: [{ value: 20_000, arkTxId: fillId, spentBy: fillId }] };
+      },
+      async getVirtualTxs() {
+        return { txs: [fillB64] };
+      },
+    },
+  };
+  const txid = await recoverFilled(client as never, hexToBytes(writer), intentScript, {
+    collateral: 20_000n,
+    premium: 414n,
+    now: 1_790_380_800,
+    deadline: 1_790_380_900,
+  });
+  assert.equal(txid, undefined);
 });

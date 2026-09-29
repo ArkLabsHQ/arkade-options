@@ -41,6 +41,15 @@ export function hasBeacon(row: QuoteRow): boolean {
   return /^[0-9a-f]{64}$/.test(row.beaconTxid ?? "") && Number.isInteger(row.beaconGidx) && row.beaconGidx >= 0 && row.beaconGidx <= 65_535;
 }
 
+/** Premium already promised by open quotes. A new quote has to fit beside this. */
+export function openPremium(rows: readonly QuoteRow[], now: number): bigint {
+  let sum = 0n;
+  for (const row of rows) {
+    if (row.status === "open" && row.deadline > now) sum += BigInt(row.premium);
+  }
+  return sum;
+}
+
 /** Still binding float or vault exposure for this rfqId. */
 export function liveQuote(row: QuoteRow, now: number): boolean {
   if (row.status === "open") return row.deadline > now;

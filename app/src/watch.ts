@@ -138,15 +138,36 @@ export async function readIntent(row: WatchRow, now = Math.floor(Date.now() / 10
       deadline: row.deadline,
     });
   })();
+  let outcome = classified;
+  if (outcome.phase === "filled" && writerScript && outcome.closeTxid) {
+    const landed = await payoutLanded(writerScript, outcome.closeTxid);
+    if (!landed) {
+      outcome = {
+        phase: "funded",
+        refundable: false,
+        fundingTxid: outcome.fundingTxid,
+        closeTxid: "",
+      };
+    }
+  }
   let settleTxid = "";
-  if (classified.phase === "filled") {
+  if (outcome.phase === "filled") {
     try {
       settleTxid = await vaultSpend(row.vaultAddress);
     } catch {
       settleTxid = "";
     }
   }
-  return { ...classified, settleTxid };
+  return { ...outcome, settleTxid };
+}
+
+async function payoutLanded(writerScript: string, txid: string): Promise<boolean> {
+  try {
+    const page = await indexer.getVtxos({ scripts: [writerScript] });
+    return (page.vtxos ?? []).some((coin) => (coin.txid || "").toLowerCase() === txid.toLowerCase());
+  } catch {
+    return false;
+  }
 }
 
 async function vaultSpend(address: string | undefined): Promise<string> {

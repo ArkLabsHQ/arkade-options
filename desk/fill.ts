@@ -6,7 +6,7 @@ import { bytesToHex } from "../protocol/hex.ts";
 import { classifyIntent, psbtView } from "../protocol/intent-state.ts";
 import { intentProgram } from "../protocol/programs.ts";
 import type { QuoteRow } from "./book.ts";
-import { finalizeDeskSpends, pendingOutpoints, type PendingArk } from "./finalize.ts";
+import { finalizeDeskSpends, pendingOutpoints, settleEmulatorTx, type PendingArk } from "./finalize.ts";
 
 type Client = Awaited<ReturnType<typeof arkade.Arkade.connect>>;
 type Coin = { txid: string; vout: number; value: number };
@@ -63,13 +63,16 @@ export async function fillQuote(opts: {
   const premium = BigInt(opts.row.premium);
   const coin = coins.find((item) => BigInt(item.value) >= collateral);
   if (!coin) {
-    const recovered = await recoverFilled(opts.client, bound.writerPkScript, bytesToHex(intent.pkScript), {
+    const intentScript = bytesToHex(intent.pkScript);
+    const recovered = await recoverFilled(opts.client, bound.writerPkScript, intentScript, {
       collateral,
       premium,
       now: opts.now,
       deadline: opts.row.deadline,
     });
     if (recovered) return { result: "filled", txid: recovered };
+    // Spent, but the premium vtxo is not in the indexer yet. Expiring here drops the retry.
+    if (await collateralSpent(opts.client, intentScript, collateral)) return { result: "waiting" };
     return { result: opts.now >= opts.row.deadline ? "expired" : "waiting" };
   }
   if (opts.now >= opts.row.deadline) return { result: "expired" };
@@ -92,7 +95,21 @@ export async function fillQuote(opts: {
   ]);
   if (surplus > 0n) spend.change(opts.deskScript.pkScript);
   const sent = await spend.send();
-  await finishSpend(opts, picked);
+  const identity = opts.client.identity;
+  const settled = opts.ark && identity
+    ? await settleEmulatorTx({
+      ark: opts.ark,
+      identity,
+      deskScript: opts.deskScript,
+      txid: sent.txid,
+      signedArkTx: sent.signedArkTx,
+      signedCheckpointTxs: sent.signedCheckpointTxs,
+    })
+    : false;
+  if (!settled) {
+    await finishSpend(opts, picked);
+    if (await floatStillLocked(opts.client, opts.deskScript, picked)) return { result: "waiting" };
+  }
   return { result: "filled", txid: sent.txid, spent: picked };
 }
 
@@ -167,7 +184,35 @@ export async function recoverFilled(
     deadline: terms.deadline,
   });
   if (seen.phase !== "filled") return undefined;
-  return coins.find((coin) => spends[coin.spentBy])?.spentBy;
+  const txid = coins.find((coin) => spends[coin.spentBy])?.spentBy;
+  if (!txid) return undefined;
+  // The virtual tx can exist before arkd finalizes it. The writer has been paid
+  // only once that output is a vtxo.
+  const writer = bytesToHex(writerPkScript).toLowerCase();
+  const payouts = await client.indexer.getVtxos({ scripts: [writer] });
+  const landed = (payouts.vtxos ?? []).some((coin) => (coin.txid || "").toLowerCase() === txid.toLowerCase());
+  return landed ? txid : undefined;
+}
+
+async function collateralSpent(client: Client, intentScript: string, collateral: bigint): Promise<boolean> {
+  if (!client.indexer) return false;
+  const spent = await client.indexer.getVtxos({ scripts: [intentScript], spentOnly: true });
+  return (spent.vtxos ?? []).some((coin) => BigInt(coin.value) >= collateral);
+}
+
+/** True when a picked desk coin is still spendable or still waiting on finalize. */
+async function floatStillLocked(client: Client, deskScript: DefaultVtxo.Script, picked: Coin[]): Promise<boolean> {
+  if (!client.indexer) return true;
+  const script = bytesToHex(deskScript.pkScript);
+  const [pending, spendable] = await Promise.all([
+    pendingOutpoints(client.indexer, deskScript),
+    client.indexer.getVtxos({ scripts: [script], spendableOnly: true }),
+  ]);
+  const live = new Set((spendable.vtxos ?? []).map((coin) => `${coin.txid}:${coin.vout}`));
+  return picked.some((coin) => {
+    const id = `${coin.txid}:${coin.vout}`;
+    return pending.has(id) || live.has(id);
+  });
 }
 
 async function deskFloat(client: Client, deskScript: DefaultVtxo.Script): Promise<Coin[]> {

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { Book, hasBeacon, type QuoteRow } from "./book.ts";
+import { Book, hasBeacon, openPremium, type QuoteRow } from "./book.ts";
 
 function row(patch: Partial<QuoteRow> = {}): QuoteRow {
   return {
@@ -30,6 +30,14 @@ function row(patch: Partial<QuoteRow> = {}): QuoteRow {
     ...patch,
   };
 }
+
+test("openPremium sums quotes the desk has not filled yet", () => {
+  assert.equal(openPremium([
+    row({ premium: "10" }),
+    row({ rfqId: "bb".repeat(32), premium: "5", status: "filled" }),
+    row({ rfqId: "cc".repeat(32), premium: "7", deadline: 100 }),
+  ], 1_200), 10n);
+});
 
 test("exposure counts open quotes and unexpired fills, and the cap refuses the next one", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "arkade-book-"));

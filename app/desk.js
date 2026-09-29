@@ -308,6 +308,9 @@ function humanNote(note) {
   if (note.includes("premium below dust")) {
     return dustNote();
   }
+  if (note.includes("float short")) {
+    return "The desk has no sats to pay this premium yet. Fund the desk, then quote again.";
+  }
   if (note.includes("expiry")) {
     return "The desk will not quote an expiry this soon. Redeploy it to allow 10 minutes.";
   }

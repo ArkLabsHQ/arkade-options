@@ -40,7 +40,7 @@ import { connectTransport, nostrPubkey, type Incoming } from "../protocol/nostr.
 import { deribitPremium, fetchSurface, surfaceStatus } from "../protocol/deribit.ts";
 import { premiumSats } from "../protocol/pricing.ts";
 import { openSqliteStorage } from "../protocol/sqlite-storage.ts";
-import { Book, hasBeacon, type QuoteRow } from "./book.ts";
+import { Book, hasBeacon, openPremium, type QuoteRow } from "./book.ts";
 import { countFill, countQuote, emptyHour, hourLine, msUntilNextHour } from "./digest.ts";
 import { finalizeDeskSpends } from "./finalize.ts";
 import { fillQuote } from "./fill.ts";
@@ -253,6 +253,11 @@ async function onRequest(message: RfqRequest, from: string) {
   const dust = premiumRefusal(sats, BigInt(message.amount));
   if (dust) {
     await refuse(from, message.rfq_id, dust);
+    return;
+  }
+  if (balance < openPremium(book.list(), now) + sats) await refreshFloat();
+  if (balance < openPremium(book.list(), now) + sats) {
+    await refuse(from, message.rfq_id, "float short");
     return;
   }
   const deadline = now + LOCK_S;

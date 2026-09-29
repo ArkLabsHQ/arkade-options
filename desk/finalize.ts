@@ -152,6 +152,45 @@ async function finalizeFromIndexer(opts: {
   return finalized;
 }
 
+/**
+ * Finish the package the emulator just returned.
+ * Covenant send() stops there. When the emulator is not the last signer it has not
+ * called arkd, so finalize is "not found" and we submit this package ourselves.
+ */
+export async function settleEmulatorTx(opts: {
+  ark: PendingArk;
+  identity: Identity;
+  deskScript: Script;
+  txid: string;
+  signedArkTx: string;
+  signedCheckpointTxs: string[];
+}): Promise<boolean> {
+  if (!opts.signedArkTx || !opts.signedCheckpointTxs.length) return false;
+  const script = opts.deskScript.pkScript;
+  try {
+    const cosigned = await cosignedCheckpoints(opts.identity, script, opts.signedCheckpointTxs);
+    try {
+      await opts.ark.finalizeTx(opts.txid, cosigned);
+      return true;
+    } catch (err) {
+      if (!notFound(err) || !opts.ark.submitTx) throw err;
+      console.error("finalize submit", opts.txid);
+      const submitted = await opts.ark.submitTx(opts.signedArkTx, opts.signedCheckpointTxs);
+      const signed = await cosignedCheckpoints(opts.identity, script, submitted.signedCheckpointTxs);
+      await opts.ark.finalizeTx(submitted.arkTxid, signed);
+      return true;
+    }
+  } catch (err) {
+    if (alreadySpent(err)) {
+      stuckArkTxs.add(opts.txid);
+      console.error("finalize stuck", opts.txid, messageOf(err));
+      return false;
+    }
+    console.error("finalize", opts.txid, messageOf(err));
+    return false;
+  }
+}
+
 /** Sign and finalize ark txs that already spent the desk script but never cleared finalizeTx. */
 export async function finalizeDeskSpends(opts: {
   ark: PendingArk;

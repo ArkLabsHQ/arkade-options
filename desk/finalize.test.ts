@@ -7,7 +7,7 @@ import { buildOffchainTx, SingleKey, Transaction, type ArkTxInput, type IndexerP
 import { EXIT } from "../protocol/constants.ts";
 import { payoutVtxo } from "../protocol/contracts.ts";
 import { bytesToHex } from "../protocol/hex.ts";
-import { cosignCheckpoint, finalizeDeskSpends } from "./finalize.ts";
+import { cosignCheckpoint, finalizeDeskSpends, settleEmulatorTx } from "./finalize.ts";
 
 const SERVER = "03301078808e4f7bc0dadfe29e34b1df8eaf0108ef06b1722274075ebc107a127a";
 
@@ -281,4 +281,54 @@ test("an already-spent input is not submitted again", async () => {
   assert.deepEqual(await finalizeDeskSpends(opts), []);
   assert.equal(submits, 1);
   assert.equal(pendingReads, 1);
+});
+
+test("settleEmulatorTx finalizes the package send() returned, and submits it when arkd has no row", async () => {
+  const desk = key(5);
+  const server = Uint8Array.from(Buffer.from(SERVER, "hex"));
+  const script = payoutVtxo(await desk.xOnlyPublicKey(), server, EXIT);
+  const { arkTx, checkpoints } = buildOffchainTx(
+    [{
+      txid: "ee".repeat(32),
+      vout: 0,
+      value: 1_000,
+      tapLeafScript: script.forfeit(),
+      tapTree: script.encode(),
+    } as unknown as ArkTxInput],
+    [{ script: script.pkScript, amount: 1_000n }],
+    { script: new Uint8Array([0x51]), params: { timelock: { type: "seconds", value: EXIT }, pubkeys: [server] } } as never,
+  );
+  const signedArkTx = base64.encode(arkTx.toPSBT());
+  const checkpoint = base64.encode(checkpoints[0]!.toPSBT());
+  const finalized: string[] = [];
+  let submits = 0;
+  const done = await settleEmulatorTx({
+    identity: desk,
+    deskScript: script,
+    txid: arkTx.id,
+    signedArkTx,
+    signedCheckpointTxs: [checkpoint],
+    ark: {
+      async getPendingTxs() {
+        return [];
+      },
+      async finalizeTx(arkTxid, txs) {
+        if (finalized.length === 0) throw new Error(`TX_NOT_FOUND (19): offchain tx ${arkTxid} not found`);
+        finalized.push(arkTxid);
+        assert.equal(txs.length, 1);
+        const sigs = Transaction.fromPSBT(base64.decode(txs[0]!)).getInput(0).tapScriptSig?.length ?? 0;
+        assert.equal(sigs, 1);
+      },
+      async submitTx(raw, txs) {
+        submits += 1;
+        assert.equal(raw, signedArkTx);
+        assert.equal(txs.length, 1);
+        finalized.push("submitted");
+        return { arkTxid: arkTx.id, signedCheckpointTxs: [checkpoint] };
+      },
+    },
+  });
+  assert.equal(done, true);
+  assert.equal(submits, 1);
+  assert.deepEqual(finalized, ["submitted", arkTx.id]);
 });
