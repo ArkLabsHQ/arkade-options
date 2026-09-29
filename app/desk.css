@@ -546,13 +546,36 @@ a { color: var(--accent); }
 
 .position-status { color: var(--muted); font-size: 13px; }
 
-.tx-links { margin-top: 8px; }
+.position-foot {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: baseline;
+  gap: 8px 16px;
+  margin-top: 8px;
+}
+
+.position-result {
+  margin: 0;
+  margin-right: auto;
+  max-width: 42rem;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.tx-links {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px 14px;
+  margin: 0;
+}
 
 .tx-link {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  margin: 4px 0 0;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  margin: 0;
   font-size: 13px;
 }
 

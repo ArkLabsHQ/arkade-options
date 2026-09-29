@@ -223,7 +223,7 @@ function shortAddress(address) {
   return `${address.slice(0, 12)}…${address.slice(-6)}`;
 }
 
-const STEPS = ["Waiting for deposit", "Deposited", "Waiting for payout", "Paid out"];
+const STEPS = ["Waiting for deposit", "Deposited", "Waiting for payout", "Premium paid"];
 
 function progressIndex(status) {
   if (status === "locking") return 0;
@@ -272,7 +272,7 @@ function progressSteps(status) {
 function statusLabel(position) {
   if (position.status === "locking") return "Waiting for deposit";
   if (position.status === "deposited") return "Waiting for payout";
-  if (position.status === "filled") return "Paid out";
+  if (position.status === "filled") return "Premium paid";
   if (position.status === "expired") return "Window closed";
   if (position.status === "refunded") return "Refunded";
   if (position.status === "settled") return "Settled";
@@ -284,14 +284,12 @@ function statusLead(position) {
     return "Waiting for your deposit. This address keeps the payout below. The market can move until the coins arrive.";
   }
   if (position.status === "deposited") return "Deposit received. Waiting for the desk to pay your address.";
-  if (position.status === "filled") return "The premium reached your address.";
+  if (position.status === "filled" || position.status === "refunded" || position.status === "settled") return "";
   if (position.status === "expired") {
     return position.refundable
       ? "The fill window closed. Your deposit is still on this address."
       : "The fill window closed before the deposit arrived.";
   }
-  if (position.status === "refunded") return "Refunded to your address.";
-  if (position.status === "settled") return "Settled.";
   return "Open.";
 }
 
@@ -683,11 +681,35 @@ function renderBlotter() {
     wrap.append(head);
     const steps = progressSteps(position.status);
     if (steps) wrap.append(steps);
+    const result = outcomeLine(position);
     const txs = txLinks(position);
-    if (txs) wrap.append(txs);
+    if (result || txs) {
+      const foot = document.createElement("div");
+      foot.className = "position-foot";
+      if (result) {
+        const line = document.createElement("p");
+        line.className = "position-result";
+        line.textContent = result;
+        foot.append(line);
+      }
+      if (txs) foot.append(txs);
+      wrap.append(foot);
+    }
     if (state.selected === position.id) wrap.append(detail(position));
     host.append(wrap);
   }
+}
+
+function outcomeLine(position) {
+  const expiry = Number(position.expiry) || 0;
+  const now = Math.floor(Date.now() / 1000);
+  if (position.status === "settled") return "The vault was settled. That transaction splits the collateral.";
+  if (position.status === "filled" && expiry && expiry <= now) {
+    return "Expired. The collateral is still in the vault, so no one has won it yet.";
+  }
+  if (position.status === "filled") return "Premium paid. The collateral stays in the vault until expiry.";
+  if (position.status === "refunded") return "The deposit came back to you. The trade did not fill.";
+  return "";
 }
 
 function txLink(label, txid) {
@@ -712,13 +734,12 @@ function txLinks(position) {
   const refunded = position.status === "refunded";
   const refund = refunded ? txLink("Refund", position.closeTxid) : null;
   const filled = position.status === "filled" || position.status === "settled";
-  const settleId = refunded ? "" : (position.settleTxid || (filled ? position.closeTxid : ""));
-  const settle = txLink("Settle", settleId);
-  const payout = filled && position.settleTxid && position.closeTxid && position.closeTxid !== position.settleTxid
-    ? txLink("Payout", position.closeTxid)
+  const completed = filled ? txLink("Completed", position.closeTxid) : null;
+  const settlement = position.settleTxid && position.settleTxid !== position.closeTxid
+    ? txLink("Settlement", position.settleTxid)
     : null;
-  if (!funding && !refund && !settle && !payout) return null;
-  for (const node of [funding, payout, settle, refund]) {
+  if (!funding && !refund && !completed && !settlement) return null;
+  for (const node of [funding, completed, settlement, refund]) {
     if (node) box.append(node);
   }
   return box;
@@ -727,14 +748,18 @@ function txLinks(position) {
 function detail(position) {
   const box = document.createElement("div");
   box.className = "lab";
-  const lead = document.createElement("p");
-  lead.className = "lock-note";
-  lead.textContent = statusLead(position);
+  const leadText = statusLead(position);
+  if (leadText) {
+    const lead = document.createElement("p");
+    lead.className = "lock-note";
+    lead.textContent = leadText;
+    box.append(lead);
+  }
   const pay = document.createElement("p");
   pay.className = "premium-meta";
   const apy = position.apyFrozen ? position.apy : annualized(position.premiumSats, position.collateral, tenorDays(position));
   pay.textContent = `Pays ${fmtBtc(position.premiumSats)} BTC · ${fmtApy(apy)} · expires ${fmtWhen(position.expiry)}`;
-  box.append(lead, pay);
+  box.append(pay);
   if (position.status === "locking" && position.marketSats && position.marketSats !== position.premiumSats) {
     const now = document.createElement("p");
     now.className = "market-now";
