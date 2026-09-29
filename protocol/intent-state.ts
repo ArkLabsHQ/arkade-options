@@ -31,6 +31,17 @@ export type TxOutput = {
   script: string;
 };
 
+/**
+ * The contract manager learns about coins from the indexer subscription, which can lag the
+ * send. An empty or short cache is not proof the deposit is missing; use the indexer read.
+ */
+export function coinsForIntent(managed: CoinView[] | null, indexed: CoinView[], collateral: bigint): CoinView[] {
+  const known = managed ?? [];
+  const covered = known.some((coin) => !coin.spent && coin.value >= collateral);
+  if (covered) return known;
+  return indexed.length ? indexed : known;
+}
+
 export function classifyIntent(input: {
   coins: CoinView[];
   spends: Record<string, TxOutput[]>;

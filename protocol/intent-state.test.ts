@@ -3,10 +3,18 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { classifyIntent, psbtOutputs, psbtView } from "./intent-state.ts";
+import { classifyIntent, coinsForIntent, psbtOutputs, psbtView } from "./intent-state.ts";
 
 const writer = "5120806de010d4f26b83a7d2b0cc29973a7ffc3b17d163651bfc4de55aec4cc8d44b";
 const intent = "5120b81cbe74a0c932b6bf2424d28f867cab9fe09cc6eae887050be13dbd1b63d292";
+
+test("an empty subscription cache does not hide an indexed deposit", () => {
+  const indexed = [{ value: 20_000n, spent: false, spentBy: "", txid: "aa".repeat(32) }];
+  assert.equal(coinsForIntent([], indexed, 20_000n), indexed);
+  assert.equal(coinsForIntent(null, indexed, 20_000n), indexed);
+  const cached = [{ value: 20_000n, spent: false, spentBy: "", txid: "bb".repeat(32) }];
+  assert.equal(coinsForIntent(cached, indexed, 20_000n), cached);
+});
 
 test("a live intent coin after the deadline is refundable, not paid", () => {
   const seen = classifyIntent({

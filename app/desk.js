@@ -1247,10 +1247,24 @@ async function refreshPositionMarkets() {
   if (state.view === "home") renderBlotter();
 }
 
+const depositPollAt = new Map();
+
 function tick() {
   const now = Math.floor(Date.now() / 1000);
   if (clearStaleDeskQuote(now) && state.view === "sell") renderSell();
   for (const position of state.positions) {
+    // The indexer subscription is what flips this row, and it lags the send.
+    // Ask the indexer directly while we are still waiting for the deposit.
+    if (position.status === "locking" && position.address && !expiring.has(position.address)) {
+      const last = depositPollAt.get(position.address) || 0;
+      if (now - last >= 2) {
+        depositPollAt.set(position.address, now);
+        expiring.add(position.address);
+        void readIntent(watchRow(position)).then((phase) => {
+          applyChain(position, phase);
+        }).catch(() => undefined).finally(() => expiring.delete(position.address));
+      }
+    }
     if (position.status !== "deposited" || !position.deadline || now < Number(position.deadline)) continue;
     if (!position.address || expiring.has(position.address)) continue;
     expiring.add(position.address);
