@@ -126,6 +126,7 @@ test("the page names the live parameters and the sources", () => {
   const beacon = readFileSync(new URL("../contracts/attestation_beacon.ark", import.meta.url), "utf8");
   assert.match(beacon, /readFee/);
   assert.match(beacon, /sample after close/);
+  assert.doesNotMatch(beacon, /minValue/);
   assert.match(html, /holderPayoff/);
   assert.match(html, /settlementOutputs/);
   assert.match(html, /Enforced/);

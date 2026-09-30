@@ -133,6 +133,7 @@ test("status, admin order, deploy change, and a print that becomes a fixing", as
     assert.equal((open.json.args as { keyLag: number }).keyLag, 60);
     assert.equal((open.json.args as { readFee: number }).readFee, 100);
     assert.equal(open.json.samples, 0);
+    assert.equal("minValue" in (open.json.args as object), false);
     assert.equal((open.json.args as { exit: number }).exit, 2048);
     assert.equal((open.json.args as { adminPk: string }).adminPk, hex.encode(schnorr.getPublicKey(secret(9))));
     assert.match(String(open.json.wallet), /^tark1/);
