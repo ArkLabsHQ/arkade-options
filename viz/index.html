@@ -162,6 +162,7 @@
     <span class="swatch loss">Loss</span>
   </div>
   <nav>
+    <a href="#system">Pieces</a>
     <a href="#params">Parameters</a>
     <a href="#run">Mutinynet run</a>
     <a href="#beacon">Beacon</a>
@@ -178,6 +179,56 @@
   </nav>
 </header>
 <main>
+<section class="panel" id="system">
+  <h2>Who talks to whom</h2>
+  <p>Five pieces. The seller's page asks the desk for a quote. The seller sends collateral to the intent. The desk fills it. The aggregator signs the price and, after expiry, writes that price onto the beacon in one transaction. The settler then spends the vault and the beacon together. Anyone who has the published signatures can do that write. The read costs 1,000 sats and the vault pays it.</p>
+  <ol>
+    <li>Page to desk: request a quote. The desk answers with the intent address, the vault address, and the premium.</li>
+    <li>Seller to intent: the collateral. The desk adds the premium from its float and finalizes. Output 0 is the premium. Output 1 is the vault.</li>
+    <li>Aggregator: one to five keys sign <code>sha256(ctrlTxid || BTCUSD || price || time)</code> about once a minute. <code>GET /api/prices</code> keeps those signatures for 24 hours. A test run posts a chosen price instead of reading a market.</li>
+    <li>Aggregator to beacon: after <code>expiry + 60</code>, one attest transaction stores the price in the newest slot.</li>
+    <li>Settler: vault at input 0, beacon at input 1. The vault's 1,000 sats move onto the beacon. The rest splits by the price in that slot.</li>
+  </ol>
+  <p class="note">The picture below is that last step with the service fee, not the zero-fee fixture further down. Collateral 20,000. Simulated price 10,000,000 cents. Strike 9,700,000 cents. Holder payoff <code>20000 × (10000000 − 9700000) / 10000000 = 600</code>. The vault keeps 1,000 for the beacon, so the writer receives 18,400. Inputs 20,330. Outputs 1,330 + 600 + 18,400 = 20,330.</p>
+</section>
+<section class="tx" data-name="settle-read-fee">
+  <div class="col inputs">
+    <div class="coin vault covenant loss" data-sat="20000" data-party="vault">
+      <div class="who">OptionVault · input 0</div>
+      <strong>20,000</strong> sats
+      <p>Leaf <code>settle</code>. Server and emulator sign. No seller signature.</p>
+    </div>
+    <div class="coin beacon covenant" data-sat="330" data-asset="unit:1" data-party="beacon">
+      <div class="who">AttestationBeacon · input 1</div>
+      <strong>330</strong> sats
+      <p>1 identity unit. Leaf <code>read</code>. The slot for this expiry holds 10,000,000 cents.</p>
+    </div>
+  </div>
+  <div class="spine">
+    <div class="tid">settle</div>
+    <div>2 in → 3 out</div>
+    <div>20,330 = 20,330</div>
+    <div class="ok">sats in = out</div>
+    <div class="ok">unit in = out</div>
+  </div>
+  <div class="col outputs">
+    <div class="coin beacon covenant gain" data-sat="1330" data-asset="unit:1" data-party="beacon">
+      <div class="who">AttestationBeacon · output 0</div>
+      <strong>1,330</strong> sats
+      <p>Same script, same unit, same price. 1,000 sats of read fee stayed here.</p>
+    </div>
+    <div class="coin desk gain" data-sat="600" data-party="desk">
+      <div class="who">Holder · output 1</div>
+      <strong>600</strong> sats
+      <p>The covered-call payoff at the simulated price.</p>
+    </div>
+    <div class="coin writer gain" data-sat="18400" data-party="writer">
+      <div class="who">Writer · output 2</div>
+      <strong>18,400</strong> sats
+      <p>Collateral minus the holder leg minus the 1,000-sat read.</p>
+    </div>
+  </div>
+</section>
 <section class="panel" id="params">
   <h2>Two number sets</h2>
   <div class="params">
