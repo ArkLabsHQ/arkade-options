@@ -2,7 +2,7 @@
 
 Cash-settled covered calls and limited puts on Mutinynet. The desk pays the premium. The seller sends collateral to the address on the page.
 
-The live oracle and desk are already issued and deployed. Day-to-day work is funding the desk, signing prints, and publishing a fixing after expiry. A new beacon is a new identity: do that only on a fresh volume. Deploy and bootstrap steps are in [docs/runbook.md](docs/runbook.md).
+Day-to-day work is funding the desk. The oracle signs BTCUSD itself and keeps the history. The settler publishes a fixing after expiry and settles the vault. A new beacon is a new identity. Deploy and bootstrap steps are in [docs/runbook.md](docs/runbook.md).
 
 ## Live
 
@@ -31,17 +31,7 @@ Beacon (Mutinynet). `BEACON_TXID` is the oracle's `issueTxid`. `ctrlTxid` is tha
 | Desk nostr pubkey | `eb36be79b231beeecbea9609767139974137d1f5dbaab56f19396bda3f07edc9` |
 | Desk deposit address | `tark1qqcpq7yq3e8hhsx6ml3fud93m7827qggaurtzu3zwsr4a0qs0gf85yqmhrwnt5zuhcr935nk7w7avtt3nf3kvvucn63tmrsx6q7h9x4txm6sw2` |
 
-Committee x-only pubkeys, in order. The five source secrets are not on the server.
-
-```
-8b839812711b1e8c0f3599d198cf0b1b1156a8632a992523a6f136ec1e31a8d7
-40f855e05bb2f95ca83757f8b48016725181385851abbf4b2142ad12ba60fb0b
-afd2ad5556dbb7a3485218d4acd86c5ed4a3e5f3c1cbdd7ecf1e26e34c0aa164
-07fc9faaf31b49549b3bab719c3837987cd5aec026f93a017bdf8816705963bb
-1c37841579dc5cecfe9fdcf43ed2c701b3d634e953a840aadb1a4804ac915e5c
-```
-
-`ORACLE_KEY`, `ORACLE_ADMIN`, and `DESK_KEY` live in Dokploy, not on the volume. A redeploy keeps the beacon, the wallet, and the quote book. Replacing a volume, or rotating `ORACLE_KEY`, starts a different beacon.
+`ORACLE_KEY`, `ORACLE_ADMIN`, and `DESK_KEY` live in Dokploy, not on the volume. A redeploy keeps the beacon, the wallet, and the quote book. Replacing a volume, or rotating `ORACLE_KEY`, starts a different beacon. The coin at `76ba2970…da89` was deployed with the old five-key script. This build will not spend it. Issue and deploy a new beacon, then point the desk at that `issueTxid`.
 
 ## Day to day
 
@@ -52,11 +42,11 @@ curl -k https://arkadeoptions-oracle-bhuczu-39c492-138-199-218-130.traefik.me/ap
 curl -k https://arkadeoptions-desk-jxdh3j-37969b-138-199-218-130.traefik.me/
 ```
 
-Oracle `balance` is spendable sats on the admin wallet. The beacon coin itself is separate. Desk `balance` is the float. `beaconTxid` on the desk must stay `76ba2970…da89` until a new beacon is deployed.
+Oracle `balance` is spendable sats on the admin wallet. The beacon coin itself is separate. Desk `balance` is the float. After the new beacon is deployed, set the desk `BEACON_TXID` to that `issueTxid`.
 
 Fund the desk at its deposit address. Send enough for premiums. The seller's collateral does not come from this float. `balance` stays `0` until the coins arrive. The desk refuses a quote it cannot pay and logs `float short`.
 
-An oracle print is `sha256(BTCUSD || price_le64 || time_le64)`. Sign it in the oracle dashboard. The secret stays in the browser. A fixing needs nine prints: three distinct committee signers in the open, mid, and close windows around the expiry. Publish only after `expiry + 60`:
+The aggregator holds one to five oracle keys (`ORACLE_SIGNERS`, or just `ORACLE_KEY` when testing with one). Every minute it signs a BTCUSD sample with each of them and keeps those signatures for 24 hours. `GET /api/prices?from=<unix>&to=<unix>` returns that history, signatures included, so anyone can use them. A fixing is the sample inside `[expiry, expiry + 60]`, or, if that minute was missed, the latest sample at or before `expiry + 60`. The aggregator writes that fixing in one beacon transaction after `expiry + 60`. Reading the beacon costs 1,000 sats, above the dust line, paid by the vault:
 
 ```bash
 curl -k -X POST -H "Authorization: Bearer $ORACLE_ADMIN" -H "content-type: application/json" \
@@ -66,12 +56,13 @@ curl -k -X POST -H "Authorization: Bearer $ORACLE_ADMIN" -H "content-type: appli
 
 The beacon keeps the eight newest fixings. Settle a vault before eight later expiries are published, or publish that expiry again.
 
-The app provider runs a settler next to the oracle and the desk. After a fill, the desk publishes the vault on nostr.arkade.sh. The settler catches that event and, once the option has expired, spends the vault. It does not call the desk. Anyone else can run the same process and settle the same contracts. The first valid spend wins.
+The settler watches filled vaults on nostr.arkade.sh. Once an option has expired it asks the oracle to publish the stored price, then spends the vault and the beacon together. The 1,000-sat read fee comes out of the vault collateral. The settler does not keep a fee wallet and does not call the desk. Set `ORACLE_ADMIN` on the settler so it can publish. Anyone else can run the same process. The first valid spend wins.
 
 A vault txid alone is not enough. The event (or a `POSITIONS` file of the same JSON) also has to carry the contract parameters: kind, strike, expiry, beacon, and the writer and holder keys. The price comes from the beacon coin. Deploy steps, the event fields, and the file are in [docs/runbook.md](docs/runbook.md).
 
 ```bash
 export ORACLE_URL=https://<oracle>
+export ORACLE_ADMIN=<the oracle admin bearer>
 pnpm settle
 ```
 
@@ -83,12 +74,11 @@ Desk logs: one line per UTC hour, `hour N quotes, N filled, N premium paid, N co
 
 ```json
 {
-  "ctrlTxid": "89da61e71871b60055380685fb3cd368af6e2b6fc33a6a695fe601767029ba76",
-  "threshold": 3,
+  "ctrlTxid": "<issue txid reversed>",
   "domain": "4254435553442d464958",
   "keyLag": 60,
-  "readFee": 100,
-  "adminPk": "e96d459a88359d713db09e7b226644b84765ac33b0b84f4cb60bc9d39ffb5bbe",
+  "readFee": 1000,
+  "adminPk": "<ORACLE_KEY x-only pubkey>",
   "exit": 2048
 }
 ```
@@ -96,16 +86,13 @@ Desk logs: one line per UTC hour, `hour N quotes, N filled, N premium paid, N co
 | Field | Meaning |
 | --- | --- |
 | `ctrlTxid` | Identity of the beacon asset, as the script compares it: the display `issueTxid` reversed. The vault checks that input 1 holds one unit of this asset. |
-| `threshold` | How many of the five committee keys must sign a `migrate`. Attest is separate: each of the three price slices needs three distinct signers. |
-| `domain` | Hex of the ASCII string `BTCUSD-FIX`. It is mixed into the migrate signature so a signature for this beacon cannot authorize a move of another one. Price prints use `BTCUSD`, not this string. |
-| `keyLag` | Seconds after the expiry key before `attest` is allowed. `60` means a fixing cannot be published until the close window has ended. |
-| `readFee` | Sats added to the beacon on every `read`. The deployed coin uses `100`. The fee stays on the beacon. It is not paid to the admin. |
-| `adminPk` | X-only pubkey of `ORACLE_KEY`. The only key that may write a fixing. It signs `sha256(ctrlTxid \|\| nextPacket)`. |
+| `domain` | Hex of the ASCII string `BTCUSD-FIX`. It is mixed into the migrate signature. |
+| `keyLag` | Seconds after the expiry before `attest` is allowed. `60` means a fixing waits until the close minute has ended. |
+| `readFee` | Sats added to the beacon on every `read`. The service uses `1000`, above the 330-sat dust line. The vault pays it out of its collateral. |
+| `adminPk` | X-only pubkey of `ORACLE_KEY`. It signs `sha256(ctrlTxid \|\| BTCUSD \|\| price \|\| time)`. |
 | `exit` | Seconds the admin must wait before a unilateral exit of the beacon coin to Bitcoin. `2048` is Mutinynet's `unilateralExitDelay`. |
 
-`readFee` is part of the script. The service uses `100` because that is the coin at `76ba2970…da89`. A different fee, or a `minValue` parameter, is a different script and will not see that coin.
-
-The status object omits `ctrlGidx` (it is `0`, the `0000` suffix on `assetId`) and the five signers (they are the top-level `pubkeys`).
+The status object omits `ctrlGidx` (it is `0`, the `0000` suffix on `assetId`).
 
 ## Page
 

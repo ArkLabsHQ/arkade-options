@@ -21,8 +21,6 @@ export const SLOT_COUNT = 8;
 export const SLOT_SIZE = 40;
 export const SLOTS_AT = 9;
 export const SLOT_OFFSETS = Array.from({ length: SLOT_COUNT }, (_, i) => SLOTS_AT + SLOT_SIZE * i);
-export const SIGNER_COUNT = 5;
-
 export type Slot = { key: bigint; value: Uint8Array };
 export type BeaconState = { version: number; round: bigint; slots: Slot[] };
 
@@ -116,13 +114,25 @@ export function publishDigest(ctrlTxid: Uint8Array, next: Uint8Array): Uint8Arra
   return sha256(ctrlTxid, next);
 }
 
+const TICKER = new Uint8Array([0x42, 0x54, 0x43, 0x55, 0x53, 0x44]);
+
+/** Sample the beacon checks: `sha256(ctrlTxid || BTCUSD || price_le64 || time_le64)`. */
+export function sampleDigest(ctrlTxid: Uint8Array, price: bigint, time: bigint): Uint8Array {
+  if (ctrlTxid.length !== 32) throw new Error("ctrlTxid must be 32 bytes");
+  return sha256(ctrlTxid, TICKER, num2bin(price, 8), num2bin(time, 8));
+}
+
+export const SIGNER_SLOTS = 5;
+
 export type BeaconArgs = {
   id: BeaconId;
+  /** One to five oracle keys. Unused slots are padded inside the script binding. */
   signers: readonly Uint8Array[];
+  /** How many of `signers` must sign a sample. At least 1, at most the signer count. */
   threshold: bigint;
   domain: Uint8Array;
   keyLag: bigint;
-  /** Sats a read adds to the beacon. The deployed Mutinynet coin uses 100. */
+  /** Sats a read adds to the beacon. The vault being settled pays this. */
   readFee: bigint;
   adminPk: Uint8Array;
   exit?: bigint;
@@ -138,20 +148,19 @@ export type Bound = {
   script: arkade.ArkadeProgramScript;
 };
 
-function checkCommittee(signers: readonly Uint8Array[], threshold: bigint) {
-  if (signers.length !== SIGNER_COUNT) throw new Error(`${SIGNER_COUNT} signers`);
-  if (threshold < 1n || threshold > BigInt(SIGNER_COUNT)) throw new Error("threshold must be 1..5");
-  const seen = new Set(signers.map((key) => bytesToHex(xOnly(key))));
-  if (seen.size !== SIGNER_COUNT) throw new Error("duplicate signer");
-}
-
 export function bindBeacon(input: BeaconArgs): Bound {
-  checkCommittee(input.signers, input.threshold);
+  if (input.signers.length < 1 || input.signers.length > SIGNER_SLOTS) throw new Error("1 to 5 signers");
+  if (input.threshold < 1n || input.threshold > BigInt(input.signers.length)) throw new Error("threshold");
   if (input.emulatorKey.length !== 33) throw new Error("emulator key must be 33 bytes");
+  const signers = input.signers.map((key) => xOnly(key));
+  if (new Set(signers.map((key) => bytesToHex(key))).size !== signers.length) throw new Error("duplicate signer");
+  const padded = [...signers];
+  while (padded.length < SIGNER_SLOTS) padded.push(padded[0]!);
   const serverKey = xOnly(input.serverKey);
   const args: Record<string, bigint | Uint8Array> = {
     ctrlTxid: input.id.txid,
     ctrlGidx: input.id.gidx,
+    signersN: BigInt(signers.length),
     threshold: input.threshold,
     domain: input.domain,
     keyLag: input.keyLag,
@@ -160,8 +169,8 @@ export function bindBeacon(input: BeaconArgs): Bound {
     exit: input.exit ?? EXIT,
     server: serverKey,
   };
-  input.signers.forEach((key, index) => {
-    args[`signers.${index}`] = xOnly(key);
+  padded.forEach((key, index) => {
+    args[`signers.${index}`] = key;
   });
   const script = new arkade.ArkadeProgramScript(beaconProgram(), args, {
     serverKey,

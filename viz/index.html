@@ -188,7 +188,7 @@
         <dt>Premium</dt><dd>1,000 sats</dd>
         <dt>Strike K</dt><dd>9,700,000 cents ($97,000.00)</dd>
         <dt>Fixture price</dt><dd>10,000,000 cents ($100,000.00)</dd>
-        <dt>Beacon coin</dt><dd>330 sats. This fixture sets <code>readFee</code> to 0. The live coin sets it to 100.</dd>
+        <dt>Beacon coin</dt><dd>330 sats. This fixture sets <code>readFee</code> to 0. The service sets it to 1,000.</dd>
         <dt>Exit</dt><dd>2,048 seconds, unilateral leaves only</dd>
         <dt>Contract dust</dt><dd>330 sats, strict</dd>
         <dt>Fill window</dt><dd>deadline = now + 180 seconds</dd>
@@ -537,7 +537,7 @@
       <div class="coin beacon covenant" data-sat="330" data-asset="unit:1" data-party="beacon" data-role="beacon-out">
         <div class="who"><svg class="lock" viewBox="0 0 16 16" aria-hidden="true"><path d="M5 7V5a3 3 0 0 1 6 0v2M3 7h10v7H3z" fill="none" stroke="currentColor"/></svg>AttestationBeacon · output 0</div>
         <strong data-amt="beacon">330</strong> sats
-        <p>Same script, same unit, same state. This fixture sets <code>readFee</code> to 0, so the beacon stays at 330 sats. The live coin sets <code>readFee</code> to 100, and that settle brings an extra 100-sat input.</p>
+        <p>Same script, same unit, same state. This fixture sets <code>readFee</code> to 0, so the beacon stays at 330 sats. The service sets <code>readFee</code> to 1,000, which the vault pays.</p>
       </div>
       <div class="coin desk gain" data-sat="600" data-party="desk" data-role="holder-out">
         <div class="who">Holder · output 1</div>
@@ -1028,7 +1028,7 @@
   <ul class="checks">
     <li>The premium output exists before the vault output. Finalize will not pay the vault without paying the writer at least the premium.</li>
     <li>Settle pays from one slot whose key equals the expiry, newest first, using the integer formula above, and folds a leg of 330 sats or less.</li>
-    <li>Settle sees that price only by spending the identity unit. The beacon’s read leaf carries the packet unchanged and adds <code>readFee</code> on output 0. This fixture uses 0. The live coin uses 100.</li>
+    <li>Settle sees that price only by spending the identity unit. The beacon’s read leaf carries the packet unchanged and adds <code>readFee</code> on output 0. This fixture uses 0. The service uses 1,000.</li>
     <li>Attest stores only the TWAP of the nine prints it checks: three distinct oracles per slice, the latest print of each slice inside its window and all three within 60 seconds, medians weighted 900, 900, and 60. It needs the oracle service’s signature over the new packet.</li>
     <li>Attest moves the round by one, refuses a key already in a slot, and continues the same script and the same unit.</li>
     <li>Migrate needs three of the five oracle keys and the oracle service key, and continues the unit and the packet onto the signed next program. The vault’s constructor does not contain the beacon script or the committee keys.</li>

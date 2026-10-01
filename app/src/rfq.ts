@@ -3,7 +3,7 @@ import { generateSecretKey } from "nostr-tools/pure";
 import { asset } from "@arkade-os/sdk";
 
 import { beaconIdOf } from "../../protocol/beacon-id.ts";
-import { DUST_SATS, EXIT, PAIR } from "../../protocol/constants.ts";
+import { BEACON_READ_FEE, DUST_SATS, EXIT, PAIR } from "../../protocol/constants.ts";
 import { bindContracts } from "../../protocol/contracts.ts";
 import { bytesToHex, hexToBytes } from "../../protocol/hex.ts";
 import type { RfqQuote, RfqRefusal, RfqRequest } from "../../protocol/messages.ts";
@@ -114,6 +114,7 @@ export async function requestQuotes(input: {
         payoutKey: profile.payoutKey,
         holderPk: hexToBytes(quote.profile.holder_pubkey),
         beacon: beaconIdOf(asset.AssetId.create(quote.profile.beacon_txid, quote.profile.beacon_gidx)),
+        readFee: BEACON_READ_FEE,
         serverKey: profile.serverKey,
         emulatorKey: profile.emulatorKey,
       });

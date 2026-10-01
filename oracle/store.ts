@@ -1,34 +1,60 @@
 import { mkdir, open, readFile, rename } from "node:fs/promises";
 import path from "node:path";
 
-export type StoredPrint = {
-  pubkey: string;
+export type StoredSample = {
   price: string;
   time: number;
-  sig: string;
+  /** One signature per oracle key, in constructor order. */
+  sigs: string[];
 };
+
+/** Signed samples older than this are dropped. A day of one-minute prints. */
+export const SAMPLE_HISTORY_S = 24 * 60 * 60;
+
+export function pruneSamples(samples: readonly StoredSample[], now: number): StoredSample[] {
+  const cutoff = now - SAMPLE_HISTORY_S;
+  return samples.filter((sample) => sample.time >= cutoff);
+}
 
 export type StoredFixing = {
   expiry: number;
-  twap: string;
+  price: string;
   txid: string;
 };
 
 export type OracleFile = {
-  pubkeys: string[] | null;
   assetId: string | null;
   issueTxid: string | null;
   deployTxid: string | null;
-  prints: StoredPrint[];
+  samples: StoredSample[];
   fixings: StoredFixing[];
 };
 
-const empty = (): OracleFile => ({ pubkeys: null, assetId: null, issueTxid: null, deployTxid: null, prints: [], fixings: [] });
+const empty = (): OracleFile => ({ assetId: null, issueTxid: null, deployTxid: null, samples: [], fixings: [] });
+
+function normalizeSample(value: unknown): StoredSample | null {
+  if (!value || typeof value !== "object") return null;
+  const sample = value as { price?: unknown; time?: unknown; sigs?: unknown; sig?: unknown };
+  if (typeof sample.price !== "string" || typeof sample.time !== "number") return null;
+  const sigs = Array.isArray(sample.sigs)
+    ? sample.sigs.filter((item): item is string => typeof item === "string")
+    : typeof sample.sig === "string"
+      ? [sample.sig]
+      : [];
+  if (!sigs.length) return null;
+  return { price: sample.price, time: sample.time, sigs };
+}
 
 /** Only this service writes the file, so it is read back as is. */
 export async function loadStore(dir: string): Promise<OracleFile> {
   try {
-    return { ...empty(), ...(JSON.parse(await readFile(path.join(dir, "oracle.json"), "utf8")) as Partial<OracleFile>) };
+    const parsed = JSON.parse(await readFile(path.join(dir, "oracle.json"), "utf8")) as Partial<OracleFile>;
+    return {
+      ...empty(),
+      ...parsed,
+      samples: Array.isArray(parsed.samples) ? parsed.samples.map(normalizeSample).filter((sample): sample is StoredSample => sample != null) : [],
+      fixings: Array.isArray(parsed.fixings) ? parsed.fixings : [],
+    };
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
     return empty();

@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -10,12 +9,12 @@ import { schnorr } from "@noble/curves/secp256k1.js";
 import { ArkAddress, asset, CSVMultisigTapscript, Extension, networks, SingleKey, Transaction } from "@arkade-os/sdk";
 import { base64, hex } from "@scure/base";
 
-import { oraclePreimage } from "../app/settle-math.js";
-import { beaconIdOf, bindBeacon, genesisState, nextState, priceValue, publishDigest, statePacketOf } from "../protocol/beacon.ts";
+import { beaconIdOf, bindBeacon, genesisState, nextState, priceValue, sampleDigest, statePacketOf } from "../protocol/beacon.ts";
 import { EXIT } from "../protocol/constants.ts";
 import { statePacket } from "../protocol/cospend.ts";
 import { bytesToHex } from "../protocol/hex.ts";
 import { createOracle, type HeldCoin, type OracleDeps, type OracleWallet } from "./service.ts";
+import { pruneSamples, SAMPLE_HISTORY_S } from "./store.ts";
 
 const CHECKPOINT_HEX = "03080040b27520dfcaec558c7e78cf3e38b898ba8a43cfb5727266bae32c5c5b3aeb32c558aa0bac";
 
@@ -23,17 +22,6 @@ spawnSync("pnpm", ["-s", "oracle:page"], { cwd: path.resolve(import.meta.dirname
 
 function secret(byte: number): Uint8Array {
   return Uint8Array.from(hex.decode(byte.toString(16).padStart(2, "0").repeat(32)));
-}
-
-function signed(byte: number, price: bigint, time: bigint) {
-  const key = secret(byte);
-  const msg = createHash("sha256").update(oraclePreimage(price, time)).digest();
-  return {
-    pubkey: hex.encode(schnorr.getPublicKey(key)),
-    price: price.toString(),
-    time: Number(time),
-    sig: hex.encode(schnorr.sign(msg, key)),
-  };
 }
 
 async function boot(extra: Partial<OracleDeps> & { adminToken?: string } = {}) {
@@ -127,6 +115,15 @@ async function call(url: string, pathName: string, body?: unknown, token?: strin
   return { status: res.status, headers: res.headers, json: text ? JSON.parse(text) as Record<string, unknown> : {}, text };
 }
 
+test("price history keeps one day", () => {
+  const now = 2_000_000;
+  const kept = pruneSamples([
+    { price: "1", time: now - SAMPLE_HISTORY_S - 1, sigs: ["aa"] },
+    { price: "2", time: now - SAMPLE_HISTORY_S, sigs: ["bb"] },
+  ], now);
+  assert.deepEqual(kept.map((sample) => sample.price), ["2"]);
+});
+
 test("status, admin order, deploy change, and a print that becomes a fixing", async () => {
   const ctx = await boot();
   try {
@@ -142,10 +139,10 @@ test("status, admin order, deploy change, and a print that becomes a fixing", as
     const open = await call(ctx.oracle.url, "/api/status");
     assert.equal(open.status, 200);
     assert.equal(JSON.stringify(open.json).includes(hex.encode(secret(9))), false);
-    assert.equal((open.json.args as { threshold: number }).threshold, 3);
     assert.equal((open.json.args as { domain: string }).domain, hex.encode(new TextEncoder().encode("BTCUSD-FIX")));
     assert.equal((open.json.args as { keyLag: number }).keyLag, 60);
-    assert.equal((open.json.args as { readFee: number }).readFee, 100);
+    assert.equal((open.json.args as { readFee: number }).readFee, 1_000);
+    assert.equal(open.json.samples, 0);
     assert.equal("minValue" in (open.json.args as object), false);
     assert.equal((open.json.args as { exit: number }).exit, 2048);
     assert.equal((open.json.args as { adminPk: string }).adminPk, hex.encode(schnorr.getPublicKey(secret(9))));
@@ -154,11 +151,6 @@ test("status, admin order, deploy change, and a print that becomes a fixing", as
 
     assert.equal((await call(ctx.oracle.url, "/api/issue", {}, "nope")).status, 401);
     assert.equal((await call(ctx.oracle.url, "/api/issue", {})).status, 401);
-    assert.equal((await call(ctx.oracle.url, "/api/issue", {}, "test-token")).status, 400);
-
-    const pubkeys = [11, 12, 13, 14, 15].map((byte) => hex.encode(schnorr.getPublicKey(secret(byte))));
-    assert.equal((await call(ctx.oracle.url, "/api/keys", { pubkeys }, "test-token")).status, 200);
-    assert.equal((await call(ctx.oracle.url, "/api/keys", { pubkeys }, "test-token")).status, 409);
     assert.equal((await call(ctx.oracle.url, "/api/deploy", {}, "test-token")).status, 400);
 
     const issued = await call(ctx.oracle.url, "/api/issue", {}, "test-token");
@@ -166,12 +158,8 @@ test("status, admin order, deploy change, and a print that becomes a fixing", as
     assert.deepEqual(ctx.recorded.issue, { amount: 1n });
     assert.equal((await call(ctx.oracle.url, "/api/issue", {}, "test-token")).status, 409);
 
-    const earlyPrint = signed(11, 10_000_000n, 1_700_000_000n - 1780n);
-    assert.equal((await call(ctx.oracle.url, "/api/prints", earlyPrint)).status, 409);
-
     const deployed = await call(ctx.oracle.url, "/api/deploy", {}, "test-token");
     assert.equal(deployed.status, 200);
-    assert.equal((await call(ctx.oracle.url, "/api/keys", { pubkeys }, "test-token")).status, 409);
     const outputs = ctx.recorded.outputs!;
     assert.equal(outputs[0]!.amount, 330n);
     assert.equal(outputs[1]!.amount, 9_670n);
@@ -185,11 +173,11 @@ test("status, admin order, deploy change, and a print that becomes a fixing", as
     assert.equal((status.json.args as { ctrlTxid: string }).ctrlTxid, bytesToHex(beaconIdOf(asset.AssetId.create("ee".repeat(32), 0)).txid));
     const bound = bindBeacon({
       id: beaconIdOf(asset.AssetId.create("ee".repeat(32), 0)),
-      signers: pubkeys.map((item) => hex.decode(item)),
-      threshold: 3n,
+      signers: [schnorr.getPublicKey(secret(9))],
+      threshold: 1n,
       domain: new TextEncoder().encode("BTCUSD-FIX"),
       keyLag: 60n,
-      readFee: 100n,
+      readFee: 1_000n,
       adminPk: schnorr.getPublicKey(secret(9)),
       exit: EXIT,
       serverKey: ctx.serverKey,
@@ -197,25 +185,21 @@ test("status, admin order, deploy change, and a print that becomes a fixing", as
     });
     assert.equal(status.json.address, bound.address);
 
-    assert.equal((await call(ctx.oracle.url, "/api/prints", { ...earlyPrint, extra: 1 })).status, 400);
-    assert.equal((await call(ctx.oracle.url, "/api/prints", { ...earlyPrint, time: 1_700_000_000 + 120 })).status, 400);
-    assert.equal((await call(ctx.oracle.url, "/api/prints", { ...earlyPrint, pubkey: "00".repeat(32) })).status, 400);
-    const bad = { ...earlyPrint, sig: "11".repeat(64) };
-    assert.equal((await call(ctx.oracle.url, "/api/prints", bad)).status, 400);
-    const huge = await fetch(ctx.oracle.url + "/api/prints", { method: "POST", body: "x".repeat(5000), headers: { "content-type": "application/json" } });
-    assert.equal(huge.status, 413);
-
     const expiry = 1_700_000_000n;
-    const prints = [
-      ...[0, 1, 2].map((i) => signed(11 + i, 10_000_000n, expiry - 1780n + BigInt(i))),
-      ...[0, 1, 2].map((i) => signed(12 + i, 10_000_000n, expiry - 940n + BigInt(i))),
-      ...[0, 1, 2].map((i) => signed(13 + i, 10_000_000n, expiry + 10n + BigInt(i))),
-    ];
-    for (const print of prints) assert.equal((await call(ctx.oracle.url, "/api/prints", print)).status, 200);
-    assert.equal((await call(ctx.oracle.url, "/api/prints", prints[0]!)).status, 409);
+    const huge = await fetch(ctx.oracle.url + "/api/samples", { method: "POST", body: "x".repeat(5000), headers: { "content-type": "application/json", authorization: "Bearer test-token" } });
+    assert.equal(huge.status, 413);
+    assert.equal((await call(ctx.oracle.url, "/api/samples", { price: "10000000", extra: 1 }, "test-token")).status, 400);
+    const recorded = await call(ctx.oracle.url, "/api/samples", { price: "10000000" }, "test-token");
+    assert.equal(recorded.status, 200, JSON.stringify(recorded.json));
+    const againSample = await call(ctx.oracle.url, "/api/samples", { price: "10000000" }, "test-token");
+    assert.equal(againSample.status, 200);
+    assert.equal(againSample.json.duplicate, true);
+    const historyRes = await fetch(ctx.oracle.url + `/api/prices?from=${expiry}&to=${expiry + 60n}`);
+    const history = (await historyRes.json()) as { samples: unknown[] };
+    assert.equal(history.samples.length, 1);
 
     const disabled = await boot({ adminToken: undefined, now: () => Number(expiry + 60n) });
-    assert.equal((await call(disabled.oracle.url, "/api/keys", { pubkeys }, "test-token")).status, 404);
+    assert.equal((await call(disabled.oracle.url, "/api/samples", { price: "1" }, "test-token")).status, 404);
     await disabled.close();
 
     assert.equal((await call(ctx.oracle.url, "/api/publish", { expiry: Number(expiry) })).status, 401);
@@ -234,20 +218,27 @@ test("status, admin order, deploy change, and a print that becomes a fixing", as
 
     const published = await call(ctx.oracle.url, "/api/publish", { expiry: Number(expiry) }, "test-token");
     assert.equal(published.status, 200, JSON.stringify(published.json));
-    assert.equal(published.json.twap, "10000000");
+    assert.equal(published.json.price, "10000000");
     assert.equal(ctx.submitted.length, 1);
     const again = await call(ctx.oracle.url, "/api/publish", { expiry: Number(expiry) }, "test-token");
     assert.equal(again.status, 409);
     const after = await call(ctx.oracle.url, "/api/status");
-    assert.deepEqual(after.json.fixings, [{ expiry: Number(expiry), twap: "10000000", txid: published.json.txid }]);
+    assert.deepEqual(after.json.fixings, [{ expiry: Number(expiry), price: "10000000", txid: published.json.txid }]);
     const tx = Transaction.fromPSBT(base64.decode(ctx.submitted[0]!));
     const next = nextState(genesisState(), expiry, priceValue(10_000_000n));
     assert.deepEqual(statePacketOf(tx), next);
     const witness = Extension.fromTx(tx).getEmulatorPacket()!.entries[0]!.witness!;
-    assert.equal(witness[0], 38);
-    assert.equal(witness[1], 64);
-    const op = publishDigest(beaconIdOf(asset.AssetId.create("ee".repeat(32), 0)).txid, next);
-    assert.equal(schnorr.verify(witness.subarray(2, 66), op, schnorr.getPublicKey(secret(9))), true);
+    const digest = sampleDigest(beaconIdOf(asset.AssetId.create("ee".repeat(32), 0)).txid, 10_000_000n, expiry + 60n);
+    const pubkey = schnorr.getPublicKey(secret(9));
+    let found = false;
+    for (let i = 0; i + 64 <= witness.length; i += 1) {
+      try {
+        if (schnorr.verify(witness.subarray(i, i + 64), digest, pubkey)) found = true;
+      } catch {
+        // not a signature at this offset
+      }
+    }
+    assert.equal(found, true, bytesToHex(witness));
   } finally {
     await ctx.close();
   }
@@ -257,8 +248,6 @@ test("issue refuses an empty wallet with fund wallet", async () => {
   const ctx = await boot();
   ctx.wallet.getVtxos = async () => [];
   try {
-    const pubkeys = [11, 12, 13, 14, 15].map((byte) => hex.encode(schnorr.getPublicKey(secret(byte))));
-    assert.equal((await call(ctx.oracle.url, "/api/keys", { pubkeys }, "test-token")).status, 200);
     const status = await call(ctx.oracle.url, "/api/status");
     assert.equal(status.json.balance, "0");
     const issued = await call(ctx.oracle.url, "/api/issue", {}, "test-token");

@@ -376,44 +376,45 @@ test("a filled vault settles from the beacon state the oracle published", async 
     threshold: 3n,
     domain,
     keyLag: 60n,
-    readFee: 100n,
+    readFee: 1_000n,
     adminPk,
     exit: EXIT,
     serverKey,
     emulatorKey,
   });
   const feeState = coinTx([{ script: feeBeacon.pkScript, amount: 330n }], [statePacket(fixed)]);
-  const feeCoin = coinTx([{ script: env.feeScript.pkScript, amount: 100n }]);
-  coins.push({
+  coins[1] = {
     txid: feeState.id,
     vout: 0,
     value: 330,
     script: bytesToHex(feeBeacon.pkScript),
     assets: [{ assetId: assetId.toString(), amount: 1n }],
-  });
+  };
   prev.set(feeState.id, base64.encode(feeState.toPSBT()));
-  prev.set(feeCoin.id, base64.encode(feeCoin.toPSBT()));
   const priced = parseOracleBeacon({
     ...status,
     address: feeBeacon.address,
-    args: { ...status.args, readFee: 100 },
+    args: { ...status.args, readFee: 1_000 },
   }, DISPLAY, 0);
   assert.equal(priced.ok, true);
   if (!priced.ok) return;
-  const short = await settleQuote({ ...env, now: EXPIRY, beacon: priced.beacon, feeCoins: [] });
-  assert.deepEqual(short, { result: "short" });
+  const feeTerms = { ...env.terms, readFee: 1_000n };
+  const feeVault = bytesToHex(bindContracts(feeTerms).vaultPkScript);
+  const vaultScript = coins[0]!.script;
+  coins[0] = { ...coins[0]!, script: feeVault };
   const paid = await settleQuote({
     ...env,
     now: EXPIRY,
+    terms: feeTerms,
     beacon: priced.beacon,
-    feeCoins: [{ txid: feeCoin.id, vout: 0, value: 100 }],
   });
   assert.equal(paid.result, "settled");
   if (paid.result !== "settled") return;
-  assert.deepEqual(paid.fee, { txid: feeCoin.id, vout: 0 });
   const withFee = Transaction.fromPSBT(base64.decode(submitted.at(-1)!));
-  assert.equal(withFee.inputsLength, 3);
-  assert.equal(withFee.getOutput(0)?.amount, 430n);
+  assert.equal(withFee.inputsLength, 2);
+  assert.equal(withFee.getOutput(0)?.amount, 1_330n);
+  assert.equal(withFee.getOutput(2)?.amount, 18_400n);
+  coins[0] = { ...coins[0]!, script: vaultScript };
 
   coins[0] = { ...coins[0]!, isSpent: true, spentBy: "ee".repeat(32), arkTxId: "ff".repeat(32) };
   const gone = await settleQuote({ ...env, now: EXPIRY });

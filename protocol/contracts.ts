@@ -19,6 +19,8 @@ export type Terms = {
   holderPk: Uint8Array;
   /** Identity asset of the AttestationBeacon that settle reads. */
   beacon: BeaconId;
+  /** Sats this settle leaves on the beacon. Must match the beacon's readFee. */
+  readFee?: bigint;
   serverKey: Uint8Array;
   emulatorKey: Uint8Array;
 };
@@ -107,6 +109,7 @@ export function bindContracts(terms: Terms): Bound {
     expiry: terms.expiry,
     beaconTxid: terms.beacon.txid,
     beaconGidx: terms.beacon.gidx,
+    readFee: terms.readFee ?? 0n,
     exit: terms.exit,
     server: serverKey,
   };

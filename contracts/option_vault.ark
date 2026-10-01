@@ -3,11 +3,11 @@ pragma arkade ^0.1.0;
 // Cash-settled covered call (kind 0) and limited put (kind 1). The settlement
 // price comes from an AttestationBeacon spent in the same transaction.
 //
-// The vault commits to the beacon's identity asset (beaconTxid, beaconGidx),
-// not to the beacon script or the committee keys. Settle spends this coin as
-// input 0 and the beacon as input 1. A third input may pay the beacon's read
-// fee. Output 0 is the beacon's continuation, enforced by the beacon's `read`
-// leaf. Payouts start at output 1.
+// The vault commits to the beacon's identity asset (beaconTxid, beaconGidx)
+// and to readFee. Settle spends this coin as input 0 and the beacon as input 1.
+// Output 0 is the beacon's continuation. readFee sats of this coin are added
+// to that output. Payouts start at output 1 and sum to the locked value minus
+// readFee.
 //
 // The settlement price is the newest fixing whose key equals `expiry` in the
 // beacon state packet the beacon coin was created with: the first 8 bytes of
@@ -30,6 +30,7 @@ contract OptionVault(
   int expiry,
   bytes32 beaconTxid,
   int beaconGidx,
+  int readFee,
   int exit
 ) {
   const int DUST = 330;
@@ -84,20 +85,27 @@ contract OptionVault(
 
     int locked = tx.input.current.value;
     require(locked >= collateral, "underfunded");
-    int writerAmt = locked - ph;
+    require(readFee >= 0, "fee");
+    require(locked >= readFee, "fee");
+    int pot = locked - readFee;
+    int phPay = ph;
+    if (phPay > pot) {
+      phPay = pot;
+    }
+    int writerAmt = pot - phPay;
 
-    if (ph > DUST && writerAmt > DUST) {
-      require(tx.outputs[1].value >= ph, "holder short");
+    if (phPay > DUST && writerAmt > DUST) {
+      require(tx.outputs[1].value >= phPay, "holder short");
       require(tx.outputs[1].scriptPubKey == holderScript, "holder script");
       require(tx.outputs[2].value >= writerAmt, "writer short");
       require(tx.outputs[2].scriptPubKey == writerScript, "writer script");
     }
-    if (ph <= DUST) {
-      require(tx.outputs[1].value >= locked, "writer short");
+    if (phPay <= DUST) {
+      require(tx.outputs[1].value >= pot, "writer short");
       require(tx.outputs[1].scriptPubKey == writerScript, "writer script");
     }
-    if (writerAmt <= DUST && ph > DUST) {
-      require(tx.outputs[1].value >= locked, "holder short");
+    if (writerAmt <= DUST && phPay > DUST) {
+      require(tx.outputs[1].value >= pot, "holder short");
       require(tx.outputs[1].scriptPubKey == holderScript, "holder script");
     }
   }

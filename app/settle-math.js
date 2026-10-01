@@ -72,15 +72,17 @@ export function writerPayoff(kind, settlement, strike, collateral) {
   return collateral - holderPayoff(kind, settlement, strike, collateral);
 }
 
-// Mirrors the vault's output rules. A holder leg at or below dust pays the
-// whole coin to the writer, including when the writer leg is dust too.
-export function settlementOutputs(ph, locked) {
-  const writerAmt = locked - ph;
-  if (ph > DUST && writerAmt > DUST) {
-    return { mode: "split", holder: ph, writer: writerAmt };
+// Mirrors the vault's output rules. readFee leaves the vault and is added to
+// the beacon. A holder leg at or below dust pays the rest to the writer.
+export function settlementOutputs(ph, locked, readFee = 0n) {
+  const pot = locked - readFee;
+  const phPay = ph > pot ? pot : ph;
+  const writerAmt = pot - phPay;
+  if (phPay > DUST && writerAmt > DUST) {
+    return { mode: "split", holder: phPay, writer: writerAmt };
   }
-  if (ph <= DUST) return { mode: "writer", holder: 0n, writer: locked };
-  return { mode: "holder", holder: locked, writer: 0n };
+  if (phPay <= DUST) return { mode: "writer", holder: 0n, writer: pot };
+  return { mode: "holder", holder: pot, writer: 0n };
 }
 
 export function oraclePreimage(price, time) {

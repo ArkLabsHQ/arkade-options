@@ -11,28 +11,20 @@
   <h1>Oracle</h1>
   <section id="status"></section>
   <section>
-    <h2>Oracle pubkeys</h2>
-    <ol id="keys"></ol>
-  </section>
-  <section>
-    <p class="muted">Admin token stays in this field. It is sent only as a bearer on keys, issue, recover, and deploy.</p>
+    <p class="muted">One key signs prices. It stays on the server. The admin token is sent only as a bearer.</p>
     <label>Admin token <input id="token" type="password" autocomplete="off"></label>
-    <label>Five x-only pubkeys, one per line <textarea id="pubkeys" rows="5"></textarea></label>
-    <button id="save" type="button">Save keys</button>
     <button id="issue" type="button">Issue</button>
     <button id="recover" type="button">Recover pending</button>
     <button id="deploy" type="button">Deploy</button>
     <p id="admin-error" class="err"></p>
   </section>
   <section>
-    <p class="muted">The oracle secret is cleared after signing and is not sent to the server.</p>
-    <form id="print">
+    <p class="muted">The oracle also samples BTCUSD on its own. This records one price at the current time.</p>
+    <form id="sample">
       <label>Price, USD cents <input id="price" inputmode="numeric"></label>
-      <label>Time, unix seconds <input id="time" inputmode="numeric"></label>
-      <label>Oracle secret <input id="secret" type="password" autocomplete="off"></label>
-      <button type="submit">Sign and submit print</button>
+      <button type="submit">Record price</button>
     </form>
-    <p id="print-error" class="err"></p>
+    <p id="sample-error" class="err"></p>
   </section>
 </main>
 <script type="module" src="/page.js"></script>

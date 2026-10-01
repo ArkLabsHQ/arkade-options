@@ -15,7 +15,7 @@ import {
 } from "@arkade-os/sdk";
 
 import { beaconIdOf } from "../../protocol/beacon-id.ts";
-import { ARK_URL, EMULATOR_URL, EXIT } from "../../protocol/constants.ts";
+import { ARK_URL, BEACON_READ_FEE, EMULATOR_URL, EXIT } from "../../protocol/constants.ts";
 import { assertServerExit, bindContracts, payoutVtxo, type Terms } from "../../protocol/contracts.ts";
 import { bytesToHex, hexToBytes, xOnly } from "../../protocol/hex.ts";
 import { intentProgram, vaultProgram } from "./program.ts";
@@ -250,6 +250,7 @@ async function build(req: FundRequest) {
     payoutKey,
     holderPk,
     beacon: beaconIdOf(asset.AssetId.create(beaconTxidHex, beaconGidx)),
+    readFee: BEACON_READ_FEE,
     serverKey,
     emulatorKey,
   };

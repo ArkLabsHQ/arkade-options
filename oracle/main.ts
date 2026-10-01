@@ -11,11 +11,17 @@ import {
 import { ARK_URL, EMULATOR_URL } from "../protocol/constants.ts";
 import { bytesToHex, hexToBytes } from "../protocol/hex.ts";
 import { openSqliteStorage } from "../protocol/sqlite-storage.ts";
+import { btcUsdCents } from "./price.ts";
 import { createOracle, type OracleWallet } from "./service.ts";
 
 /**
- *   ORACLE_KEY     optional 32-byte hex. Never generated. Admin pubkey and publish key.
- *   ORACLE_ADMIN   optional bearer. Unset disables /api/keys, /api/issue, /api/deploy, /api/recover, and /api/publish.
+ *   ORACLE_KEY      optional 32-byte hex. Never generated. Wallet, issue, deploy, and exit.
+ *   ORACLE_SIGNERS  optional comma-separated 1 to 5 secrets that sign prices.
+ *                   Defaults to ORACLE_KEY, so a test deploy can use one key.
+ *   ORACLE_THRESHOLD how many of those keys must sign. Default 1.
+ *   ORACLE_ADMIN    optional bearer. Unset disables /api/samples, /api/issue, /api/deploy, /api/recover, and /api/publish.
+ *   SAMPLE_MS       how often to store a BTCUSD sample. Default 60000. 0 disables the sampler.
+ *                   Samples older than 24 hours are dropped.
  *   ARK_URL        default https://mutinynet.arkade.sh
  *   EMULATOR_URL   default Mutinynet emulator
  *   DATA_DIR       oracle.json + arkade.sqlite. Default ./data
@@ -31,12 +37,24 @@ function optionalKey(name: string): Uint8Array | undefined {
 }
 
 const oracleKey = optionalKey("ORACLE_KEY");
+const signerKeys = (process.env.ORACLE_SIGNERS?.trim() || "")
+  .split(/[\s,]+/)
+  .filter(Boolean)
+  .map((raw) => {
+    if (!/^[0-9a-fA-F]{64}$/.test(raw)) throw new Error("ORACLE_SIGNERS entries must be 32 bytes");
+    return hexToBytes(raw);
+  });
+if (signerKeys.length > 5) throw new Error("ORACLE_SIGNERS accepts 1 to 5 keys");
+const threshold = Number(process.env.ORACLE_THRESHOLD ?? "1");
+if (!Number.isInteger(threshold) || threshold < 1) throw new Error("ORACLE_THRESHOLD");
 const adminToken = process.env.ORACLE_ADMIN?.trim() || undefined;
 const dataDir = process.env.DATA_DIR?.trim() || "data";
 const port = Number(process.env.PORT ?? "8789");
+const sampleEveryMs = Number(process.env.SAMPLE_MS ?? "60000");
 const arkUrl = process.env.ARK_URL?.trim() || ARK_URL;
 const emulatorUrl = process.env.EMULATOR_URL?.trim() || EMULATOR_URL;
 if (!Number.isInteger(port) || port < 0) throw new Error("PORT");
+if (!Number.isInteger(sampleEveryMs) || sampleEveryMs < 0) throw new Error("SAMPLE_MS");
 if (typeof EventSource === "undefined") {
   throw new Error("Contract events need Node's EventSource. Start the oracle with --experimental-eventsource.");
 }
@@ -79,10 +97,14 @@ const oracle = await createOracle({
   host: process.env.HOST?.trim() || undefined,
   adminToken,
   oracleKey,
+  signerKeys: signerKeys.length ? signerKeys : undefined,
+  threshold,
   emulatorKey: hexToBytes(defaultEmulatorPubkey(networks.mutinynet)),
   wallet: wallet as unknown as OracleWallet | undefined,
   indexer: wallet?.indexerProvider,
   emulator: new RestEmulatorProvider(emulatorUrl),
+  quote: () => btcUsdCents(AbortSignal.timeout(10_000)),
+  sampleEveryMs: sampleEveryMs || undefined,
 });
 
 console.log(`oracle http://127.0.0.1:${oracle.port}/`);

@@ -8,6 +8,8 @@ export const POSITION_TAG = "arkade-option";
 // exit leaf is below this, and BIP68 seconds must be a multiple of 512.
 export const EXIT = 2048n;
 export const DUST_SATS = 330n;
+/** Sats a beacon read adds. Above the 330-sat dust line. The vault pays this out of its collateral. */
+export const BEACON_READ_FEE = 1_000n;
 export const QUOTE_TTL_S = 30;
 export const LOCK_S = 180;
 export const ARK_URL = "https://mutinynet.arkade.sh";

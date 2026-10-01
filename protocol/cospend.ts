@@ -140,26 +140,20 @@ export type BeaconCoin = {
 
 /**
  * Settle a beacon vault: the vault at input 0, the beacon at input 1 through
- * `read`. Output 0 continues the beacon, plus `readFee` when that fee is set.
- * A fee of 0 needs no extra coin.
+ * `read`. Output 0 continues the beacon plus `readFee`. The payouts are the
+ * vault's locked value minus that fee. No extra coin.
  */
 export function buildSettle(input: {
   vault: { script: arkade.ArkadeProgramScript; coin: Coin };
   beacon: BeaconCoin;
   readFee: bigint;
   payouts: { script: Uint8Array; amount: bigint }[];
-  fee?: SignedSpend;
   checkpoint: CSVMultisigTapscript.Type;
 }): Built {
   const spends: Spend[] = [
     { script: input.vault.script, fn: "settle", coin: input.vault.coin },
     { script: input.beacon.script, fn: "read", callArgs: { selfIndex: 1n }, coin: input.beacon.coin },
   ];
-  if (input.readFee > 0n) {
-    if (!input.fee) throw new Error("a fee coin is required when readFee > 0");
-    if (BigInt(input.fee.coin.value) !== input.readFee) throw new Error("fee coin must equal readFee");
-    spends.push(input.fee);
-  }
   const outputs = [
     { script: input.beacon.script.pkScript, amount: BigInt(input.beacon.coin.value) + input.readFee },
     ...input.payouts,
@@ -167,37 +161,33 @@ export function buildSettle(input: {
   return build(spends, outputs, [unitTransfer(input.beacon.id, 1, 0), statePacket(input.beacon.state)], input.checkpoint);
 }
 
-/** One slice of three oracle prints, in witness order `price`, `time`, `who`, `sig`. */
-export type AttestSlice = {
-  price: readonly bigint[];
-  time: readonly bigint[];
-  who: readonly bigint[];
-  sig: readonly Uint8Array[];
-};
-
 /** Publish a fixing: the beacon at input 0, continued at output 0 with the next state. */
 export function buildAttest(input: {
   beacon: BeaconCoin;
   key: bigint;
-  /** Open, mid, close. Flattened as `price0.0` .. `sig2.2`. */
-  slices: readonly [AttestSlice, AttestSlice, AttestSlice];
-  opSig: Uint8Array;
+  price: bigint;
+  time: bigint;
+  /** Five slots. Only the first `signersN` are checked. The rest can be zeros. */
+  sigs: readonly Uint8Array[];
   next: Uint8Array;
   checkpoint: CSVMultisigTapscript.Type;
 }): Built {
-  const callArgs: Record<string, bigint | Uint8Array> = { key: input.key, opSig: input.opSig };
-  const fields = ["price", "time", "who", "sig"] as const;
-  input.slices.forEach((slice, index) => {
-    for (const field of fields) {
-      const values = slice[field];
-      if (values.length !== 3) throw new Error(`${field}${index} needs 3`);
-      values.forEach((value, item) => {
-        callArgs[`${field}${index}.${item}`] = value;
-      });
-    }
+  if (input.sigs.length !== 5) throw new Error("5 signatures");
+  const callArgs: Record<string, bigint | Uint8Array> = {
+    key: input.key,
+    price: input.price,
+    time: input.time,
+  };
+  input.sigs.forEach((sig, index) => {
+    callArgs[`sigs.${index}`] = sig;
   });
   return build(
-    [{ script: input.beacon.script, fn: "attest", callArgs, coin: input.beacon.coin }],
+    [{
+      script: input.beacon.script,
+      fn: "attest",
+      callArgs,
+      coin: input.beacon.coin,
+    }],
     [{ script: input.beacon.script.pkScript, amount: BigInt(input.beacon.coin.value) }],
     [unitTransfer(input.beacon.id, 0, 0), statePacket(input.next)],
     input.checkpoint,

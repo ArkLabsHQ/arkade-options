@@ -79,7 +79,7 @@ export function duePositions<T extends { id: string; expiry: number }>(
     .sort((a, b) => a.expiry - b.expiry || a.id.localeCompare(b.id));
 }
 
-export function termsFor(position: WatchPosition, serverKey: Uint8Array, emulatorKey: Uint8Array): Terms {
+export function termsFor(position: WatchPosition, serverKey: Uint8Array, emulatorKey: Uint8Array, readFee = 0n): Terms {
   return {
     kind: position.kind,
     strike: position.strike,
@@ -92,6 +92,7 @@ export function termsFor(position: WatchPosition, serverKey: Uint8Array, emulato
     payoutKey: position.payoutKey,
     holderPk: position.holderPk,
     beacon: beaconIdOf(asset.AssetId.create(position.beaconTxid, position.beaconGidx)),
+    readFee,
     serverKey,
     emulatorKey,
   };
