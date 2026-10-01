@@ -167,15 +167,25 @@ export function buildAttest(input: {
   key: bigint;
   price: bigint;
   time: bigint;
-  sig: Uint8Array;
+  /** Five slots. Only the first `signersN` are checked. The rest can be zeros. */
+  sigs: readonly Uint8Array[];
   next: Uint8Array;
   checkpoint: CSVMultisigTapscript.Type;
 }): Built {
+  if (input.sigs.length !== 5) throw new Error("5 signatures");
+  const callArgs: Record<string, bigint | Uint8Array> = {
+    key: input.key,
+    price: input.price,
+    time: input.time,
+  };
+  input.sigs.forEach((sig, index) => {
+    callArgs[`sigs.${index}`] = sig;
+  });
   return build(
     [{
       script: input.beacon.script,
       fn: "attest",
-      callArgs: { key: input.key, price: input.price, time: input.time, sig: input.sig },
+      callArgs,
       coin: input.beacon.coin,
     }],
     [{ script: input.beacon.script.pkScript, amount: BigInt(input.beacon.coin.value) }],

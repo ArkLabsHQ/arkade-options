@@ -46,7 +46,7 @@ Oracle `balance` is spendable sats on the admin wallet. The beacon coin itself i
 
 Fund the desk at its deposit address. Send enough for premiums. The seller's collateral does not come from this float. `balance` stays `0` until the coins arrive. The desk refuses a quote it cannot pay and logs `float short`.
 
-The oracle holds one key, `ORACLE_KEY`. Every minute it stores a signed BTCUSD sample. `GET /api/prices?from=<unix>&to=<unix>` returns that history. A fixing is the sample inside `[expiry, expiry + 60]`, or, if that minute was missed, the latest sample at or before `expiry + 60`. Publish after `expiry + 60`:
+The aggregator holds one to five oracle keys (`ORACLE_SIGNERS`, or just `ORACLE_KEY` when testing with one). Every minute it signs a BTCUSD sample with each of them and keeps those signatures for 24 hours. `GET /api/prices?from=<unix>&to=<unix>` returns that history, signatures included, so anyone can use them. A fixing is the sample inside `[expiry, expiry + 60]`, or, if that minute was missed, the latest sample at or before `expiry + 60`. The aggregator writes that fixing in one beacon transaction after `expiry + 60`. Reading the beacon still costs 100 sats, paid by the vault:
 
 ```bash
 curl -k -X POST -H "Authorization: Bearer $ORACLE_ADMIN" -H "content-type: application/json" \

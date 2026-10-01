@@ -14,6 +14,7 @@ import { EXIT } from "../protocol/constants.ts";
 import { statePacket } from "../protocol/cospend.ts";
 import { bytesToHex } from "../protocol/hex.ts";
 import { createOracle, type HeldCoin, type OracleDeps, type OracleWallet } from "./service.ts";
+import { pruneSamples, SAMPLE_HISTORY_S } from "./store.ts";
 
 const CHECKPOINT_HEX = "03080040b27520dfcaec558c7e78cf3e38b898ba8a43cfb5727266bae32c5c5b3aeb32c558aa0bac";
 
@@ -114,6 +115,15 @@ async function call(url: string, pathName: string, body?: unknown, token?: strin
   return { status: res.status, headers: res.headers, json: text ? JSON.parse(text) as Record<string, unknown> : {}, text };
 }
 
+test("price history keeps one day", () => {
+  const now = 2_000_000;
+  const kept = pruneSamples([
+    { price: "1", time: now - SAMPLE_HISTORY_S - 1, sigs: ["aa"] },
+    { price: "2", time: now - SAMPLE_HISTORY_S, sigs: ["bb"] },
+  ], now);
+  assert.deepEqual(kept.map((sample) => sample.price), ["2"]);
+});
+
 test("status, admin order, deploy change, and a print that becomes a fixing", async () => {
   const ctx = await boot();
   try {
@@ -163,6 +173,8 @@ test("status, admin order, deploy change, and a print that becomes a fixing", as
     assert.equal((status.json.args as { ctrlTxid: string }).ctrlTxid, bytesToHex(beaconIdOf(asset.AssetId.create("ee".repeat(32), 0)).txid));
     const bound = bindBeacon({
       id: beaconIdOf(asset.AssetId.create("ee".repeat(32), 0)),
+      signers: [schnorr.getPublicKey(secret(9))],
+      threshold: 1n,
       domain: new TextEncoder().encode("BTCUSD-FIX"),
       keyLag: 60n,
       readFee: 100n,

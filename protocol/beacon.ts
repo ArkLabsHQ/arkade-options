@@ -5,7 +5,7 @@ import { arkade, asset, Extension, Transaction, UnknownPacket } from "@arkade-os
 import { beaconIdOf, type BeaconId } from "./beacon-id.ts";
 import { DUST_SATS, EXIT } from "./constants.ts";
 import { addressOf } from "./contracts.ts";
-import { xOnly } from "./hex.ts";
+import { bytesToHex, xOnly } from "./hex.ts";
 import { beaconProgram } from "./programs.ts";
 
 export { beaconIdOf, type BeaconId };
@@ -122,8 +122,14 @@ export function sampleDigest(ctrlTxid: Uint8Array, price: bigint, time: bigint):
   return sha256(ctrlTxid, TICKER, num2bin(price, 8), num2bin(time, 8));
 }
 
+export const SIGNER_SLOTS = 5;
+
 export type BeaconArgs = {
   id: BeaconId;
+  /** One to five oracle keys. Unused slots are padded inside the script binding. */
+  signers: readonly Uint8Array[];
+  /** How many of `signers` must sign a sample. At least 1, at most the signer count. */
+  threshold: bigint;
   domain: Uint8Array;
   keyLag: bigint;
   /** Sats a read adds to the beacon. The vault being settled pays this. */
@@ -143,11 +149,19 @@ export type Bound = {
 };
 
 export function bindBeacon(input: BeaconArgs): Bound {
+  if (input.signers.length < 1 || input.signers.length > SIGNER_SLOTS) throw new Error("1 to 5 signers");
+  if (input.threshold < 1n || input.threshold > BigInt(input.signers.length)) throw new Error("threshold");
   if (input.emulatorKey.length !== 33) throw new Error("emulator key must be 33 bytes");
+  const signers = input.signers.map((key) => xOnly(key));
+  if (new Set(signers.map((key) => bytesToHex(key))).size !== signers.length) throw new Error("duplicate signer");
+  const padded = [...signers];
+  while (padded.length < SIGNER_SLOTS) padded.push(padded[0]!);
   const serverKey = xOnly(input.serverKey);
   const args: Record<string, bigint | Uint8Array> = {
     ctrlTxid: input.id.txid,
     ctrlGidx: input.id.gidx,
+    signersN: BigInt(signers.length),
+    threshold: input.threshold,
     domain: input.domain,
     keyLag: input.keyLag,
     readFee: input.readFee,
@@ -155,6 +169,9 @@ export function bindBeacon(input: BeaconArgs): Bound {
     exit: input.exit ?? EXIT,
     server: serverKey,
   };
+  padded.forEach((key, index) => {
+    args[`signers.${index}`] = key;
+  });
   const script = new arkade.ArkadeProgramScript(beaconProgram(), args, {
     serverKey,
     emulatorKey: input.emulatorKey,

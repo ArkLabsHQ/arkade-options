@@ -372,6 +372,8 @@ test("a filled vault settles from the beacon state the oracle published", async 
 
   const feeBeacon = bindBeacon({
     id,
+    signers,
+    threshold: 3n,
     domain,
     keyLag: 60n,
     readFee: 100n,

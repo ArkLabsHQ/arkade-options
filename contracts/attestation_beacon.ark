@@ -3,12 +3,15 @@ pragma arkade ^0.1.0;
 // AttestationBeacon: a price registry that other covenants read by spending
 // it in the same transaction.
 //
-// One key, adminPk, signs each sample and is the only key that writes a slot
-// or migrates the coin. A sample is
+// One to five oracle keys sign each sample. `signersN` is how many of the five
+// slots are real, and `threshold` is how many of those must sign (at least 1).
+// A sample is
 // sha256(ctrlTxid || 0x425443555344 || num2bin(price, 8) || num2bin(time, 8)).
-// The oracle stores those samples and can publish one after the expiry.
+// Anyone who has those signatures can write the slot. The aggregator does that
+// in one transaction. Reading the coin still adds readFee, paid by the vault.
 // The sample time must be at or before key + keyLag. The clock must have
 // reached key + keyLag, so a fixing cannot land before its close.
+// adminPk migrates the coin and takes the unilateral exit. It does not sign prices.
 //
 // State is the extension packet of type STATE, 329 bytes:
 //   0        version, 0x01
@@ -22,6 +25,9 @@ pragma arkade ^0.1.0;
 contract AttestationBeacon(
   bytes32 ctrlTxid,
   int ctrlGidx,
+  pubkey[5] signers,
+  int signersN,
+  int threshold,
   bytes domain,
   int keyLag,
   int readFee,
@@ -35,6 +41,31 @@ contract AttestationBeacon(
   const int HISTORY_AT = 49;
   const int HISTORY = 280;
   const int PRICE_MAX = 1000000000;
+
+  private function committee() {
+    require(signersN >= 1, "signers");
+    require(signersN <= 5, "signers");
+    require(threshold >= 1, "threshold");
+    require(threshold <= signersN, "threshold");
+    if (signersN > 1) {
+      require(signers[0] != signers[1], "duplicate signer");
+    }
+    if (signersN > 2) {
+      require(signers[0] != signers[2], "duplicate signer");
+      require(signers[1] != signers[2], "duplicate signer");
+    }
+    if (signersN > 3) {
+      require(signers[0] != signers[3], "duplicate signer");
+      require(signers[1] != signers[3], "duplicate signer");
+      require(signers[2] != signers[3], "duplicate signer");
+    }
+    if (signersN > 4) {
+      require(signers[0] != signers[4], "duplicate signer");
+      require(signers[1] != signers[4], "duplicate signer");
+      require(signers[2] != signers[4], "duplicate signer");
+      require(signers[3] != signers[4], "duplicate signer");
+    }
+  }
 
   private function continues(bytes state) {
     require(size(state) == SIZE, "state size");
@@ -50,7 +81,7 @@ contract AttestationBeacon(
     }
   }
 
-  function attest(int key, int price, int time, signature sig) {
+  function attest(int key, int price, int time, signature[5] sigs) {
     require(this.activeInputIndex == 0, "beacon is input 0");
     require(key > 1800, "key");
     if (keyLag >= 0) {
@@ -60,9 +91,18 @@ contract AttestationBeacon(
     require(price <= PRICE_MAX, "price cap");
     require(time > 0, "nonpositive time");
     require(time <= key + keyLag, "sample after close");
+    committee();
     let ticker = 0x425443555344;
     let msg = sha256(ctrlTxid + ticker + num2bin(price, 8) + num2bin(time, 8));
-    require(checkSigFromStack(sig, adminPk, msg), "oracle");
+    int valid = 0;
+    for (i, sig) in sigs {
+      if (i < signersN) {
+        if (checkSigFromStack(sig, signers[i], msg)) {
+          valid = valid + 1;
+        }
+      }
+    }
+    require(valid >= threshold, "quorum");
 
     bytes prev = tx.inputs[0].packet(STATE);
     bytes next = tx.packet(STATE);

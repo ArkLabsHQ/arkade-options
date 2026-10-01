@@ -247,8 +247,8 @@ test("a covered call locks, pays the writer, settles, and refunds a missed fill"
   assert.equal(split.writer, 19_400n);
   const beaconBound = bindBeacon({
     id: beacon,
-    signers: oraclePks,
-    threshold: 3n,
+    signers: [oraclePks[0]!],
+    threshold: 1n,
     domain: new TextEncoder().encode("BTCUSD-FIX"),
     keyLag: 0n,
     readFee: 0n,

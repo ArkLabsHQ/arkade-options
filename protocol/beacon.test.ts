@@ -75,6 +75,8 @@ async function buildFixture() {
   const id: BeaconId = beaconIdOf(assetId);
   const beacon = bindBeacon({
     id,
+    signers: [adminPk],
+    threshold: 1n,
     domain: FIXTURE.domain,
     keyLag: FIXTURE.keyLag,
     readFee: FIXTURE.readFee,
@@ -115,7 +117,7 @@ async function buildFixture() {
     key: FIXTURE.expiry,
     price: FIXTURE.price,
     time: FIXTURE.expiry,
-    sig: dummy,
+    sigs: [dummy, dummy, dummy, dummy, dummy],
     next: fixed,
     checkpoint,
   });
@@ -187,7 +189,7 @@ test("the beacon leaves check what the design says", () => {
   const count = (asm: readonly unknown[] | undefined, name: string) => (asm ?? []).filter((token) => token === name).length;
   const beacon = beaconProgram();
   const attest = beacon.functions.attest?.arkadeScript?.asm;
-  assert.equal(count(attest, "CHECKSIGFROMSTACK"), 1);
+  assert.equal(count(attest, "CHECKSIGFROMSTACK"), 5);
   assert.equal(count(attest, "INSPECTINPUTPACKET"), 1);
   assert.equal(count(attest, "INSPECTPACKET"), 1);
   assert.equal(count(attest, "CHECKTIME"), 1);
@@ -216,6 +218,8 @@ test("bindings are deterministic Mutinynet addresses and refuse a bad committee"
   const emulatorKey = await key(2).compressedPublicKey();
   const againBound = bindBeacon({
     id: built.vault.args.beaconTxid ? { txid: built.vault.args.beaconTxid as Uint8Array, gidx: 0n } : { txid: new Uint8Array(32), gidx: 0n },
+    signers: [await key(9).xOnlyPublicKey()],
+    threshold: 1n,
     domain: FIXTURE.domain,
     keyLag: 60n,
     readFee: 0n,
@@ -283,5 +287,5 @@ test("the settle transaction has the documented layout", async () => {
   assert.deepEqual(attestExt.getAssetPacket()!.groups[0]!.inputs.map((i) => i.input), [{ type: 1, vin: 0, amount: 1n }]);
   assert.equal(bytesToHex(attestExt.getPacketByType(STATE_TYPE)!.serialize()), bytesToHex(built.fixed));
   assert.ok((attestExt.getEmulatorPacket()!.entries[0]!.witness?.length ?? 0) > 64);
-  assert.deepEqual(built.beacon.script.functionByName("attest")!.def.arkadeScript?.witness, ["sig", "time", "price", "key"]);
+  assert.deepEqual(built.beacon.script.functionByName("attest")!.def.arkadeScript?.witness?.slice(0, 4), ["sigs.4", "sigs.3", "sigs.2", "sigs.1"]);
 });

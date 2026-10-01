@@ -7,21 +7,21 @@ import { fileURLToPath } from "node:url";
 import { asset, ArkAddress, SingleKey, Transaction, type CSVMultisigTapscript, type EmulatorProvider } from "@arkade-os/sdk";
 import { base64 } from "@scure/base";
 
-import { beaconIdOf, bindBeacon, decodeState, genesisOutputs, nextState, priceValue, sampleDigest, statePacketOf } from "../protocol/beacon.ts";
+import { beaconIdOf, bindBeacon, decodeState, genesisOutputs, nextState, priceValue, sampleDigest, SIGNER_SLOTS, statePacketOf } from "../protocol/beacon.ts";
 import { BEACON_READ_FEE, EXIT, PRICE_MAX } from "../protocol/constants.ts";
 import { buildAttest, submit } from "../protocol/cospend.ts";
-import { bytesToHex } from "../protocol/hex.ts";
-import { loadStore, saveStore, type StoredSample } from "./store.ts";
+import { bytesToHex, hexToBytes } from "../protocol/hex.ts";
+import { loadStore, pruneSamples, saveStore, type StoredSample } from "./store.ts";
 
 /**
- * One-key oracle. ORACLE_KEY stays in memory. It signs each BTCUSD sample and
- * publishes the stored sample for an expiry. The secret is never on a request.
+ * Testnet aggregator. It holds one to five oracle keys, signs each BTCUSD
+ * sample, and keeps a day of those signatures. Anyone can read them.
+ * Publish spends the beacon once, using the stored signatures.
  */
 
 const DOMAIN = new TextEncoder().encode("BTCUSD-FIX");
 const KEY_LAG = 60n;
 const READ_FEE = BEACON_READ_FEE;
-const SAMPLE_CAP = 20_000;
 const CSP = "default-src 'none'; script-src 'self'; connect-src 'self'; style-src 'self'; frame-ancestors 'none'";
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -71,6 +71,10 @@ export type OracleDeps = {
   host?: string;
   adminToken?: string;
   oracleKey?: Uint8Array;
+  /** Price-signing keys, one to five. Defaults to `oracleKey` alone. */
+  signerKeys?: readonly Uint8Array[];
+  /** How many of those keys must sign. Defaults to 1. */
+  threshold?: number;
   emulatorKey: Uint8Array;
   wallet?: OracleWallet;
   indexer?: OracleIndexer;
@@ -144,6 +148,17 @@ function whole(value: unknown, label: string): bigint {
 export async function createOracle(deps: OracleDeps) {
   if (deps.oracleKey && deps.oracleKey.length !== 32) throw new Error("ORACLE_KEY must be 32 bytes");
   if (deps.emulatorKey.length !== 33) throw new Error("emulator key must be 33 bytes");
+  const signerSecrets = deps.signerKeys?.length ? [...deps.signerKeys] : deps.oracleKey ? [deps.oracleKey] : [];
+  if (signerSecrets.length > SIGNER_SLOTS) throw new Error("1 to 5 signers");
+  for (const key of signerSecrets) {
+    if (key.length !== 32) throw new Error("signer key must be 32 bytes");
+  }
+  const threshold = deps.threshold ?? 1;
+  if (!Number.isInteger(threshold) || threshold < 1 || threshold > Math.max(signerSecrets.length, 1)) {
+    throw new Error("threshold");
+  }
+  const signerPubkeys = await Promise.all(signerSecrets.map(async (key) => await SingleKey.fromHex(bytesToHex(key)).xOnlyPublicKey()));
+  if (new Set(signerPubkeys.map((key) => bytesToHex(key))).size !== signerPubkeys.length) throw new Error("duplicate signer");
   const adminPk = deps.oracleKey ? await SingleKey.fromHex(bytesToHex(deps.oracleKey)).xOnlyPublicKey() : null;
   const store = await loadStore(deps.dataDir);
   let publishing = false;
@@ -157,8 +172,11 @@ export async function createOracle(deps: OracleDeps) {
   async function bound() {
     if (!store.assetId || !deps.wallet || !adminPk) return null;
     const id = asset.AssetId.fromString(store.assetId);
+    if (!signerPubkeys.length) return null;
     return bindBeacon({
       id: beaconIdOf(id),
+      signers: signerPubkeys,
+      threshold: BigInt(threshold),
       domain: DOMAIN,
       keyLag: KEY_LAG,
       readFee: READ_FEE,
@@ -188,8 +206,11 @@ export async function createOracle(deps: OracleDeps) {
       wallet: deps.wallet ? await deps.wallet.getAddress() : null,
       balance: balance == null ? null : balance.toString(),
       address: script?.address ?? null,
+      pubkeys: signerPubkeys.map((key) => bytesToHex(key)),
       args: {
         ctrlTxid: beacon ? bytesToHex(beacon.txid) : null,
+        signersN: signerPubkeys.length,
+        threshold,
         domain: bytesToHex(DOMAIN),
         keyLag: Number(KEY_LAG),
         readFee: Number(READ_FEE),
@@ -307,22 +328,31 @@ export async function createOracle(deps: OracleDeps) {
     return { txid: submitted.arkTxid, address: script.address };
   }
 
+  function keepRecent() {
+    store.samples = pruneSamples(store.samples, now());
+  }
+
   async function recordSample(price: bigint, stamp: number) {
-    if (!deps.oracleKey || !adminPk) throw new HttpError(400, "ORACLE_KEY is required");
+    if (!signerSecrets.length || !adminPk) throw new HttpError(400, "ORACLE_KEY is required");
     if (!store.assetId) throw new HttpError(409, "not issued");
     if (price <= 0n || price > PRICE_MAX) throw new HttpError(400, "price");
     if (!Number.isSafeInteger(stamp) || stamp <= 0) throw new HttpError(400, "time");
     if (stamp > now()) throw new HttpError(400, "future timestamp");
+    keepRecent();
     if (store.samples.some((sample) => sample.time === stamp)) return { ok: true, time: stamp, price: price.toString(), duplicate: true };
     const id = beaconIdOf(asset.AssetId.fromString(store.assetId));
-    const sig = bytesToHex(await SingleKey.fromHex(bytesToHex(deps.oracleKey)).signSchnorrDeterministic(sampleDigest(id.txid, price, BigInt(stamp))));
-    store.samples.push({ price: price.toString(), time: stamp, sig });
-    if (store.samples.length > SAMPLE_CAP) store.samples.splice(0, store.samples.length - SAMPLE_CAP);
+    const digest = sampleDigest(id.txid, price, BigInt(stamp));
+    const sigs: string[] = [];
+    for (const key of signerSecrets) {
+      sigs.push(bytesToHex(await SingleKey.fromHex(bytesToHex(key)).signSchnorrDeterministic(digest)));
+    }
+    store.samples.push({ price: price.toString(), time: stamp, sigs });
     await save();
-    return { ok: true, time: stamp, price: price.toString() };
+    return { ok: true, time: stamp, price: price.toString(), sigs };
   }
 
   function chooseSample(expiry: number): StoredSample | null {
+    keepRecent();
     const hi = expiry + Number(KEY_LAG);
     const close = store.samples.filter((sample) => sample.time >= expiry && sample.time <= hi);
     const pool = close.length > 0 ? close : store.samples.filter((sample) => sample.time > 0 && sample.time <= hi);
@@ -331,6 +361,7 @@ export async function createOracle(deps: OracleDeps) {
   }
 
   function pricePage(query: URLSearchParams) {
+    keepRecent();
     const from = Number(query.get("from") ?? "0");
     const to = Number(query.get("to") ?? String(now()));
     const limit = Math.min(200, Math.max(1, Number(query.get("limit") ?? "50") || 50));
@@ -366,10 +397,13 @@ export async function createOracle(deps: OracleDeps) {
       if (!prev) throw new HttpError(400, "creating tx missing");
       const state = statePacketOf(prev);
       if (decodeState(state).slots.some((slot) => slot.key === expiry)) throw new HttpError(409, "already a fixing");
+      if (sample.sigs.length < threshold) throw new HttpError(400, "quorum");
       const price = BigInt(sample.price);
       const time = BigInt(sample.time);
-      const id = beaconIdOf(asset.AssetId.fromString(store.assetId));
-      const sig = await SingleKey.fromHex(bytesToHex(deps.oracleKey)).signSchnorrDeterministic(sampleDigest(id.txid, price, time));
+      const sigs = Array.from({ length: SIGNER_SLOTS }, () => new Uint8Array(64));
+      sample.sigs.forEach((sig, index) => {
+        if (index < SIGNER_SLOTS) sigs[index] = hexToBytes(sig);
+      });
       const next = nextState(state, expiry, priceValue(price));
       const built = buildAttest({
         beacon: {
@@ -381,7 +415,7 @@ export async function createOracle(deps: OracleDeps) {
         key: expiry,
         price,
         time,
-        sig,
+        sigs,
         next,
         checkpoint: deps.wallet.serverUnrollScript,
       });
