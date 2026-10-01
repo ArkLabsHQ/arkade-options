@@ -376,7 +376,7 @@ test("a filled vault settles from the beacon state the oracle published", async 
     threshold: 3n,
     domain,
     keyLag: 60n,
-    readFee: 100n,
+    readFee: 1_000n,
     adminPk,
     exit: EXIT,
     serverKey,
@@ -394,11 +394,11 @@ test("a filled vault settles from the beacon state the oracle published", async 
   const priced = parseOracleBeacon({
     ...status,
     address: feeBeacon.address,
-    args: { ...status.args, readFee: 100 },
+    args: { ...status.args, readFee: 1_000 },
   }, DISPLAY, 0);
   assert.equal(priced.ok, true);
   if (!priced.ok) return;
-  const feeTerms = { ...env.terms, readFee: 100n };
+  const feeTerms = { ...env.terms, readFee: 1_000n };
   const feeVault = bytesToHex(bindContracts(feeTerms).vaultPkScript);
   const vaultScript = coins[0]!.script;
   coins[0] = { ...coins[0]!, script: feeVault };
@@ -412,8 +412,8 @@ test("a filled vault settles from the beacon state the oracle published", async 
   if (paid.result !== "settled") return;
   const withFee = Transaction.fromPSBT(base64.decode(submitted.at(-1)!));
   assert.equal(withFee.inputsLength, 2);
-  assert.equal(withFee.getOutput(0)?.amount, 430n);
-  assert.equal(withFee.getOutput(2)?.amount, 19_300n);
+  assert.equal(withFee.getOutput(0)?.amount, 1_330n);
+  assert.equal(withFee.getOutput(2)?.amount, 18_400n);
   coins[0] = { ...coins[0]!, script: vaultScript };
 
   coins[0] = { ...coins[0]!, isSpent: true, spentBy: "ee".repeat(32), arkTxId: "ff".repeat(32) };

@@ -37,7 +37,7 @@ Dokploy, building `master`:
 
 ### Bootstrap the beacon
 
-Dashboard: open `https://<oracle>/`, paste the admin token, then Issue → Deploy. Or curl the same order. Status is `GET /api/status`. The constructor in `args` (`keyLag` 60, `readFee` 100, `exit` 2048, domain `BTCUSD-FIX`) is fixed in the service. `ORACLE_KEY` signs prices. No committee keys. The beacon already on Mutinynet is the old script. Issue a new one and point the desk at its `issueTxid`.
+Dashboard: open `https://<oracle>/`, paste the admin token, then Issue → Deploy. Or curl the same order. Status is `GET /api/status`. The constructor in `args` (`keyLag` 60, `readFee` 1000, `exit` 2048, domain `BTCUSD-FIX`) is fixed in the service. `ORACLE_KEY` signs prices. No committee keys. The beacon already on Mutinynet is the old script. Issue a new one and point the desk at its `issueTxid`.
 
 1. **Fund the oracle wallet.** `GET /api/status` returns `wallet` and `balance`. Send Mutinynet sats to `wallet` and wait until `balance` is at least 330 before Issue. An empty wallet returns `{"error":"fund wallet"}`. Keep enough left after issue for the 330-sat beacon coin at deploy.
 
@@ -173,7 +173,7 @@ Dokploy, building `master`:
 - Port `8790`.
 - Set `ORACLE_URL` to the oracle origin and `ORACLE_ADMIN` to the same bearer the oracle uses. Do not set `DESK_KEY`.
 - Mount a volume at `/data`. Name it `arkade-options-settle-data`. It holds `progress.json` for this process only: events already seen, and vaults it has progressed. It does not write the desk book.
-- The read fee is 100 sats and comes out of the vault. The settler does not hold a key.
+- The read fee is 1,000 sats, above dust, and comes out of the vault. The settler does not hold a key.
 - `RELAYS` defaults to `wss://nostr.arkade.sh`. Leave it unset unless the desks publish somewhere else.
 - `GET /status` returns `commit`, `oracle`, `relay`, `watching`, and `settled`.
 

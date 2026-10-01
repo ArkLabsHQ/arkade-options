@@ -141,7 +141,7 @@ test("status, admin order, deploy change, and a print that becomes a fixing", as
     assert.equal(JSON.stringify(open.json).includes(hex.encode(secret(9))), false);
     assert.equal((open.json.args as { domain: string }).domain, hex.encode(new TextEncoder().encode("BTCUSD-FIX")));
     assert.equal((open.json.args as { keyLag: number }).keyLag, 60);
-    assert.equal((open.json.args as { readFee: number }).readFee, 100);
+    assert.equal((open.json.args as { readFee: number }).readFee, 1_000);
     assert.equal(open.json.samples, 0);
     assert.equal("minValue" in (open.json.args as object), false);
     assert.equal((open.json.args as { exit: number }).exit, 2048);
@@ -177,7 +177,7 @@ test("status, admin order, deploy change, and a print that becomes a fixing", as
       threshold: 1n,
       domain: new TextEncoder().encode("BTCUSD-FIX"),
       keyLag: 60n,
-      readFee: 100n,
+      readFee: 1_000n,
       adminPk: schnorr.getPublicKey(secret(9)),
       exit: EXIT,
       serverKey: ctx.serverKey,
