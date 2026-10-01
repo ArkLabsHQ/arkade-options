@@ -83,6 +83,8 @@ export type OracleDeps = {
   quote?: () => Promise<bigint | null>;
   /** How often to sample. Unset means the process only records prices it is given. */
   sampleEveryMs?: number;
+  /** Unilateral exit delay the beacon commits to. Defaults to the Mutinynet delay. */
+  exit?: bigint;
   now?: () => number;
 };
 
@@ -160,6 +162,7 @@ export async function createOracle(deps: OracleDeps) {
   const signerPubkeys = await Promise.all(signerSecrets.map(async (key) => await SingleKey.fromHex(bytesToHex(key)).xOnlyPublicKey()));
   if (new Set(signerPubkeys.map((key) => bytesToHex(key))).size !== signerPubkeys.length) throw new Error("duplicate signer");
   const adminPk = deps.oracleKey ? await SingleKey.fromHex(bytesToHex(deps.oracleKey)).xOnlyPublicKey() : null;
+  const exit = deps.exit ?? EXIT;
   const store = await loadStore(deps.dataDir);
   let publishing = false;
   const now = () => deps.now?.() ?? Math.floor(Date.now() / 1000);
@@ -181,7 +184,7 @@ export async function createOracle(deps: OracleDeps) {
       keyLag: KEY_LAG,
       readFee: READ_FEE,
       adminPk,
-      exit: EXIT,
+      exit,
       serverKey: deps.wallet.arkServerPublicKey,
       emulatorKey: deps.emulatorKey,
     });
@@ -215,7 +218,7 @@ export async function createOracle(deps: OracleDeps) {
         keyLag: Number(KEY_LAG),
         readFee: Number(READ_FEE),
         adminPk: adminPk ? bytesToHex(adminPk) : null,
-        exit: Number(EXIT),
+        exit: Number(exit),
       },
       fixings: store.fixings,
       samples: store.samples.length,
@@ -441,8 +444,10 @@ export async function createOracle(deps: OracleDeps) {
         requireAdmin(req);
         const body = asRecord(await readBody(req, 4096));
         if (url === "/api/samples") {
-          exact(body, ["price"]);
-          return sendJson(res, 200, await recordSample(whole(body.price, "price"), now()));
+          const keys = Object.keys(body);
+          if (body.price == null || keys.some((key) => key !== "price" && key !== "time")) throw new HttpError(400, "unknown field");
+          const stamp = body.time == null ? now() : Number(whole(body.time, "time"));
+          return sendJson(res, 200, await recordSample(whole(body.price, "price"), stamp));
         }
         exact(body, []);
         if (url === "/api/issue") return sendJson(res, 200, await issue());
