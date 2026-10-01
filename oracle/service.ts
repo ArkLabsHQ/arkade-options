@@ -441,8 +441,10 @@ export async function createOracle(deps: OracleDeps) {
         requireAdmin(req);
         const body = asRecord(await readBody(req, 4096));
         if (url === "/api/samples") {
-          exact(body, ["price"]);
-          return sendJson(res, 200, await recordSample(whole(body.price, "price"), now()));
+          const keys = Object.keys(body);
+          if (body.price == null || keys.some((key) => key !== "price" && key !== "time")) throw new HttpError(400, "unknown field");
+          const stamp = body.time == null ? now() : Number(whole(body.time, "time"));
+          return sendJson(res, 200, await recordSample(whole(body.price, "price"), stamp));
         }
         exact(body, []);
         if (url === "/api/issue") return sendJson(res, 200, await issue());
