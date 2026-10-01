@@ -28,9 +28,9 @@ import { settleQuote } from "../settle/vault.ts";
  *
  *   pnpm roundtrip
  *
- * Mutinynet's Arkade faucet currently has no vtxos, so this rehearsal uses an
- * in-memory chain and the same builders the services use. `pnpm roundtrip -- --live`
- * is the on-chain path once those wallets hold sats.
+ * This runs the oracle service and the settler against an in-memory chain.
+ * The Arkade Mutinynet faucet has no vtxos to dispense, so the same steps are
+ * not broadcast yet.
  */
 
 const CHECKPOINT_HEX = "03080040b27520dfcaec558c7e78cf3e38b898ba8a43cfb5727266bae32c5c5b3aeb32c558aa0bac";
