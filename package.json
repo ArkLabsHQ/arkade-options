@@ -16,7 +16,9 @@
     "oracle:page": "esbuild oracle/page.ts --bundle --format=esm --platform=browser --outfile=oracle/page.js --log-level=warning",
     "oracle": "pnpm oracle:page && node --experimental-strip-types --experimental-eventsource oracle/main.ts",
     "e2e": "node --experimental-strip-types scripts/e2e-mutinynet.ts",
-    "roundtrip": "node --experimental-strip-types scripts/roundtrip.ts"
+    "roundtrip": "node --experimental-strip-types scripts/roundtrip.ts",
+    "roundtrip:live": "node --experimental-strip-types --experimental-eventsource scripts/roundtrip-live.ts",
+    "roundtrip:regtest": "ROUNDTRIP_NETWORK=regtest node --experimental-strip-types --experimental-eventsource scripts/roundtrip-live.ts"
   },
   "dependencies": {
     "@arkade-os/sdk": "file:vendor/arkade-os-sdk-0.4.74-411b43f.tgz",
