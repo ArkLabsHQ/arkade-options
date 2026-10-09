@@ -8,8 +8,18 @@ import {
   readAddress,
   registerIntent,
   saveAddress,
+  WALLET_URL,
   writerPayoutAddress,
 } from "./src/fund.ts";
+import {
+  callbackAllowed,
+  hasWalletParams,
+  pageCallback,
+  readWalletHandoff,
+  stripWalletParams,
+  walletConnectUrl,
+  walletSendUrl,
+} from "./src/wallet-link.ts";
 import { artifactLine } from "./src/program.ts";
 import { requestQuotes } from "./src/rfq.ts";
 import { deribitPremium, fetchSurface } from "../protocol/deribit.ts";
@@ -21,6 +31,8 @@ import { readIntent, watchIntents } from "./src/watch.ts";
 
 const STORE = "arkade-options-desk-v1";
 const REFRESH_MS = 18_000;
+const CONNECT_PENDING = "arkade-options-wallet-connect";
+const SEND_PENDING = "arkade-options-wallet-send";
 
 const state = {
   spotCents: null,
@@ -98,6 +110,7 @@ function persist() {
     marketSats: p.marketSats ? p.marketSats.toString() : "",
     marketApy: p.marketApy,
     fundingTxid: p.fundingTxid || "",
+    walletTxid: p.walletTxid || "",
     closeTxid: p.closeTxid || "",
     settleTxid: p.settleTxid || "",
     writerKeep: p.writerKeep || "",
@@ -179,6 +192,9 @@ function expiryUnix() {
 }
 
 let pinnedStrike = null;
+let walletNote = "";
+let resumeId = "";
+let connectError = "";
 
 function ladder() {
   const steps = state.kind === 0 ? [105n, 110n, 115n, 125n, 140n] : [95n, 90n, 85n, 75n, 60n];
@@ -285,6 +301,7 @@ function statusLabel(position) {
 
 function statusLead(position) {
   if (position.status === "locking") {
+    if (position.walletTxid) return "The wallet sent this payment. Waiting for the deposit to show up.";
     return "Waiting for your deposit. This address keeps the payout below. The market can move until the coins arrive.";
   }
   if (position.status === "deposited") return "Deposit received. Waiting for the desk to pay your address.";
@@ -555,8 +572,10 @@ function renderSell() {
     confirm.hidden = true;
   }
 
+  const pay = $("pay-wallet");
   const box = $("deposit");
   const settled = position && (position.status === "filled" || position.status === "refunded");
+  if (pay) pay.hidden = !deposit || settled || !position || position.status !== "locking";
   if (!deposit || settled) {
     box.hidden = true;
   } else {
@@ -574,7 +593,9 @@ function renderSell() {
   }
 
   let note = "";
-  if (!frozen) {
+  if (walletNote && position && position.status === "locking") {
+    note = walletNote;
+  } else if (!frozen) {
     if (quote && quote.sats <= DUST) {
       note = dustNote(quote.sats);
     } else if (!quote && state.quoting) {
@@ -819,7 +840,7 @@ function txLinks(position) {
 function detail(position) {
   const box = document.createElement("div");
   box.className = "lab";
-  const leadText = statusLead(position);
+  const leadText = position.id === resumeId && walletNote ? walletNote : statusLead(position);
   if (leadText) {
     const lead = document.createElement("p");
     lead.className = "lock-note";
@@ -906,7 +927,18 @@ function depositBlock(position) {
   copy.addEventListener("click", () => {
     void copyToClipboard(copy, position.uri || paymentUri(position.address, position.collateral));
   });
-  frag.append(amount, addr, copy);
+  frag.append(amount, addr);
+  if (position.status === "locking") {
+    const pay = document.createElement("button");
+    pay.type = "button";
+    pay.className = "copy-uri";
+    pay.textContent = "Pay in Arkade wallet";
+    pay.addEventListener("click", () => {
+      payInWallet(position);
+    });
+    frag.append(pay);
+  }
+  frag.append(copy);
   return frag;
 }
 
@@ -940,10 +972,12 @@ async function copyToClipboard(button, text) {
 
 function adoptQuote() {
   if (termsTouched) return;
-  const latest = visiblePositions()
+  const resumed = resumeId && visiblePositions().find((position) => position.id === resumeId);
+  const latest = resumed || visiblePositions()
     .filter((position) => position.kind === state.kind && position.address)
     .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))[0];
-  if (!latest) return;
+  if (!latest || state.spotCents == null) return;
+  if (resumed) state.kind = resumed.kind;
   pinnedStrike = latest.strike;
   const idx = ladder().findIndex((cents) => cents === latest.strike);
   if (idx < 0) return;
@@ -951,6 +985,7 @@ function adoptQuote() {
   if (latest.tenorSec > 0) {
     state.tenorSec = latest.tenorSec;
     state.days = 0;
+    if (resumeId && latest.id === resumeId) pinnedExpiry = Number(latest.expiry) || 0;
   } else if (latest.days === 7 || latest.days === 30 || latest.days === 90) {
     state.tenorSec = 0;
     state.days = latest.days;
@@ -961,6 +996,7 @@ function adoptQuote() {
 }
 
 function onTermsChanged() {
+  if (termsTouched) walletNote = "";
   pinnedExpiry = 0;
   state.market = null;
   state.deskQuote = null;
@@ -1361,7 +1397,127 @@ function listen(id, type, fn) {
   if (node) node.addEventListener(type, fn);
 }
 
+function sessionGet(key) {
+  try {
+    return sessionStorage.getItem(key) || "";
+  } catch {
+    return "";
+  }
+}
+
+function sessionSet(key, value) {
+  try {
+    sessionStorage.setItem(key, value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function sessionDel(key) {
+  try {
+    sessionStorage.removeItem(key);
+  } catch {
+    // Private mode can refuse storage. The return is ignored without the flag.
+  }
+}
+
+function walletReturnError(err) {
+  return err instanceof Error ? err.message : "The wallet link could not be opened.";
+}
+
+function openWalletConnect() {
+  const callback = pageCallback(location.href, { flow: "connect" });
+  const error = $("wallet-connect-error");
+  if (!callbackAllowed(callback)) {
+    if (error) error.textContent = "The wallet only returns to https, or to localhost. Paste the address instead.";
+    return;
+  }
+  if (!sessionSet(CONNECT_PENDING, "1")) {
+    if (error) error.textContent = "This browser is not keeping the wallet return. Paste the address instead.";
+    return;
+  }
+  sessionDel(SEND_PENDING);
+  try {
+    location.assign(walletConnectUrl(WALLET_URL, callback));
+  } catch (err) {
+    sessionDel(CONNECT_PENDING);
+    if (error) error.textContent = walletReturnError(err);
+  }
+}
+
+function payInWallet(position) {
+  if (!position || position.status !== "locking") return;
+  const request = position.uri || paymentUri(position.address, position.collateral);
+  const callback = pageCallback(location.href, { flow: "send", position: position.id });
+  if (!callbackAllowed(callback)) {
+    walletNote = "The wallet only returns to https, or to localhost. Copy the payment link instead.";
+    renderSell();
+    renderBlotter();
+    return;
+  }
+  if (!sessionSet(SEND_PENDING, position.id)) {
+    walletNote = "This browser is not keeping the wallet return. Copy the payment link instead.";
+    renderSell();
+    renderBlotter();
+    return;
+  }
+  sessionDel(CONNECT_PENDING);
+  try {
+    location.assign(walletSendUrl(WALLET_URL, request, callback));
+  } catch (err) {
+    sessionDel(SEND_PENDING);
+    walletNote = walletReturnError(err);
+    renderSell();
+    renderBlotter();
+  }
+}
+
+function consumeWalletHandoff() {
+  const handoff = readWalletHandoff(location.search);
+  const pendingConnect = sessionGet(CONNECT_PENDING) === "1";
+  const pendingSend = sessionGet(SEND_PENDING);
+  sessionDel(CONNECT_PENDING);
+  sessionDel(SEND_PENDING);
+  if (hasWalletParams(location.search)) {
+    history.replaceState(null, "", stripWalletParams(location.href));
+  }
+  if (handoff.kind === "none") return;
+  if (handoff.kind === "connect" || handoff.kind === "connect-denied" || handoff.kind === "connect-invalid") {
+    if (!pendingConnect) return;
+    if (handoff.kind === "connect") {
+      try {
+        state.address = saveAddress(handoff.address);
+        connectError = "";
+      } catch (err) {
+        connectError = err instanceof Error ? err.message : "That address was not saved.";
+      }
+      return;
+    }
+    connectError = handoff.kind === "connect-denied"
+      ? "The wallet did not share an address."
+      : "The wallet could not open that request.";
+    return;
+  }
+  if (!pendingSend || handoff.positionId !== pendingSend) return;
+  const position = state.positions.find((item) => item.id === pendingSend);
+  resumeId = pendingSend;
+  if (position) state.kind = position.kind;
+  if (handoff.kind === "sent") {
+    if (position && handoff.txid) {
+      position.walletTxid = handoff.txid;
+      persist();
+    }
+    walletNote = "The wallet sent this payment. Waiting for the deposit to show up.";
+    return;
+  }
+  walletNote = handoff.kind === "send-denied"
+    ? "The wallet did not send. You can pay from there, or copy the link."
+    : "The wallet could not open that payment. Copy the link instead.";
+}
+
 function bind() {
+  listen("wallet-connect", "click", openWalletConnect);
   listen("account-save", "click", connectAddress);
   listen("account-key", "keydown", (event) => {
     if (event.key === "Enter") connectAddress();
@@ -1435,6 +1591,11 @@ function bind() {
     if (!deposit) return;
     void copyToClipboard($("copy-address"), deposit.uri || paymentUri(deposit.address, deposit.amountSats));
   });
+  listen("pay-wallet", "click", () => {
+    const deposit = shownDeposit();
+    const position = deposit && state.positions.find((item) => item.address === deposit.address);
+    if (position) payInWallet(position);
+  });
   document.querySelectorAll("[data-kind]").forEach((btn) => {
     btn.addEventListener("click", () => openSell(Number(btn.dataset.kind)));
   });
@@ -1501,12 +1662,17 @@ function showFromHash() {
 }
 
 state.address = readAddress() || "";
+consumeWalletHandoff();
 bind();
+if (connectError) {
+  const error = $("wallet-connect-error");
+  if (error) error.textContent = connectError;
+}
 {
   const route = routeFromHash();
   if (!state.address) show("connect", "replace");
   else if (route.view === "sell") {
-    state.kind = route.kind;
+    if (!resumeId) state.kind = route.kind;
     show("sell", "replace");
   } else if (route.view === "home") show("home", "replace");
   else show("sell", "replace");
