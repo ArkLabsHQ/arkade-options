@@ -15,7 +15,8 @@
     "desk": "node --experimental-strip-types --experimental-eventsource desk/main.ts",
     "oracle:page": "esbuild oracle/page.ts --bundle --format=esm --platform=browser --outfile=oracle/page.js --log-level=warning",
     "oracle": "pnpm oracle:page && node --experimental-strip-types --experimental-eventsource oracle/main.ts",
-    "e2e": "node --experimental-strip-types scripts/e2e-mutinynet.ts"
+    "e2e": "node --experimental-strip-types scripts/e2e-mutinynet.ts",
+    "smoke:regtest": "node --experimental-strip-types --test --test-timeout 1800000 scripts/smoke-regtest.test.ts"
   },
   "dependencies": {
     "@arkade-os/sdk": "file:vendor/arkade-os-sdk-0.4.74-411b43f.tgz",

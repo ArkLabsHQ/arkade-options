@@ -3,7 +3,6 @@ import { readFile } from "node:fs/promises";
 import {
   arkade,
   asset,
-  networks,
   RestArkProvider,
   RestEmulatorProvider,
   RestIndexerProvider,
@@ -18,11 +17,13 @@ import { btcAmount } from "../app/src/fund.ts";
 import { ARK_URL, BEACON_READ_FEE, EMULATOR_URL, EXIT } from "../protocol/constants.ts";
 import { assertServerExit, bindContracts, payoutVtxo } from "../protocol/contracts.ts";
 import { bytesToHex, xOnly } from "../protocol/hex.ts";
+import { networkByName } from "../protocol/network.ts";
 import { intentProgram } from "../protocol/programs.ts";
 import { openSqliteStorage } from "../protocol/sqlite-storage.ts";
 
 /**
- * Happy path on Mutinynet.
+ * Happy path. Defaults to Mutinynet. `ARK_URL` and `EMULATOR_URL` select the host;
+ * the network (and its emulator key) come from arkd `/v1/info`.
  *
  *   pnpm e2e
  *     connects and prints the addresses to fund.
@@ -49,13 +50,17 @@ const collateral = 50_000n;
 const premium = 1_000n;
 const strike = 9_700_000n;
 
+const arkUrl = process.env.ARK_URL?.trim() || ARK_URL;
+const emulatorUrl = process.env.EMULATOR_URL?.trim() || EMULATOR_URL;
+const network = networkByName((await new RestArkProvider(arkUrl).getInfo()).network);
+
 async function connect(identity: SingleKey) {
   return arkade.Arkade.connect({
-    arkade: new RestArkProvider(ARK_URL),
-    indexer: new RestIndexerProvider(ARK_URL),
-    emulator: new RestEmulatorProvider(EMULATOR_URL),
+    arkade: new RestArkProvider(arkUrl),
+    indexer: new RestIndexerProvider(arkUrl),
+    emulator: new RestEmulatorProvider(emulatorUrl),
     identity,
-    network: networks.mutinynet,
+    network,
   });
 }
 
@@ -93,9 +98,9 @@ const shared = {
 
 const fill = bindContracts({ ...shared, deadline: fillDeadline });
 const cancel = bindContracts({ ...shared, deadline: cancelDeadline });
-await assertServerExit();
+await assertServerExit(arkUrl);
 const deskScript = payoutVtxo(holderPk, deskClient.serverKey, EXIT);
-const deskAddress = deskScript.address(networks.mutinynet.hrp, xOnly(deskClient.serverKey)).encode();
+const deskAddress = deskScript.address(network.hrp, xOnly(deskClient.serverKey)).encode();
 
 console.log("writer", bytesToHex(writerPk));
 console.log("desk", bytesToHex(holderPk));
@@ -137,8 +142,8 @@ if (live) {
   const storage = await openSqliteStorage(process.env.DATA_DIR?.trim() || "data", "e2e.sqlite");
   const writerWallet = await Wallet.create({
     identity: writer,
-    arkServerUrl: ARK_URL,
-    indexerUrl: ARK_URL,
+    arkServerUrl: arkUrl,
+    indexerUrl: arkUrl,
     settlementConfig: false,
     storage: {
       walletRepository: storage.walletRepository,

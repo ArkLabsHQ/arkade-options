@@ -5,13 +5,13 @@ import http from "node:http";
 
 import {
   arkade,
-  networks,
   RestArkProvider,
   RestEmulatorProvider,
   RestIndexerProvider,
 } from "@arkade-os/sdk";
 
 import { ARK_URL, DEFAULT_RELAYS, EMULATOR_URL } from "../protocol/constants.ts";
+import { networkByName } from "../protocol/network.ts";
 import { bindContracts } from "../protocol/contracts.ts";
 import type { OptionPosition } from "../protocol/messages.ts";
 import { quoteRelay, watchPositions } from "../protocol/nostr.ts";
@@ -54,11 +54,13 @@ if (!Number.isInteger(port) || port < 1) throw new Error("PORT");
 
 const progress = await Progress.open(dataDir);
 const indexer = new RestIndexerProvider(arkUrl);
+const ark = new RestArkProvider(arkUrl);
+const network = networkByName((await ark.getInfo()).network);
 const client = await arkade.Arkade.connect({
-  arkade: new RestArkProvider(arkUrl),
+  arkade: ark,
   indexer,
   emulator: new RestEmulatorProvider(emulatorUrl),
-  network: networks.mutinynet,
+  network,
 });
 if (!client.emulatorKey || !client.emulator) throw new Error("emulator missing");
 

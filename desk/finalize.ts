@@ -73,6 +73,12 @@ function alreadySpent(err: unknown): boolean {
   return /already spent/i.test(messageOf(err));
 }
 
+// The regtest emulator finalizes inside submitTx. A second finalizeTx is rejected
+// because the package is already done, and the outputs are spendable vtxos.
+function alreadyFinalized(err: unknown): boolean {
+  return /not in a valid stage to finalize/i.test(messageOf(err));
+}
+
 // Arkd spent these inputs and then lost the offchain row. Submit and finalize both refuse.
 const stuckArkTxs = new Set<string>();
 
@@ -186,6 +192,7 @@ export async function settleEmulatorTx(opts: {
       console.error("finalize stuck", opts.txid, messageOf(err));
       return false;
     }
+    if (alreadyFinalized(err)) return true;
     console.error("finalize", opts.txid, messageOf(err));
     return false;
   }

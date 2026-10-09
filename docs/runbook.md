@@ -6,6 +6,20 @@ Order: oracle (fund, issue, deploy) → desk (`BEACON_TXID`) → fund the desk �
 
 Never put `ORACLE_KEY`, `ORACLE_ADMIN`, or `DESK_KEY` in the repo.
 
+## Local regtest
+
+The contracts use a 2048-second exit and zero intent fees, the same as Mutinynet. `.env.regtest` is the arkade-regtest override that sets those delays (all in seconds) and starts only bitcoin regtest, arkd, and the emulator.
+
+Docker has to be running. From this repo:
+
+```bash
+pnpm smoke:regtest
+```
+
+The test clones [arkade-regtest](https://github.com/ArkLabsHQ/arkade-regtest) into `arkade-regtest/` (gitignored) if it is not there, starts the stack when `http://127.0.0.1:7070` is not already this configuration, and pays the intent and the desk from the seeded `ark` client. It then finalizes one covered-call intent and cancels the other after the deadline. A missing vault coin or a missing cancel refund fails the test.
+
+`ARK_URL` and `EMULATOR_URL` override the endpoints (defaults `http://127.0.0.1:7070` and `http://127.0.0.1:7073`). Desk, oracle, and settler take the network from arkd `/v1/info`, so the same variables point them at this stack. The exit check still requires `unilateralExitDelay` 2048.
+
 ## Oracle
 
 `ORACLE_KEY` is the only key. It issues the identity asset, deploys the beacon coin, signs each BTCUSD sample, and publishes fixings. It is never auto-generated.

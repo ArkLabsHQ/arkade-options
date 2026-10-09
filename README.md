@@ -113,3 +113,11 @@ docker run --rm -p 8080:80 arkade-options
 ```bash
 pnpm test
 ```
+
+Local arkade regtest (Docker, bitcoin regtest + arkd + emulator):
+
+```bash
+pnpm smoke:regtest
+```
+
+That command is the options flow: fund an intent, finalize it into a vault, and cancel a second intent. It fails if those coins do not land. Details are in [docs/runbook.md](docs/runbook.md).
