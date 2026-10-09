@@ -8,8 +8,10 @@ import {
   readAddress,
   registerIntent,
   saveAddress,
+  WALLET_URL,
   writerPayoutAddress,
 } from "./src/fund.ts";
+import { callbackAllowed, pageCallback, readWalletHandoff, stripWalletParams, walletAppUrl } from "./src/wallet-link.ts";
 import { artifactLine } from "./src/program.ts";
 import { requestQuotes } from "./src/rfq.ts";
 import { deribitPremium, fetchSurface } from "../protocol/deribit.ts";
@@ -21,6 +23,7 @@ import { readIntent, watchIntents } from "./src/watch.ts";
 
 const STORE = "arkade-options-desk-v1";
 const REFRESH_MS = 18_000;
+const WALLET_ASK = "arkade-options-wallet";
 
 const state = {
   spotCents: null,
@@ -98,6 +101,7 @@ function persist() {
     marketSats: p.marketSats ? p.marketSats.toString() : "",
     marketApy: p.marketApy,
     fundingTxid: p.fundingTxid || "",
+    walletTxid: p.walletTxid || "",
     closeTxid: p.closeTxid || "",
     settleTxid: p.settleTxid || "",
     writerKeep: p.writerKeep || "",
@@ -285,6 +289,7 @@ function statusLabel(position) {
 
 function statusLead(position) {
   if (position.status === "locking") {
+    if (position.walletTxid) return "The wallet sent this payment. Waiting for the deposit to show up.";
     return "Waiting for your deposit. This address keeps the payout below. The market can move until the coins arrive.";
   }
   if (position.status === "deposited") return "Deposit received. Waiting for the desk to pay your address.";
@@ -555,8 +560,10 @@ function renderSell() {
     confirm.hidden = true;
   }
 
+  const pay = $("pay-wallet");
   const box = $("deposit");
   const settled = position && (position.status === "filled" || position.status === "refunded");
+  if (pay) pay.hidden = !deposit || settled || !position || position.status !== "locking";
   if (!deposit || settled) {
     box.hidden = true;
   } else {
@@ -574,7 +581,8 @@ function renderSell() {
   }
 
   let note = "";
-  if (!frozen) {
+  if (position?.status === "locking" && position.walletTxid) note = statusLead(position);
+  else if (!frozen) {
     if (quote && quote.sats <= DUST) {
       note = dustNote(quote.sats);
     } else if (!quote && state.quoting) {
@@ -906,7 +914,18 @@ function depositBlock(position) {
   copy.addEventListener("click", () => {
     void copyToClipboard(copy, position.uri || paymentUri(position.address, position.collateral));
   });
-  frag.append(amount, addr, copy);
+  frag.append(amount, addr);
+  if (position.status === "locking") {
+    const pay = document.createElement("button");
+    pay.type = "button";
+    pay.className = "copy-uri";
+    pay.textContent = "Pay in Arkade wallet";
+    pay.addEventListener("click", () => {
+      openWallet(position);
+    });
+    frag.append(pay);
+  }
+  frag.append(copy);
   return frag;
 }
 
@@ -1361,7 +1380,68 @@ function listen(id, type, fn) {
   if (node) node.addEventListener(type, fn);
 }
 
+function askWallet(value) {
+  try {
+    sessionStorage.setItem(WALLET_ASK, value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function takeWalletAsk() {
+  try {
+    const value = sessionStorage.getItem(WALLET_ASK) || "";
+    sessionStorage.removeItem(WALLET_ASK);
+    return value;
+  } catch {
+    return "";
+  }
+}
+
+function openWallet(position) {
+  if (position && position.status !== "locking") return;
+  const request = position ? (position.uri || paymentUri(position.address, position.collateral)) : "";
+  const back = pageCallback(location.href, position ? { flow: "send", position: position.id } : { flow: "connect" });
+  const tell = $(position ? "status" : "account-error");
+  if (!callbackAllowed(back)) {
+    if (tell) tell.textContent = "The wallet only returns to https, or to localhost.";
+    return;
+  }
+  if (!askWallet(position ? position.id : "connect")) {
+    if (tell) tell.textContent = "This browser is not keeping the wallet return.";
+    return;
+  }
+  location.assign(walletAppUrl(WALLET_URL, position ? "send" : "connect", back, request || undefined));
+}
+
+function consumeWalletHandoff() {
+  const handoff = readWalletHandoff(location.search);
+  const pending = takeWalletAsk();
+  history.replaceState(null, "", stripWalletParams(location.href));
+  if (handoff.kind === "connect" && pending === "connect") {
+    try {
+      state.address = saveAddress(handoff.address);
+    } catch (err) {
+      const node = $("account-error");
+      if (node) node.textContent = err instanceof Error ? err.message : "That address was not saved.";
+    }
+    return;
+  }
+  if (handoff.kind === "connect-error" && pending === "connect") {
+    const node = $("account-error");
+    if (node) node.textContent = "The wallet did not share an address.";
+    return;
+  }
+  if (handoff.kind !== "sent" || handoff.positionId !== pending || !handoff.txid) return;
+  const position = state.positions.find((item) => item.id === pending);
+  if (!position) return;
+  position.walletTxid = handoff.txid;
+  persist();
+}
+
 function bind() {
+  listen("wallet-connect", "click", () => openWallet());
   listen("account-save", "click", connectAddress);
   listen("account-key", "keydown", (event) => {
     if (event.key === "Enter") connectAddress();
@@ -1435,6 +1515,11 @@ function bind() {
     if (!deposit) return;
     void copyToClipboard($("copy-address"), deposit.uri || paymentUri(deposit.address, deposit.amountSats));
   });
+  listen("pay-wallet", "click", () => {
+    const deposit = shownDeposit();
+    const position = deposit && state.positions.find((item) => item.address === deposit.address);
+    if (position) openWallet(position);
+  });
   document.querySelectorAll("[data-kind]").forEach((btn) => {
     btn.addEventListener("click", () => openSell(Number(btn.dataset.kind)));
   });
@@ -1501,6 +1586,7 @@ function showFromHash() {
 }
 
 state.address = readAddress() || "";
+consumeWalletHandoff();
 bind();
 {
   const route = routeFromHash();

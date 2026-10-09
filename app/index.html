@@ -16,7 +16,7 @@
     <header class="top">
       <div>
         <h1>Arkade Options</h1>
-        <p class="sub" id="sub">Paste your Arkade address to start.</p>
+        <p class="sub" id="sub">Open your Arkade wallet, or paste an address.</p>
         <p class="who" id="who" hidden>
           <span id="who-address"></span>
           <button type="button" id="account-change">Change</button>
@@ -33,7 +33,9 @@
   <main>
     <section id="connect" class="connect" aria-labelledby="connect-title">
       <h2 id="connect-title">Connect</h2>
-      <p class="copy">Paste the Arkade address from your wallet. Premium and settlement are paid there.</p>
+      <p class="copy">Open your Arkade wallet to share the address premium and settlement are paid to. Nothing is shared until you agree there.</p>
+      <button type="button" class="lock" id="wallet-connect">Open Arkade wallet</button>
+      <p class="lock-note">Or paste an address.</p>
       <div class="field">
         <label class="field-label" for="account-key">Arkade address</label>
         <input id="account-key" autocomplete="off" spellcheck="false" placeholder="tark1…" aria-describedby="account-error">
@@ -112,6 +114,7 @@
           <p id="deposit-amount" class="deposit-amount"></p>
           <p id="deposit-fixed" class="lock-note"></p>
           <p id="deposit-address" class="deposit-address"></p>
+          <button type="button" class="lock" id="pay-wallet" hidden>Pay in Arkade wallet</button>
           <button type="button" id="copy-address">Copy payment link</button>
           <button type="button" id="abort" hidden>Cancel trade</button>
           <button type="button" id="refund" hidden>Refund</button>

@@ -463,7 +463,7 @@ a { color: var(--accent); }
   word-break: break-all;
 }
 
-.deposit button,
+.deposit button:not(.lock),
 .copy-uri {
   background: transparent;
   color: var(--ink);
