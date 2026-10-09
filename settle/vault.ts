@@ -110,6 +110,14 @@ function txOf(raw: string | undefined, id: string): Transaction | undefined {
   }
 }
 
+function txById(raws: readonly string[], id: string): Transaction | undefined {
+  for (const raw of raws) {
+    const found = txOf(raw, id);
+    if (found) return found;
+  }
+  return undefined;
+}
+
 /**
  * Settle one vault. The price is the fixing in the beacon coin's state packet,
  * which is what `OptionVault.settle` reads. One beacon coin means one settle
@@ -171,8 +179,9 @@ export async function settleQuote(env: {
   const ids = [vaultCoin.txid, beaconCoin.txid];
   const raws = await env.chain.getVirtualTxs(ids);
   const txs = raws.txs ?? [];
-  const vaultPrev = txOf(txs[0], vaultCoin.txid);
-  const beaconPrev = txOf(txs[1], beaconCoin.txid);
+  // The indexer does not promise the request order.
+  const vaultPrev = txById(txs, vaultCoin.txid);
+  const beaconPrev = txById(txs, beaconCoin.txid);
   if (!vaultPrev) return { result: "waiting", reason: "vault" };
   if (!beaconPrev) return { result: "waiting", reason: "beacon" };
   let state: Uint8Array;

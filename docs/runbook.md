@@ -16,7 +16,7 @@ Docker has to be running. From this repo:
 pnpm smoke:regtest
 ```
 
-The test clones [arkade-regtest](https://github.com/ArkLabsHQ/arkade-regtest) into `arkade-regtest/` (gitignored) if it is not there, starts the stack when `http://127.0.0.1:7070` is not already this configuration, and pays the intent and the desk from the seeded `ark` client. It then finalizes one covered-call intent and cancels the other after the deadline. A missing vault coin or a missing cancel refund fails the test.
+The test clones [arkade-regtest](https://github.com/ArkLabsHQ/arkade-regtest) into `arkade-regtest/` (gitignored) if it is not there and starts the stack when `http://127.0.0.1:7070` is not already this configuration. It then runs the oracle service: issue, deploy, fund two intents and the desk, finalize one, cancel the other, publish the strike, and settle the vault. A missing beacon or a missing strike payout fails the test. The coins are drawn in [viz/index.html](../viz/index.html).
 
 `ARK_URL` and `EMULATOR_URL` override the endpoints (defaults `http://127.0.0.1:7070` and `http://127.0.0.1:7073`). Desk, oracle, and settler take the network from arkd `/v1/info`, so the same variables point them at this stack. The exit check still requires `unilateralExitDelay` 2048.
 

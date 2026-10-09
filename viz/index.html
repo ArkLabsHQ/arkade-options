@@ -19,6 +19,7 @@
     --beacon: #0e7490;
     --oracle: #a21caf;
     --solver: #9a3412;
+    --client: #b45309;
     --taker: #9f1239;
     --fee: #3f6212;
     --protocol: #44403c;
@@ -55,6 +56,7 @@
   .beacon { --party: var(--beacon); }
   .oracle { --party: var(--oracle); }
   .solver { --party: var(--solver); }
+  .client { --party: var(--client); }
   .taker { --party: var(--taker); }
   .fee { --party: var(--fee); }
   .protocol { --party: var(--protocol); }
@@ -65,6 +67,7 @@
   .dot.beacon { background: var(--beacon); }
   .dot.oracle { background: var(--oracle); }
   .dot.solver { background: var(--solver); }
+  .dot.client { background: var(--client); }
   .dot.taker { background: var(--taker); }
   .dot.fee { background: var(--fee); }
   .dot.protocol { background: var(--protocol); }
@@ -147,7 +150,7 @@
 <body>
 <header>
   <h1>Where the option contracts move sats</h1>
-  <p class="lede">Two coins. The oracle service deploys a beacon that holds one identity unit and stores the TWAP of blind oracle prints. The writer’s coin locks in OptionIntent, the desk pays the premium, and OptionVault later spends that collateral together with the beacon. A solid green border is a gain, a dashed red border the matching loss, and party colour is the owner. The main path ran on Mutinynet; everything else is drawn from the scripts and was not run.</p>
+  <p class="lede">The picture is the regtest smoke test, <code>pnpm smoke:regtest</code>. The oracle service issues one identity unit and deploys the beacon. The ark client funds two intents and the desk. The desk finalizes one covered call, the writer cancels the other, and the oracle publishes the strike. Settlement then pays the writer the collateral minus the 1,000-sat read fee. A solid green border is a gain, a dashed red border the matching loss, and party colour is the owner. Prices other than the strike are the same formula and were not run.</p>
   <div class="legend" aria-label="Parties">
     <span class="swatch"><i class="dot writer"></i>Writer</span>
     <span class="swatch"><i class="dot desk"></i>Desk</span>
@@ -156,6 +159,7 @@
     <span class="swatch"><i class="dot beacon"></i>AttestationBeacon</span>
     <span class="swatch"><i class="dot oracle"></i>Oracle service</span>
     <span class="swatch"><i class="dot fee"></i>Fee payer</span>
+    <span class="swatch"><i class="dot client"></i>Ark client</span>
     <span class="swatch"><i class="dot solver"></i>Solver</span>
     <span class="swatch"><i class="dot taker"></i>Taker</span>
     <span class="swatch gain">Gain</span>
@@ -163,7 +167,7 @@
   </div>
   <nav>
     <a href="#params">Parameters</a>
-    <a href="#run">Mutinynet run</a>
+    <a href="#run">Regtest run</a>
     <a href="#beacon">Beacon</a>
     <a href="#premium">Premium</a>
     <a href="#fixing">Fixing</a>
@@ -179,27 +183,27 @@
 </header>
 <main>
 <section class="panel" id="params">
-  <h2>Two number sets</h2>
+  <h2>The smoke test, and the node it ran on</h2>
   <div class="params">
     <div>
-      <h3>Fixture the diagrams use</h3>
+      <h3>Amounts from <code>scripts/smoke-regtest.test.ts</code></h3>
       <dl>
-        <dt>Collateral Q</dt><dd>20,000 sats</dd>
-        <dt>Premium</dt><dd>1,000 sats</dd>
-        <dt>Strike K</dt><dd>9,700,000 cents ($97,000.00)</dd>
-        <dt>Fixture price</dt><dd>10,000,000 cents ($100,000.00)</dd>
-        <dt>Beacon coin</dt><dd>330 sats. This fixture sets <code>readFee</code> to 0. The service sets it to 1,000.</dd>
+        <dt>Collateral Q</dt><dd>50,000 sats</dd>
+        <dt>Premium</dt><dd>1,000 sats. The desk vtxo equals this, so finalize has no change.</dd>
+        <dt>Strike K, and the published price</dt><dd>9,700,000 cents</dd>
+        <dt>Oracle funding</dt><dd>10,000 sats, <code>Q_MIN</code>. Deploy pays 330, <code>DUST_SATS</code>, to the beacon.</dd>
+        <dt>readFee</dt><dd>1,000 sats, <code>BEACON_READ_FEE</code></dd>
         <dt>Exit</dt><dd>2,048 seconds, unilateral leaves only</dd>
-        <dt>Contract dust</dt><dd>330 sats, strict</dd>
-        <dt>Fill window</dt><dd>deadline = now + 180 seconds</dd>
-        <dt>Quote validity</dt><dd>30 seconds, the RFQ field, not the script</dd>
+        <dt>Fill deadline</dt><dd>now + 3,600 seconds</dd>
+        <dt>Cancel deadline</dt><dd>now + 45 seconds</dd>
+        <dt>Expiry</dt><dd>now + 120 seconds. Publish waits until expiry + keyLag 60.</dd>
       </dl>
-      <p class="note">Q, premium, strike, and price are the lifecycle fixture and the values of the Mutinynet run. The beacon coin is 330 sats, which is the minimum, above the 300-sat subdust line. The 180-second deadline is <code>LOCK_S</code>. The 30 seconds is <code>QUOTE_TTL_S</code>, stored as <code>validUntil</code>. <code>bindContracts</code> always sets intent side to 0.</p>
+      <p class="note"><code>bindContracts</code> sets intent side to 0. The writer and holder programs are <code>payoutVtxo</code>. The smoke test does not set <code>payoutKey</code>. The 30-second <code>QUOTE_TTL_S</code> is <code>validUntil</code> on the quote row. It is not a script check.</p>
     </div>
     <div>
-      <h3>Live Mutinynet, 2026-09-27</h3>
+      <h3>Local regtest <code>/v1/info</code>, 2026-10-09</h3>
       <dl>
-        <dt>Endpoint</dt><dd>https://mutinynet.arkade.sh/v1/info</dd>
+        <dt>Endpoint</dt><dd>http://127.0.0.1:7070/v1/info</dd>
         <dt>dust</dt><dd>330</dd>
         <dt>vtxoMinAmount</dt><dd>1</dd>
         <dt>vtxoMaxAmount</dt><dd>−1 (no cap)</dd>
@@ -216,8 +220,10 @@
 </section>
 
 <section class="panel" id="run">
-  <h2>The run on Mutinynet</h2>
-  <p class="prose">One test wallet played the oracle service, the writer, the holder, and the fee payer. A script played the desk, with a 600-second fill deadline, because the desk refuses an expiry that has passed. The five oracle keys were test keys; they signed their prints after the expiry, for times inside each window. The option was opened after its expiry, so it settled right after the fill. That beacon was deployed before <code>migrate</code> needed the oracle service key; attest, read, and settle are the same leaves. Beacon: <a href="https://explorer.mutinynet.arkade.sh/address/tark1qqcpq7yq3e8hhsx6ml3fud93m7827qggaurtzu3zwsr4a0qs0gf85464wvxsje00w96lq7ts8j3rmcurhlnvt7rkq5gvfh6pgzyapxkh37psvr">tark1qqcp…xkh37psvr</a>. Identity asset: <a href="https://explorer.mutinynet.arkade.sh/asset/9b183c624d85056479de2f12af3af403288249de040468c343ec04a6ea9550e00000">9b183c…50e0, group 0</a>, supply 1.</p>
+  <h2>The regtest smoke test</h2>
+  <p class="prose"><code>pnpm smoke:regtest</code> starts arkade-regtest, then the oracle service in this repo. The seeded ark client sends 10,000 sats to the oracle wallet. <code>POST /api/issue</code> mints one unit on that coin. <code>POST /api/deploy</code> pays 330 of it into the beacon. The same client then sends 50,000 to the fill intent, 50,000 to the cancel intent, and 1,000 to the desk. <code>fillQuote</code> finalizes the first. After the cancel deadline, <code>cancel</code> refunds the second. <code>POST /api/samples</code> stores the strike, and <code>POST /api/publish</code> writes that price once the clock has passed expiry + 60. <code>settleQuote</code> spends the vault and the beacon. Transaction ids change every run. Intent fees on this node are 0.0, so none of these pictures include a protocol fare.</p>
+  <h3>Earlier Mutinynet run, different amounts</h3>
+  <p class="prose">That run used 20,000 sats of collateral and a beacon script this build does not spend. It is not the picture below.</p>
   <div class="wide">
     <table>
       <thead><tr><th>Step</th><th>Transaction</th><th>Sats</th></tr></thead>
@@ -239,24 +245,24 @@
   <p>Vaults commit to an asset id, not to a script. The id is the issue’s txid, and the beacon script commits to that id, so the beacon cannot be an output of the issue itself. It takes two transactions. No covenant runs in either: the oracle service’s wallet signs both.</p>
   <section class="tx" data-name="issue" data-mint="unit:1">
     <div class="col inputs">
-      <div class="coin oracle" data-sat="100000" data-party="oracle">
+      <div class="coin oracle" data-sat="10000" data-party="oracle">
         <div class="who">Oracle service · signs the wallet spend</div>
-        <strong>100,000</strong> sats
-        <p>Sender: you, to the <code>ORACLE_KEY</code> address.</p>
+        <strong>10,000</strong> sats
+        <p>The seeded ark client sent <code>Q_MIN</code> here. The wallet signs this spend. Sats are unchanged; the unit is new.</p>
       </div>
     </div>
     <div class="spine">
       <div class="tid">issue</div>
       <div>1 in → 1 out</div>
-      <div>100,000 = 100,000</div>
+      <div>10,000 = 10,000</div>
       <div class="ok">sats in = out</div>
       <div>unit: 0 in, 1 minted</div>
     </div>
     <div class="col outputs">
-      <div class="coin oracle gain" data-sat="100000" data-asset="unit:1" data-party="oracle">
+      <div class="coin oracle gain" data-sat="10000" data-asset="unit:1" data-party="oracle">
         <div class="who">Oracle service</div>
-        <strong>100,000</strong> sats
-        <p>Gain of 1 identity unit. <code>assetManager.issue({ amount: 1n })</code> with no control asset, so arkd refuses any reissue. The asset id is this txid, group 0.</p>
+        <strong>10,000</strong> sats
+        <p>Gain of 1 identity unit. <code>assetManager.issue({ amount: 1n })</code> selects coins until <code>dustAmount</code> and pays their full value here. No control asset, so arkd refuses any reissue. The asset id is this txid, group 0.</p>
       </div>
       <div class="tail">
         <div class="coin protocol opreturn" data-sat="0" data-party="protocol"><div class="who">Extension</div><strong>0</strong> sats<p>Asset packet: one fresh group, one output of 1.</p></div>
@@ -264,19 +270,19 @@
       </div>
     </div>
   </section>
-  <div class="band">Oracle service · 100,000 sats · the only unit. The beacon script can now be built from this txid.</div>
+  <div class="band">Oracle service · 10,000 sats · the only unit. The beacon script can now be built from this txid.</div>
   <section class="tx" data-name="deploy">
     <div class="col inputs">
-      <div class="coin oracle loss" data-sat="100000" data-asset="unit:1" data-party="oracle">
+      <div class="coin oracle loss" data-sat="10000" data-asset="unit:1" data-party="oracle">
         <div class="who">Oracle service · signs the wallet spend</div>
-        <strong>100,000</strong> sats
+        <strong>10,000</strong> sats
         <p>Loss. 1 identity unit. <code>genesisOutputs</code> builds the outputs.</p>
       </div>
     </div>
     <div class="spine">
       <div class="tid">deploy</div>
       <div>1 in → 2 out</div>
-      <div>100,000 = 100,000</div>
+      <div>10,000 = 10,000</div>
       <div class="ok">sats in = out</div>
       <div class="ok">unit in = out</div>
     </div>
@@ -284,11 +290,11 @@
       <div class="coin beacon covenant gain" data-sat="330" data-asset="unit:1" data-party="beacon">
         <div class="who"><svg class="lock" viewBox="0 0 16 16" aria-hidden="true"><path d="M5 7V5a3 3 0 0 1 6 0v2M3 7h10v7H3z" fill="none" stroke="currentColor"/></svg>AttestationBeacon · output 0</div>
         <strong>330</strong> sats
-        <p>Gain. 1 identity unit. Round 0, eight empty slots. Five oracle keys, key lag 60, minimum 330, admin key <code>ORACLE_KEY</code>.</p>
+        <p>Gain. 1 identity unit. Round 0, eight empty slots. The smoke test binds one oracle key, key lag 60, read fee 1,000, admin key the oracle wallet.</p>
       </div>
-      <div class="coin oracle" data-sat="99670" data-party="oracle">
+      <div class="coin oracle" data-sat="9670" data-party="oracle">
         <div class="who">Oracle service · change</div>
-        <strong>99,670</strong> sats
+        <strong>9,670</strong> sats
         <p>No asset. Any other asset on the input goes here, not onto the beacon.</p>
       </div>
       <div class="tail">
@@ -301,45 +307,54 @@
     <li>No script checks either transaction. The desk takes <code>BEACON_TXID</code> as given.</li>
   </ul>
   <ul class="nets">
-    <li class="oracle"><div class="who">Oracle service</div><strong class="down">−330</strong><div>and the unit, now on the beacon</div></li>
+    <li class="oracle"><div class="who">Oracle service</div><strong class="down">−330</strong><div>keeps 9,670. The unit is on the beacon.</div></li>
     <li class="beacon"><div class="who">Beacon coin</div><strong class="up">+330</strong><div>and 1 identity unit</div></li>
   </ul>
 </article>
 
 <article class="scenario" id="premium">
-  <h2>2. The premium arrives before settlement</h2>
-  <p>The writer sends the collateral. <code>fillQuote</code> adds the premium and finalizes. The vault exists only after that payment. Settlement has not run.</p>
-  <div class="band">Before. Writer holds 20,000. Desk holds 1,000. Nothing is in a covenant yet.</div>
+  <h2>2. The ark client funds both intents and the desk</h2>
+  <p>One <code>ark send</code> names three receivers. Fees are 0, so this no-change shape spends exactly their sum. A larger client coin would add change back to the ark client. Who is paid would not change. No option script runs. The round’s tree is not an OptionIntent leaf.</p>
   <section class="tx" data-name="deposit">
     <div class="col inputs">
-      <div class="coin writer loss" data-sat="20000" data-party="writer">
-        <div class="who">Writer · signs the wallet spend</div>
-        <strong>20,000</strong> sats
-        <p>Loss. Sender: the writer, to the intent address from <code>depositAddress</code>. The round’s tree is not an OptionIntent leaf.</p>
+      <div class="coin client loss" data-sat="101000" data-party="client">
+        <div class="who">Ark client · signs the forfeit</div>
+        <strong>101,000</strong> sats
+        <p>Loss. Sender: the seeded ark client. 50,000 + 50,000 + 1,000.</p>
       </div>
     </div>
     <div class="spine">
-      <div class="tid">deposit</div>
-      <div>1 in → 1 out</div>
-      <div>20,000 = 20,000</div>
+      <div class="tid">fund</div>
+      <div>1 in → 3 out</div>
+      <div>101,000 = 101,000</div>
       <div>fare 0</div>
       <div class="ok">sats in = out</div>
     </div>
     <div class="col outputs">
-      <div class="coin intent covenant gain" data-sat="20000" data-party="intent">
-        <div class="who"><svg class="lock" viewBox="0 0 16 16" aria-hidden="true"><path d="M5 7V5a3 3 0 0 1 6 0v2M3 7h10v7H3z" fill="none" stroke="currentColor"/></svg>OptionIntent</div>
-        <strong>20,000</strong> sats
-        <p>Gain. Locked. Equals collateral, so finalize adds no extra change for the writer.</p>
+      <div class="coin intent covenant gain" data-sat="50000" data-party="intent">
+        <div class="who"><svg class="lock" viewBox="0 0 16 16" aria-hidden="true"><path d="M5 7V5a3 3 0 0 1 6 0v2M3 7h10v7H3z" fill="none" stroke="currentColor"/></svg>Fill intent</div>
+        <strong>50,000</strong> sats
+        <p>Gain. Locked. Deadline now + 3,600. Equals collateral.</p>
+      </div>
+      <div class="coin intent covenant gain" data-sat="50000" data-party="intent">
+        <div class="who"><svg class="lock" viewBox="0 0 16 16" aria-hidden="true"><path d="M5 7V5a3 3 0 0 1 6 0v2M3 7h10v7H3z" fill="none" stroke="currentColor"/></svg>Cancel intent</div>
+        <strong>50,000</strong> sats
+        <p>Gain. Locked. Deadline now + 45. Same collateral, strike, expiry, and beacon.</p>
+      </div>
+      <div class="coin desk gain" data-sat="1000" data-party="desk">
+        <div class="who">Desk vtxo</div>
+        <strong>1,000</strong> sats
+        <p>Gain. Exactly the premium. <code>payoutVtxo</code> of the desk key.</p>
       </div>
     </div>
   </section>
-  <div class="band">Intent locked · 20,000 sats · deadline not reached.</div>
+  <div class="band">Two intents locked · 50,000 each. Desk holds 1,000. The fill deadline has not been reached.</div>
   <section class="tx" data-name="fill-exact">
     <div class="col inputs">
-      <div class="coin intent covenant loss" data-sat="20000" data-party="intent">
-        <div class="who"><svg class="lock" viewBox="0 0 16 16" aria-hidden="true"><path d="M5 7V5a3 3 0 0 1 6 0v2M3 7h10v7H3z" fill="none" stroke="currentColor"/></svg>OptionIntent · server + emulator</div>
-        <strong>20,000</strong> sats
-        <p>Loss. Leaf <code>finalize</code>, side 0. The writer does not sign this input.</p>
+      <div class="coin intent covenant loss" data-sat="50000" data-party="intent">
+        <div class="who"><svg class="lock" viewBox="0 0 16 16" aria-hidden="true"><path d="M5 7V5a3 3 0 0 1 6 0v2M3 7h10v7H3z" fill="none" stroke="currentColor"/></svg>Fill intent · emulator</div>
+        <strong>50,000</strong> sats
+        <p>Loss. Leaf <code>finalize</code>, side 0. The writer does not sign. The server signs the checkpoint.</p>
       </div>
       <div class="coin desk loss" data-sat="1000" data-party="desk">
         <div class="who">Desk · forfeit leaf</div>
@@ -350,20 +365,20 @@
     <div class="spine">
       <div class="tid">finalize</div>
       <div>2 in → 2 out</div>
-      <div>21,000 = 21,000</div>
+      <div>51,000 = 51,000</div>
       <div>fare 0</div>
       <div class="ok">sats in = out</div>
     </div>
     <div class="col outputs">
       <div class="coin writer gain" data-sat="1000" data-party="writer">
-        <div class="who">Writer · pasted address</div>
+        <div class="who">Writer vtxo</div>
         <strong>1,000</strong> sats
-        <p>Gain. Output 0. Premium, plus any sats the intent held above collateral. Here that extra is 0.</p>
+        <p>Gain. Output 0. Premium, plus any sats above collateral. That extra is 0. <code>payoutVtxo</code> of the writer key.</p>
       </div>
-      <div class="coin vault covenant gain" data-sat="20000" data-party="vault">
+      <div class="coin vault covenant gain" data-sat="50000" data-party="vault">
         <div class="who"><svg class="lock" viewBox="0 0 16 16" aria-hidden="true"><path d="M5 7V5a3 3 0 0 1 6 0v2M3 7h10v7H3z" fill="none" stroke="currentColor"/></svg>OptionVault</div>
-        <strong>20,000</strong> sats
-        <p>Gain. Output 1. Exactly collateral. Committed to the beacon’s asset id, the strike, and the expiry. No price yet.</p>
+        <strong>50,000</strong> sats
+        <p>Gain. Output 1. Exactly collateral. Committed to the deployed beacon, strike 9,700,000, expiry now + 120, read fee 1,000. No price yet.</p>
       </div>
       <div class="tail">
         <div class="coin protocol opreturn" data-sat="0" data-party="protocol"><div class="who">Extension</div><strong>0</strong> sats<p>Emulator packet. Not a payment.</p></div>
@@ -375,14 +390,14 @@
   <p>On Mutinynet the vault committed to asset 9b183c…50e0, group 0. The writer’s coin was 99,670, so the deposit returned 79,670 as change (<a href="https://explorer.mutinynet.arkade.sh/tx/4d64941bd1ece418c7b6fa3d5e8b7ba377bdd17fc285a22a43954f68e56a96ec">4d6494…</a>). The desk’s coin was 79,670, so finalize had a third output of 78,670, change to the desk script (<a href="https://explorer.mutinynet.arkade.sh/tx/7d59dca80b0bc00f192f9910259083d7d763c35983e0c80809931f6ba8fa1a8a">7d59dc…</a>). Who is paid does not change.</p>
 </article>
 
-<article class="scenario" id="fill-dust" data-writer="730" data-desk="-730">
+<article class="scenario" id="fill-dust" data-writer="-1170" data-desk="170">
   <h2>Desk change folded into the premium</h2>
   <section class="tx" data-name="fill-dust">
     <div class="col inputs">
-      <div class="coin intent covenant loss" data-sat="20000" data-party="intent">
+      <div class="coin intent covenant loss" data-sat="50000" data-party="intent">
         <div class="who"><svg class="lock" viewBox="0 0 16 16" aria-hidden="true"><path d="M5 7V5a3 3 0 0 1 6 0v2M3 7h10v7H3z" fill="none" stroke="currentColor"/></svg>OptionIntent</div>
-        <strong>20,000</strong> sats
-        <p>Loss. Same locked collateral.</p>
+        <strong>50,000</strong> sats
+        <p>Loss. Same locked collateral. This shape was not the smoke test. The smoke test’s desk coin was 1,000.</p>
       </div>
       <div class="coin desk loss" data-sat="1330" data-party="desk">
         <div class="who">Desk · forfeit</div>
@@ -393,7 +408,7 @@
     <div class="spine">
       <div class="tid">finalize</div>
       <div>2 in → 2 out</div>
-      <div>21,330 = 21,330</div>
+      <div>51,330 = 51,330</div>
       <div class="ok">sats in = out</div>
     </div>
     <div class="col outputs">
@@ -402,9 +417,9 @@
         <strong>1,330</strong> sats
         <p>Gain. Premium plus the folded 330.</p>
       </div>
-      <div class="coin vault covenant gain" data-sat="20000" data-party="vault">
+      <div class="coin vault covenant gain" data-sat="50000" data-party="vault">
         <div class="who"><svg class="lock" viewBox="0 0 16 16" aria-hidden="true"><path d="M5 7V5a3 3 0 0 1 6 0v2M3 7h10v7H3z" fill="none" stroke="currentColor"/></svg>OptionVault</div>
-        <strong>20,000</strong> sats
+        <strong>50,000</strong> sats
         <p>Gain. Still exactly collateral.</p>
       </div>
       <div class="tail">
@@ -418,43 +433,30 @@
     <li>The desk signs funding inputs on the forfeit leaf. The intent leaf is server and emulator.</li>
   </ul>
   <ul class="nets">
-    <li class="writer"><div class="who">Writer, this shape</div><strong class="up">+730</strong><div>1,330 received, 20,000 still locked</div></li>
-    <li class="desk"><div class="who">Desk, this shape</div><strong class="down">−730</strong><div>paid 1,330, holds nothing of the option yet</div></li>
+    <li class="writer"><div class="who">Writer, this shape then the 10,000,000 settle</div><strong class="down">−1,170</strong><div>1,330 received, then 47,500 of the 50,000</div></li>
+    <li class="desk"><div class="who">Desk, this shape then that settle</div><strong class="up">+170</strong><div>paid 1,330, receives 1,500</div></li>
   </ul>
 </article>
 
-<article class="scenario" id="call-itm" data-writer="400" data-desk="-400">
+<article class="scenario" id="call-itm" data-writer="-1500" data-desk="500">
   <h2>Back to the 1,000 premium</h2>
-  <p>After the exact fill the writer has 1,000 on hand and 20,000 still locked. Settlement at the fixture price returns 19,400 of that lock and pays the holder 600. The chapter net is that whole path.</p>
+  <p>After the exact fill the writer has 1,000 on hand and 50,000 still locked. A price of 10,000,000 cents, which the smoke test does not publish, would pay the holder 1,500 and return 47,500 to the writer after the 1,000 read fee. The chapter net is that whole path.</p>
   <ul class="nets">
-    <li class="writer"><div class="who">Writer, exact fill then fixture settle</div><strong class="up">+400</strong><div>1,000 premium + 19,400 − 20,000 locked</div></li>
-    <li class="desk"><div class="who">Desk, exact fill then fixture settle</div><strong class="down">−400</strong><div>paid 1,000, receives 600</div></li>
+    <li class="writer"><div class="who">Writer, exact fill then 10,000,000</div><strong class="down">−1,500</strong><div>1,000 premium + 47,500 − 50,000 locked</div></li>
+    <li class="desk"><div class="who">Desk, exact fill then 10,000,000</div><strong class="up">+500</strong><div>paid 1,000, receives 1,500</div></li>
   </ul>
 </article>
 
 <article class="scenario" id="fixing">
-  <h2>3. Five oracles sign blind, and the beacon stores the TWAP</h2>
-  <p>Each oracle signs <code>sha256(BTCUSD || price_le64 || time_le64)</code> on its own and posts it to the oracle service. The message names no beacon, no vault, and no other oracle. After <code>expiry + 60</code> the oracle service picks three prints from three distinct oracles in each slice and sends <code>attest</code>. The script checks all nine signatures, takes each slice’s median, and stores <code>(mOpen × 900 + mMid × 900 + mClose × 60) / 1860</code>, division truncating. The writer’s 20,000 does not move.</p>
-  <p class="note">The nine prints on Mutinynet. Times are seconds from the expiry, 1,790,463,992 (2026-09-26 23:06:32 UTC). Prices are USD cents.</p>
-  <div class="wide">
-    <table id="prints" data-expiry="1790463992" data-twap="10000000">
-      <thead><tr><th>Slice</th><th>Window</th><th>Oracle 0</th><th>Oracle 1</th><th>Oracle 2</th><th>Median</th></tr></thead>
-      <tbody>
-        <tr><td>Open</td><td>−1,800 to −1,740</td><td data-print="0:0:10000000:-1770">10,000,000 at −1,770</td><td data-print="0:1:10010000:-1760">10,010,000 at −1,760</td><td data-print="0:2:9990000:-1750">9,990,000 at −1,750</td><td>10,000,000</td></tr>
-        <tr><td>Mid</td><td>−960 to −900</td><td data-print="1:0:10000000:-930">10,000,000 at −930</td><td data-print="1:1:10020000:-920">10,020,000 at −920</td><td data-print="1:2:9980000:-910">9,980,000 at −910</td><td>10,000,000</td></tr>
-        <tr><td>Close</td><td>0 to +60</td><td data-print="2:0:10000000:10">10,000,000 at +10</td><td data-print="2:1:10005000:20">10,005,000 at +20</td><td data-print="2:2:9995000:30">9,995,000 at +30</td><td>10,000,000</td></tr>
-        <tr><td colspan="5">TWAP = (10,000,000 × 900 + 10,000,000 × 900 + 10,000,000 × 60) / 1,860</td><td><strong>10,000,000</strong></td></tr>
-      </tbody>
-    </table>
-  </div>
-  <p>The high and the low print in each slice drop out, so every median is 10,000,000 cents, and so is the TWAP. Oracles 3 and 4 sent nothing; three distinct oracles per slice is enough. The same nine prints satisfy every key from 1,790,463,982 to 1,790,464,022, which is why only the oracle service may write a slot (see Rejected).</p>
-  <div class="band">Beacon · round 0 · eight empty slots · 330 sats · 1 identity unit.</div>
+  <h2>3. The oracle publishes the strike</h2>
+  <p>The smoke test uses one oracle key. <code>POST /api/samples</code> stores the strike, 9,700,000 cents, at the service clock, which is inside <code>[expiry, expiry + 60]</code>. <code>POST /api/publish</code> runs after <code>checkTime(expiry + keyLag)</code>. The sample digest is <code>sha256(ctrlTxid || BTCUSD || price_le64 || time_le64)</code>. The vault’s 50,000 does not move.</p>
+  <div class="band">Beacon · round 0 · eight empty slots · 330 sats · 1 identity unit. The next transaction writes the strike into slot 0.</div>
   <section class="tx" data-name="attest">
     <div class="col inputs">
       <div class="coin beacon covenant" data-sat="330" data-asset="unit:1" data-party="beacon">
         <div class="who"><svg class="lock" viewBox="0 0 16 16" aria-hidden="true"><path d="M5 7V5a3 3 0 0 1 6 0v2M3 7h10v7H3z" fill="none" stroke="currentColor"/></svg>AttestationBeacon · input 0</div>
         <strong>330</strong> sats
-        <p>1 identity unit. Leaf <code>attest</code>. Witness: the key, the nine prints above, and the oracle service’s signature over <code>sha256(ctrlTxid || next packet)</code>. Server and emulator sign the leaf.</p>
+        <p>1 identity unit. Leaf <code>attest</code>. Witness: the expiry key, the price, the sample time, and that one oracle signature. Server and emulator sign the leaf.</p>
       </div>
     </div>
     <div class="spine">
@@ -468,7 +470,7 @@
       <div class="coin beacon covenant" data-sat="330" data-asset="unit:1" data-party="beacon">
         <div class="who"><svg class="lock" viewBox="0 0 16 16" aria-hidden="true"><path d="M5 7V5a3 3 0 0 1 6 0v2M3 7h10v7H3z" fill="none" stroke="currentColor"/></svg>AttestationBeacon</div>
         <strong>330</strong> sats
-        <p>Same script, same 330, same unit. Round 1. Slot 0: key 1,790,463,992, value num2bin(10,000,000, 32). The vault reads the first 8 bytes.</p>
+        <p>Same script, same 330, same unit. Round 1. Newest slot: key is the test’s expiry, value <code>num2bin(9,700,000, 32)</code>. The vault reads the first 8 bytes.</p>
       </div>
       <div class="tail">
         <div class="coin protocol opreturn" data-sat="0" data-party="protocol"><div class="who">Extension</div><strong>0</strong> sats<p>Asset packet, state packet, emulator packet with the 38-item witness.</p></div>
@@ -477,10 +479,8 @@
     </div>
   </section>
   <ul class="checks">
-    <li>Each print: price 1 to 1,000,000,000 cents, time &gt; 0, a valid signature from <code>signers[who]</code>. Three distinct oracle indexes per slice. The five signer keys are distinct.</li>
-    <li>Windows from the key: open −1,800 to −1,740, mid −960 to −900, close 0 to +60. The latest print lands in its window, and the three are within 60 seconds of each other.</li>
-    <li>The new slot is (key, num2bin(twap, 32)). The oracle service’s signature covers the whole next packet.</li>
-    <li>Key &gt; 1,800, not already in a slot, and <code>checkTime(key + 60)</code>. Round + 1. The other seven slots shift. Output 0 keeps the script, the value, and the unit.</li>
+    <li>Price 1 to 1,000,000,000 cents. Sample time &gt; 0 and ≤ key + keyLag. At least <code>threshold</code> signatures from the first <code>signersN</code> keys. The smoke test uses one key and threshold 1.</li>
+    <li>The new slot is (key, num2bin(price, 32)). Key &gt; 1,800, not already in a slot, and <code>checkTime(key + keyLag)</code>. Round + 1. Output 0 keeps the script, the value, and the unit.</li>
   </ul>
 </article>
 
@@ -499,7 +499,7 @@
       <text x="48" y="24" fill="#5c564e" font-size="12">holder sats</text>
       <text x="250" y="204" fill="#5c564e" font-size="12">K · dust kink · fixture 600</text>
     </svg>
-    <figcaption id="chart-caption">Covered call, Q = 20,000, K = 9,700,000 cents. Flat until the strike, then <code>Q × (price − K) / price</code>. At 9,862,736 cents the formula pays 330 and the script folds it. At 9,863,237 cents it pays 331 and the script splits. The fixture price 10,000,000 pays 600. The chart stops at 12,000,000 cents; the script’s price cap is 1,000,000,000.</figcaption>
+    <figcaption id="chart-caption">Covered call, Q = 50,000, K = 9,700,000 cents, read fee 1,000. Flat until the strike. At 9,764,641 cents the formula pays 330 and the script folds it. At 9,764,642 cents it pays 331 and the script splits. The smoke test publishes the strike, payoff 0.</figcaption>
   </figure>
   <form class="controls" id="payoff-controls">
     <label>Kind
@@ -509,15 +509,15 @@
       </select>
     </label>
     <label>Price, USD cents
-      <input id="price" type="number" min="1" max="1000000000" step="1" value="10000000">
+      <input id="price" type="number" min="1" max="1000000000" step="1" value="9700000">
     </label>
   </form>
-  <p id="shown-input">Input: kind 0, price 10,000,000 cents. Holder payoff 600 sats. Shape: split. Writer keeps 19,400 of the 20,000.</p>
+  <p id="shown-input">Input: kind 0, price 9,700,000 cents. Holder payoff 0 sats. Shape: writer. Writer receives 49,000.</p>
   <section class="tx" data-name="settle-split" id="settle-live">
     <div class="col inputs">
-      <div class="coin vault covenant loss" data-sat="20000" data-party="vault">
+      <div class="coin vault covenant loss" data-sat="50000" data-party="vault">
         <div class="who"><svg class="lock" viewBox="0 0 16 16" aria-hidden="true"><path d="M5 7V5a3 3 0 0 1 6 0v2M3 7h10v7H3z" fill="none" stroke="currentColor"/></svg>OptionVault · input 0</div>
-        <strong>20,000</strong> sats
+        <strong>50,000</strong> sats
         <p>Loss. Leaf <code>settle</code>. No witness. Server and emulator sign the leaf. <code>checkTime(expiry)</code>.</p>
       </div>
       <div class="coin beacon covenant" data-sat="330" data-asset="unit:1" data-party="beacon">
@@ -528,26 +528,26 @@
     </div>
     <div class="spine">
       <div class="tid">settle</div>
-      <div id="settle-shape">2 in → 3 out</div>
-      <div id="settle-cons">20,330 = 20,330</div>
+      <div id="settle-shape">2 in → 2 out</div>
+      <div id="settle-cons">50,330 = 50,330</div>
       <div class="ok">sats in = out</div>
       <div class="ok">unit in = out</div>
     </div>
     <div class="col outputs" id="settle-outputs">
-      <div class="coin beacon covenant" data-sat="330" data-asset="unit:1" data-party="beacon" data-role="beacon-out">
+      <div class="coin beacon covenant gain" data-sat="1330" data-asset="unit:1" data-party="beacon" data-role="beacon-out">
         <div class="who"><svg class="lock" viewBox="0 0 16 16" aria-hidden="true"><path d="M5 7V5a3 3 0 0 1 6 0v2M3 7h10v7H3z" fill="none" stroke="currentColor"/></svg>AttestationBeacon · output 0</div>
-        <strong data-amt="beacon">330</strong> sats
-        <p>Same script, same unit, same state. This fixture sets <code>readFee</code> to 0, so the beacon stays at 330 sats. The service sets <code>readFee</code> to 1,000, which the vault pays.</p>
+        <strong data-amt="beacon">1,330</strong> sats
+        <p>Gain of the 1,000 read fee. Same script, same unit, same state. 330 + 1,000.</p>
       </div>
-      <div class="coin desk gain" data-sat="600" data-party="desk" data-role="holder-out">
-        <div class="who">Holder · output 1</div>
-        <strong data-amt="holder">600</strong> sats
-        <p>Gain. The holder program committed in the vault.</p>
+      <div class="coin desk gain" data-sat="0" data-party="desk" data-role="holder-out" hidden>
+        <div class="who">Holder</div>
+        <strong data-amt="holder">0</strong> sats
+        <p>Gain. The holder program. Hidden when the payoff is 0.</p>
       </div>
-      <div class="coin writer gain" data-sat="19400" data-party="writer" data-role="writer-out">
-        <div class="who">Writer · output 2</div>
-        <strong data-amt="writer">19,400</strong> sats
-        <p>Gain. The writer program. Together with the holder’s 600 this is the 20,000 that left the vault.</p>
+      <div class="coin writer gain" data-sat="49000" data-party="writer" data-role="writer-out">
+        <div class="who">Writer · output 1</div>
+        <strong data-amt="writer">49,000</strong> sats
+        <p>Gain. At the strike the holder payoff is 0, so this is the 50,000 minus the 1,000 read fee.</p>
       </div>
       <div class="tail">
         <div class="coin protocol opreturn" data-sat="0" data-party="protocol"><div class="who">Extension</div><strong>0</strong> sats<p>Asset unit from input 1 to output 0, the same state packet, two emulator entries.</p></div>
@@ -555,7 +555,7 @@
       </div>
     </div>
   </section>
-  <p>That Mutinynet settlement used the previous script, which added a 100-sat read fee. The fee coin was the 1,000-sat premium output, and the run used <code>build</code> with a fourth output of 900 change: <a href="https://explorer.mutinynet.arkade.sh/tx/ff7dfad446af6d85a6e229fadae0a87ecbb03f5ff55a935658e064eeb25b0206">ff7dfa…</a>, 3 in → 4 out, 21,330 = 21,330. The holder’s 600 and the writer’s 19,400 are the same.</p>
+  <p>The control starts at the strike, which is the price <code>pnpm smoke:regtest</code> publishes. Moving the price redraws this same transaction with <code>holderPayoff</code> and <code>settlementOutputs</code>, including the 1,000 read fee. A second output appears only when both legs are above 330 sats.</p>
   <div class="wide">
     <table>
       <caption>What each covenant checks in this one transaction</caption>
@@ -571,20 +571,20 @@
     </table>
   </div>
   <ul class="nets">
-    <li class="writer"><div class="who">Writer, exact fill then this settle</div><strong class="up">+400</strong><div>premium 1,000 + 19,400 − 20,000 locked</div></li>
-    <li class="desk"><div class="who">Desk, exact fill then this settle</div><strong class="down">−400</strong><div>paid 1,000, receives 600.</div></li>
-    <li class="beacon"><div class="who">Beacon coin</div><strong>unchanged</strong><div>330 sats. This fixture's readFee is 0.</div></li>
+    <li class="writer"><div class="who">Writer, exact fill then the strike</div><strong>0</strong><div>premium 1,000 + 49,000 − 50,000 locked</div></li>
+    <li class="desk"><div class="who">Desk, exact fill then the strike</div><strong class="down">−1,000</strong><div>paid 1,000, receives none of the collateral</div></li>
+    <li class="beacon"><div class="who">Beacon coin</div><strong class="up">+1,000</strong><div>330 becomes 1,330</div></li>
   </ul>
 </article>
 
-<article class="scenario" id="call-otm" data-writer="1000" data-desk="-1000">
-  <h2>Same settlement, one output, when the price is the strike</h2>
-  <p>At 9,700,000 cents the call payoff is 0, which is at or under dust, so output 1 is the whole coin to the writer. The holder receives nothing of the collateral. The premium already paid is the writer’s gain.</p>
+<article class="scenario" id="call-otm" data-writer="0" data-desk="-1000">
+  <h2>The settlement the smoke test runs, at the strike</h2>
+  <p>At 9,700,000 cents the call payoff is 0, which is at or under dust, so the only payout is the writer. It is 50,000 − 1,000. The holder receives nothing of the collateral. The 1,000 premium and the 1,000 read fee cancel in the writer’s net.</p>
   <section class="tx" data-name="settle-strike">
     <div class="col inputs">
-      <div class="coin vault covenant loss" data-sat="20000" data-party="vault">
+      <div class="coin vault covenant loss" data-sat="50000" data-party="vault">
         <div class="who"><svg class="lock" viewBox="0 0 16 16" aria-hidden="true"><path d="M5 7V5a3 3 0 0 1 6 0v2M3 7h10v7H3z" fill="none" stroke="currentColor"/></svg>OptionVault</div>
-        <strong>20,000</strong> sats
+        <strong>50,000</strong> sats
         <p>Loss.</p>
       </div>
       <div class="coin beacon covenant" data-sat="330" data-asset="unit:1" data-party="beacon">
@@ -596,20 +596,20 @@
     <div class="spine">
       <div class="tid">settle</div>
       <div>2 in → 2 out</div>
-      <div>20,330 = 20,330</div>
+      <div>50,330 = 50,330</div>
       <div class="ok">sats in = out</div>
       <div class="ok">unit in = out</div>
     </div>
     <div class="col outputs">
-      <div class="coin beacon covenant gain" data-sat="330" data-asset="unit:1" data-party="beacon">
+      <div class="coin beacon covenant gain" data-sat="1330" data-asset="unit:1" data-party="beacon">
         <div class="who"><svg class="lock" viewBox="0 0 16 16" aria-hidden="true"><path d="M5 7V5a3 3 0 0 1 6 0v2M3 7h10v7H3z" fill="none" stroke="currentColor"/></svg>AttestationBeacon</div>
-        <strong>330</strong> sats
-        <p>Unchanged. State unchanged.</p>
+        <strong>1,330</strong> sats
+        <p>Gain of 1,000. State unchanged. The price was already in the slot.</p>
       </div>
-      <div class="coin writer gain" data-sat="20000" data-party="writer">
+      <div class="coin writer gain" data-sat="49000" data-party="writer">
         <div class="who">Writer · output 1</div>
-        <strong>20,000</strong> sats
-        <p>Gain. The whole vault coin. There is no holder output.</p>
+        <strong>49,000</strong> sats
+        <p>Gain. 50,000 − 1,000. There is no holder output.</p>
       </div>
       <div class="tail">
         <div class="coin protocol opreturn" data-sat="0" data-party="protocol"><div class="who">Extension</div><strong>0</strong> sats<p>Unit, state, two emulator entries.</p></div>
@@ -618,28 +618,29 @@
     </div>
   </section>
   <ul class="nets">
-    <li class="writer"><div class="who">Writer</div><strong class="up">+1,000</strong><div>the premium. Collateral returns.</div></li>
+    <li class="writer"><div class="who">Writer</div><strong>0</strong><div>1,000 premium + 49,000 − 50,000</div></li>
     <li class="desk"><div class="who">Desk</div><strong class="down">−1,000</strong><div>the premium, and none of the collateral</div></li>
+    <li class="beacon"><div class="who">Beacon</div><strong class="up">+1,000</strong><div>the read fee</div></li>
   </ul>
 </article>
 
-<article class="scenario" id="dust" data-writer="669" data-desk="-669">
+<article class="scenario" id="dust" data-writer="-331" data-desk="-669">
   <h2>The dust kink, two prices</h2>
-  <p>At 9,862,736 cents the call formula pays 330. The script gives the whole coin to the writer. At 9,863,237 cents it pays 331, and both legs clear dust, so the outputs split. The nets on this chapter are the 331 split, after the 1,000 premium.</p>
+  <p>With Q = 50,000 and a 1,000 read fee, the call formula pays 330 at 9,764,641 cents. That leg is not its own output, so the writer receives 49,000, the same shape as the strike. At 9,764,642 cents it pays 331 and the outputs split. These prices were not published by the smoke test. The nets are the 331 split after the 1,000 premium.</p>
   <section class="tx" data-name="settle-dust-fold">
     <div class="col inputs">
-      <div class="coin vault covenant loss" data-sat="20000" data-party="vault"><div class="who">OptionVault</div><strong>20,000</strong> sats<p>Loss. Price 9,862,736 cents.</p></div>
+      <div class="coin vault covenant loss" data-sat="50000" data-party="vault"><div class="who">OptionVault</div><strong>50,000</strong> sats<p>Loss. Price 9,764,641 cents.</p></div>
       <div class="coin beacon covenant" data-sat="330" data-asset="unit:1" data-party="beacon"><div class="who">AttestationBeacon</div><strong>330</strong> sats<p>1 unit.</p></div>
     </div>
     <div class="spine">
       <div class="tid">settle · fold</div>
       <div>2 in → 2 out</div>
-      <div>20,330 = 20,330</div>
+      <div>50,330 = 50,330</div>
       <div class="ok">sats in = out</div>
     </div>
     <div class="col outputs">
-      <div class="coin beacon covenant gain" data-sat="330" data-asset="unit:1" data-party="beacon"><div class="who">AttestationBeacon</div><strong>330</strong> sats<p>Unchanged.</p></div>
-      <div class="coin writer gain" data-sat="20000" data-party="writer"><div class="who">Writer</div><strong>20,000</strong> sats<p>Gain. Payoff 330 is not paid as its own output.</p></div>
+      <div class="coin beacon covenant gain" data-sat="1330" data-asset="unit:1" data-party="beacon"><div class="who">AttestationBeacon</div><strong>1,330</strong> sats<p>Gain of the read fee.</p></div>
+      <div class="coin writer gain" data-sat="49000" data-party="writer"><div class="who">Writer</div><strong>49,000</strong> sats<p>Gain. Payoff 330 is not paid as its own output.</p></div>
       <div class="tail">
         <div class="coin protocol opreturn" data-sat="0" data-party="protocol"><div class="who">Extension</div><strong>0</strong> sats</div>
         <div class="coin protocol" data-sat="0" data-party="protocol"><div class="who">Anchor</div><strong>0</strong> sats</div>
@@ -648,19 +649,19 @@
   </section>
   <section class="tx" data-name="settle-dust-split">
     <div class="col inputs">
-      <div class="coin vault covenant loss" data-sat="20000" data-party="vault"><div class="who">OptionVault</div><strong>20,000</strong> sats<p>Loss. Price 9,863,237 cents.</p></div>
+      <div class="coin vault covenant loss" data-sat="50000" data-party="vault"><div class="who">OptionVault</div><strong>50,000</strong> sats<p>Loss. Price 9,764,642 cents.</p></div>
       <div class="coin beacon covenant" data-sat="330" data-asset="unit:1" data-party="beacon"><div class="who">AttestationBeacon</div><strong>330</strong> sats<p>1 unit.</p></div>
     </div>
     <div class="spine">
       <div class="tid">settle · split</div>
       <div>2 in → 3 out</div>
-      <div>20,330 = 20,330</div>
+      <div>50,330 = 50,330</div>
       <div class="ok">sats in = out</div>
     </div>
     <div class="col outputs">
-      <div class="coin beacon covenant gain" data-sat="330" data-asset="unit:1" data-party="beacon"><div class="who">AttestationBeacon</div><strong>330</strong> sats<p>Unchanged.</p></div>
+      <div class="coin beacon covenant gain" data-sat="1330" data-asset="unit:1" data-party="beacon"><div class="who">AttestationBeacon</div><strong>1,330</strong> sats<p>Gain of the read fee.</p></div>
       <div class="coin desk gain" data-sat="331" data-party="desk"><div class="who">Holder</div><strong>331</strong> sats<p>Gain. First split above dust.</p></div>
-      <div class="coin writer gain" data-sat="19669" data-party="writer"><div class="who">Writer</div><strong>19,669</strong> sats<p>Gain. 20,000 − 331.</p></div>
+      <div class="coin writer gain" data-sat="48669" data-party="writer"><div class="who">Writer</div><strong>48,669</strong> sats<p>Gain. 49,000 − 331.</p></div>
       <div class="tail">
         <div class="coin protocol opreturn" data-sat="0" data-party="protocol"><div class="who">Extension</div><strong>0</strong> sats</div>
         <div class="coin protocol" data-sat="0" data-party="protocol"><div class="who">Anchor</div><strong>0</strong> sats</div>
@@ -668,28 +669,28 @@
     </div>
   </section>
   <ul class="nets">
-    <li class="writer"><div class="who">Writer, 331 split</div><strong class="up">+669</strong></li>
-    <li class="desk"><div class="who">Desk, 331 split</div><strong class="down">−669</strong></li>
+    <li class="writer"><div class="who">Writer, 331 split</div><strong class="down">−331</strong><div>1,000 + 48,669 − 50,000</div></li>
+    <li class="desk"><div class="who">Desk, 331 split</div><strong class="down">−669</strong><div>331 − 1,000</div></li>
   </ul>
 </article>
 
-<article class="scenario" id="put-all" data-writer="-19000" data-desk="19000">
-  <h2>Limited put, the holder takes the coin</h2>
-  <p>Kind 1 at 4,849,878 cents. The raw payoff is above 20,000, so the script caps it at collateral. The writer’s leg is 0, which is dust, so output 1 is the whole coin to the holder. A call at the price cap 1,000,000,000 cents has the same shape: the formula pays 19,806, the writer’s 194 is dust, and the holder takes 20,000.</p>
+<article class="scenario" id="put-all" data-writer="-49000" data-desk="48000">
+  <h2>Limited put, the holder takes the pot</h2>
+  <p>Kind 1 at half the strike, 4,850,000 cents. The raw payoff is the whole 50,000. After the 1,000 read fee the writer’s leg is 0, so output 1 is 49,000 to the holder. This price was not published by the smoke test.</p>
   <section class="tx" data-name="settle-put">
     <div class="col inputs">
-      <div class="coin vault covenant loss" data-sat="20000" data-party="vault"><div class="who">OptionVault · kind 1</div><strong>20,000</strong> sats<p>Loss.</p></div>
+      <div class="coin vault covenant loss" data-sat="50000" data-party="vault"><div class="who">OptionVault · kind 1</div><strong>50,000</strong> sats<p>Loss.</p></div>
       <div class="coin beacon covenant" data-sat="330" data-asset="unit:1" data-party="beacon"><div class="who">AttestationBeacon</div><strong>330</strong> sats<p>1 unit. Key equals this put’s expiry.</p></div>
     </div>
     <div class="spine">
       <div class="tid">settle</div>
       <div>2 in → 2 out</div>
-      <div>20,330 = 20,330</div>
+      <div>50,330 = 50,330</div>
       <div class="ok">sats in = out</div>
     </div>
     <div class="col outputs">
-      <div class="coin beacon covenant gain" data-sat="330" data-asset="unit:1" data-party="beacon"><div class="who">AttestationBeacon</div><strong>330</strong> sats<p>Unchanged.</p></div>
-      <div class="coin desk gain" data-sat="20000" data-party="desk"><div class="who">Holder · output 1</div><strong>20,000</strong> sats<p>Gain. The whole vault coin.</p></div>
+      <div class="coin beacon covenant gain" data-sat="1330" data-asset="unit:1" data-party="beacon"><div class="who">AttestationBeacon</div><strong>1,330</strong> sats<p>Gain of the read fee.</p></div>
+      <div class="coin desk gain" data-sat="49000" data-party="desk"><div class="who">Holder · output 1</div><strong>49,000</strong> sats<p>Gain. The pot after the read fee.</p></div>
       <div class="tail">
         <div class="coin protocol opreturn" data-sat="0" data-party="protocol"><div class="who">Extension</div><strong>0</strong> sats</div>
         <div class="coin protocol" data-sat="0" data-party="protocol"><div class="who">Anchor</div><strong>0</strong> sats</div>
@@ -697,33 +698,33 @@
     </div>
   </section>
   <ul class="nets">
-    <li class="writer"><div class="who">Writer</div><strong class="down">−19,000</strong><div>kept the 1,000 premium, lost the 20,000</div></li>
-    <li class="desk"><div class="who">Desk</div><strong class="up">+19,000</strong><div>paid 1,000, receives 20,000</div></li>
+    <li class="writer"><div class="who">Writer</div><strong class="down">−49,000</strong><div>kept the 1,000 premium, settlement pays 0</div></li>
+    <li class="desk"><div class="who">Desk</div><strong class="up">+48,000</strong><div>paid 1,000, receives 49,000</div></li>
   </ul>
 </article>
 
-<article class="scenario" id="refund" data-writer="0" data-desk="0">
-  <h2>5. A missed fill refunds the writer</h2>
-  <p>After the deadline, <code>cancel</code> pays the intent coin back to the writer program. The desk never sent the premium. One input only.</p>
+<article class="scenario" id="refund" data-writer="50000" data-desk="0">
+  <h2>5. The second intent is cancelled</h2>
+  <p>The smoke test does this after the fill. <code>checkTime</code> has passed the cancel deadline, now + 45. <code>cancel</code> pays the 50,000 to the writer program. The writer key is not a signer. The ark client, who funded the intent, is not paid back.</p>
   <section class="tx" data-name="refund">
     <div class="col inputs">
-      <div class="coin intent covenant loss" data-sat="20000" data-party="intent">
-        <div class="who"><svg class="lock" viewBox="0 0 16 16" aria-hidden="true"><path d="M5 7V5a3 3 0 0 1 6 0v2M3 7h10v7H3z" fill="none" stroke="currentColor"/></svg>OptionIntent · server + emulator</div>
-        <strong>20,000</strong> sats
-        <p>Loss. Leaf <code>cancel</code>. The writer key is not a signer. <code>checkTime(deadline)</code> has passed. <code>cancelIntent</code> sends this.</p>
+      <div class="coin intent covenant loss" data-sat="50000" data-party="intent">
+        <div class="who"><svg class="lock" viewBox="0 0 16 16" aria-hidden="true"><path d="M5 7V5a3 3 0 0 1 6 0v2M3 7h10v7H3z" fill="none" stroke="currentColor"/></svg>Cancel intent · emulator</div>
+        <strong>50,000</strong> sats
+        <p>Loss. Leaf <code>cancel</code>. One input. Server signs the checkpoint.</p>
       </div>
     </div>
     <div class="spine">
       <div class="tid">cancel</div>
       <div>1 in → 1 out</div>
-      <div>20,000 = 20,000</div>
+      <div>50,000 = 50,000</div>
       <div class="ok">sats in = out</div>
     </div>
     <div class="col outputs">
-      <div class="coin writer gain" data-sat="20000" data-party="writer">
-        <div class="who">Writer program</div>
-        <strong>20,000</strong> sats
-        <p>Gain. Output 0 ≥ the input. Same owner as before the deposit, so the chapter net is zero.</p>
+      <div class="coin writer gain" data-sat="50000" data-party="writer">
+        <div class="who">Writer vtxo</div>
+        <strong>50,000</strong> sats
+        <p>Gain. Output 0 ≥ the input. Same <code>payoutVtxo</code> as the premium.</p>
       </div>
       <div class="tail">
         <div class="coin protocol opreturn" data-sat="0" data-party="protocol"><div class="who">Extension</div><strong>0</strong> sats</div>
@@ -732,8 +733,8 @@
     </div>
   </section>
   <ul class="nets">
-    <li class="writer"><div class="who">Writer</div><strong>0</strong></li>
-    <li class="desk"><div class="who">Desk</div><strong>0</strong></li>
+    <li class="writer"><div class="who">Writer</div><strong class="up">+50,000</strong><div>the cancelled collateral</div></li>
+    <li class="desk"><div class="who">Desk</div><strong>0</strong><div>never paid this intent</div></li>
   </ul>
 </article>
 
@@ -742,51 +743,51 @@
   <p>Each unilateral leaf is the owner’s signature after <code>older(exit)</code>. The spent program stores that delay as seconds. The compiler artifact stores it as blocks; <code>secondsExit</code> flips the type and leaves the integer. Outputs are not pinned, so each picture returns the input amount and flags the destination. No caller sends these leaves.</p>
   <section class="tx" data-name="intent-unilateral">
     <div class="col inputs">
-      <div class="coin intent covenant loss" data-sat="20000" data-party="intent">
+      <div class="coin intent covenant loss" data-sat="50000" data-party="intent">
         <div class="who"><svg class="lock" viewBox="0 0 16 16" aria-hidden="true"><path d="M5 7V5a3 3 0 0 1 6 0v2M3 7h10v7H3z" fill="none" stroke="currentColor"/></svg>OptionIntent · writer</div>
-        <strong>20,000</strong> sats
+        <strong>50,000</strong> sats
         <p>After 2,048 seconds. No server signature.</p>
       </div>
     </div>
-    <div class="spine"><div class="tid">unilateral</div><div>1 in → 1 out</div><div>20,000 = 20,000</div><div class="ok">sats in = out</div></div>
+    <div class="spine"><div class="tid">unilateral</div><div>1 in → 1 out</div><div>50,000 = 50,000</div><div class="ok">sats in = out</div></div>
     <div class="col outputs">
-      <div class="coin writer unpinned" data-sat="20000" data-party="writer">
+      <div class="coin writer unpinned" data-sat="50000" data-party="writer">
         <div class="who">Not pinned</div>
-        <strong>20,000</strong> sats
+        <strong>50,000</strong> sats
         <p>The script does not check this output.</p>
       </div>
     </div>
   </section>
   <section class="tx" data-name="vault-close">
     <div class="col inputs">
-      <div class="coin vault covenant loss" data-sat="20000" data-party="vault">
+      <div class="coin vault covenant loss" data-sat="50000" data-party="vault">
         <div class="who"><svg class="lock" viewBox="0 0 16 16" aria-hidden="true"><path d="M5 7V5a3 3 0 0 1 6 0v2M3 7h10v7H3z" fill="none" stroke="currentColor"/></svg>OptionVault · close</div>
-        <strong>20,000</strong> sats
+        <strong>50,000</strong> sats
         <p>Writer and holder signatures inside the script, plus server and emulator. No CSV. No caller.</p>
       </div>
     </div>
-    <div class="spine"><div class="tid">close</div><div>1 in → 1 out</div><div>20,000 = 20,000</div><div class="ok">sats in = out</div></div>
+    <div class="spine"><div class="tid">close</div><div>1 in → 1 out</div><div>50,000 = 50,000</div><div class="ok">sats in = out</div></div>
     <div class="col outputs">
-      <div class="coin writer unpinned" data-sat="20000" data-party="writer">
+      <div class="coin writer unpinned" data-sat="50000" data-party="writer">
         <div class="who">Not pinned</div>
-        <strong>20,000</strong> sats
+        <strong>50,000</strong> sats
         <p>Drawn at the input amount. The script does not choose who is paid.</p>
       </div>
     </div>
   </section>
   <section class="tx" data-name="vault-unilateral">
     <div class="col inputs">
-      <div class="coin vault covenant loss" data-sat="20000" data-party="vault">
+      <div class="coin vault covenant loss" data-sat="50000" data-party="vault">
         <div class="who"><svg class="lock" viewBox="0 0 16 16" aria-hidden="true"><path d="M5 7V5a3 3 0 0 1 6 0v2M3 7h10v7H3z" fill="none" stroke="currentColor"/></svg>OptionVault · writer</div>
-        <strong>20,000</strong> sats
+        <strong>50,000</strong> sats
         <p>After 2,048 seconds. The holder does not sign. No caller.</p>
       </div>
     </div>
-    <div class="spine"><div class="tid">unilateral</div><div>1 in → 1 out</div><div>20,000 = 20,000</div><div class="ok">sats in = out</div></div>
+    <div class="spine"><div class="tid">unilateral</div><div>1 in → 1 out</div><div>50,000 = 50,000</div><div class="ok">sats in = out</div></div>
     <div class="col outputs">
-      <div class="coin writer unpinned" data-sat="20000" data-party="writer">
+      <div class="coin writer unpinned" data-sat="50000" data-party="writer">
         <div class="who">Not pinned</div>
-        <strong>20,000</strong> sats
+        <strong>50,000</strong> sats
         <p>The script does not check this output.</p>
       </div>
     </div>
@@ -846,26 +847,26 @@
   <h2>Rejected, or not submitted</h2>
   <section class="tx" data-name="reject-premium" data-reject="script">
     <div class="col inputs">
-      <div class="coin intent covenant" data-sat="20000" data-party="intent"><div class="who">OptionIntent</div><strong>20,000</strong> sats</div>
+      <div class="coin intent covenant" data-sat="50000" data-party="intent"><div class="who">OptionIntent</div><strong>50,000</strong> sats</div>
       <div class="coin desk" data-sat="330" data-party="desk"><div class="who">Desk</div><strong>330</strong> sats<p>A premium of 330.</p></div>
     </div>
-    <div class="spine"><div class="tid">finalize</div><div>20,330 in</div><div>20,330 out</div><div class="bad">script rejects</div></div>
+    <div class="spine"><div class="tid">finalize</div><div>50,330 in</div><div>50,330 out</div><div class="bad">script rejects</div></div>
     <div class="col outputs">
       <div class="coin writer" data-sat="330" data-party="writer"><div class="who">Would be the writer</div><strong>330</strong> sats</div>
-      <div class="coin vault covenant" data-sat="20000" data-party="vault"><div class="who">Would be the vault</div><strong>20,000</strong> sats</div>
+      <div class="coin vault covenant" data-sat="50000" data-party="vault"><div class="who">Would be the vault</div><strong>50,000</strong> sats</div>
     </div>
   </section>
   <p>The script requires <code>premium &gt; 330</code>. <code>premiumRefusal</code> returns “premium below dust” and the desk does not quote it. 331 is the smallest premium the script accepts.</p>
 
   <section class="tx" data-name="reject-late" data-reject="script">
     <div class="col inputs">
-      <div class="coin intent covenant" data-sat="20000" data-party="intent"><div class="who">OptionIntent</div><strong>20,000</strong> sats<p>The deadline has passed.</p></div>
+      <div class="coin intent covenant" data-sat="50000" data-party="intent"><div class="who">OptionIntent</div><strong>50,000</strong> sats<p>The deadline has passed.</p></div>
       <div class="coin desk" data-sat="1000" data-party="desk"><div class="who">Desk</div><strong>1,000</strong> sats</div>
     </div>
     <div class="spine"><div class="tid">finalize</div><div>21,000 in</div><div>21,000 out</div><div class="bad">script rejects</div></div>
     <div class="col outputs">
       <div class="coin writer" data-sat="1000" data-party="writer"><div class="who">Would be the writer</div><strong>1,000</strong> sats</div>
-      <div class="coin vault covenant" data-sat="20000" data-party="vault"><div class="who">Would be the vault</div><strong>20,000</strong> sats</div>
+      <div class="coin vault covenant" data-sat="50000" data-party="vault"><div class="who">Would be the vault</div><strong>50,000</strong> sats</div>
     </div>
   </section>
   <p><code>finalize</code> requires <code>!checkTime(deadline)</code>. <code>cancel</code> requires <code>checkTime(deadline)</code>. At the deadline those two leaves do not both succeed. <code>fillQuote</code> returns <code>expired</code> and does not send.</p>
@@ -882,49 +883,49 @@
 
   <section class="tx" data-name="reject-short" data-reject="short">
     <div class="col inputs">
-      <div class="coin intent covenant" data-sat="20000" data-party="intent"><div class="who">OptionIntent</div><strong>20,000</strong> sats<p>Collateral is locked. The deadline has not passed.</p></div>
+      <div class="coin intent covenant" data-sat="50000" data-party="intent"><div class="who">OptionIntent</div><strong>50,000</strong> sats<p>Collateral is locked. The deadline has not passed.</p></div>
       <div class="coin desk" data-sat="999" data-party="desk"><div class="who">Desk</div><strong>999</strong> sats<p>Short of the 1,000 premium by 1 sat.</p></div>
     </div>
-    <div class="spine"><div class="tid">fillQuote</div><div>20,999 on hand</div><div>21,000 required</div><div class="bad">not submitted</div></div>
+    <div class="spine"><div class="tid">fillQuote</div><div>50,999 on hand</div><div>51,000 required</div><div class="bad">not submitted</div></div>
     <div class="col outputs">
       <div class="coin writer" data-sat="1000" data-party="writer"><div class="who">Wanted</div><strong>1,000</strong> sats<p>Not created.</p></div>
-      <div class="coin vault covenant" data-sat="20000" data-party="vault"><div class="who">Wanted</div><strong>20,000</strong> sats<p>Not created.</p></div>
+      <div class="coin vault covenant" data-sat="50000" data-party="vault"><div class="who">Wanted</div><strong>50,000</strong> sats<p>Not created.</p></div>
     </div>
   </section>
   <p><code>selectFloat</code> returns null. <code>fillQuote</code> returns <code>short</code> and does not call <code>send</code>.</p>
 
   <section class="tx" data-name="reject-asset" data-reject="script">
     <div class="col inputs">
-      <div class="coin vault covenant" data-sat="20000" data-party="vault"><div class="who">OptionVault</div><strong>20,000</strong> sats<p>Expiry has passed.</p></div>
+      <div class="coin vault covenant" data-sat="50000" data-party="vault"><div class="who">OptionVault</div><strong>50,000</strong> sats<p>Expiry has passed.</p></div>
       <div class="coin fee" data-sat="330" data-party="fee"><div class="who">Some other coin</div><strong>330</strong> sats<p>No identity unit.</p></div>
     </div>
-    <div class="spine"><div class="tid">settle</div><div>20,330 in</div><div>20,330 out</div><div class="bad">script rejects</div></div>
+    <div class="spine"><div class="tid">settle</div><div>50,330 in</div><div>50,330 out</div><div class="bad">script rejects</div></div>
     <div class="col outputs">
       <div class="coin fee" data-sat="330" data-party="fee"><div class="who">Would continue</div><strong>330</strong> sats</div>
-      <div class="coin writer" data-sat="20000" data-party="writer"><div class="who">Would be a payout</div><strong>20,000</strong> sats</div>
+      <div class="coin writer" data-sat="50000" data-party="writer"><div class="who">Would be a payout</div><strong>50,000</strong> sats</div>
     </div>
   </section>
   <p>Settle requires <code>tx.inputs[1].assets.lookup(beaconTxid, beaconGidx) == 1</code>. A coin without that unit fails closed. A missing slot for the expiry fails the same way.</p>
 
   <section class="tx" data-name="reject-replay" data-reject="script">
     <div class="col inputs">
-      <div class="coin beacon covenant" data-sat="330" data-asset="unit:1" data-party="beacon"><div class="who">AttestationBeacon</div><strong>330</strong> sats<p>1 unit. Someone else sends the nine public prints under key 1,790,463,993.</p></div>
+      <div class="coin beacon covenant" data-sat="330" data-asset="unit:1" data-party="beacon"><div class="who">AttestationBeacon</div><strong>330</strong> sats<p>1 unit. A second attest of a key already in a slot.</p></div>
     </div>
     <div class="spine"><div class="tid">attest</div><div>330 in</div><div>330 out</div><div class="bad">script rejects</div></div>
     <div class="col outputs">
       <div class="coin beacon covenant" data-sat="330" data-asset="unit:1" data-party="beacon"><div class="who">Would be the beacon</div><strong>330</strong> sats<p>A second slot with the same price.</p></div>
     </div>
   </section>
-  <p>The prints fit that key, so every print check passes. <code>checkSigFromStack(opSig, adminPk, sha256(ctrlTxid || next))</code> fails without the oracle service’s key. Eight such keys would otherwise push a real fixing out of the slots. The same leaf also rejects two prints from one oracle in a slice, a stored value other than the TWAP, a key already in a slot, and a publish before <code>key + 60</code>.</p>
+  <p><code>absent</code> rejects a key already in a slot. The same leaf also rejects a sample after key + keyLag, a publish before <code>checkTime(key + keyLag)</code>, and fewer signatures than <code>threshold</code>.</p>
 
   <section class="tx" data-name="reject-opreturn" data-reject="builder">
     <div class="col inputs">
-      <div class="coin writer" data-sat="21000" data-party="writer"><div class="who">Caller, before the extension</div><strong>21,000</strong> sats<p>Not a transaction <code>fill.ts</code> builds.</p></div>
+      <div class="coin writer" data-sat="51000" data-party="writer"><div class="who">Caller, before the extension</div><strong>51,000</strong> sats<p>Not a transaction <code>fill.ts</code> builds.</p></div>
     </div>
-    <div class="spine"><div class="tid">buildOffchainTx</div><div>21,000 in</div><div>21,000 out</div><div class="bad">SDK rejects</div></div>
+    <div class="spine"><div class="tid">buildOffchainTx</div><div>51,000 in</div><div>51,000 out</div><div class="bad">SDK rejects</div></div>
     <div class="col outputs">
       <div class="coin writer" data-sat="1000" data-party="writer"><div class="who">Payment</div><strong>1,000</strong> sats</div>
-      <div class="coin vault covenant" data-sat="20000" data-party="vault"><div class="who">Payment</div><strong>20,000</strong> sats</div>
+      <div class="coin vault covenant" data-sat="50000" data-party="vault"><div class="who">Payment</div><strong>50,000</strong> sats</div>
       <div class="coin protocol opreturn" data-sat="0" data-party="protocol"><div class="who">OP_RETURN 1</div><strong>0</strong> sats</div>
       <div class="coin protocol opreturn" data-sat="0" data-party="protocol"><div class="who">OP_RETURN 2</div><strong>0</strong> sats</div>
       <div class="coin protocol opreturn" data-sat="0" data-party="protocol"><div class="who">OP_RETURN 3</div><strong>0</strong> sats<p><code>MAX_OP_RETURN</code> is 2. The throw happens before the anchor and before <code>attachExtension</code>.</p></div>
@@ -1028,8 +1029,8 @@
   <ul class="checks">
     <li>The premium output exists before the vault output. Finalize will not pay the vault without paying the writer at least the premium.</li>
     <li>Settle pays from one slot whose key equals the expiry, newest first, using the integer formula above, and folds a leg of 330 sats or less.</li>
-    <li>Settle sees that price only by spending the identity unit. The beacon’s read leaf carries the packet unchanged and adds <code>readFee</code> on output 0. This fixture uses 0. The service uses 1,000.</li>
-    <li>Attest stores only the TWAP of the nine prints it checks: three distinct oracles per slice, the latest print of each slice inside its window and all three within 60 seconds, medians weighted 900, 900, and 60. It needs the oracle service’s signature over the new packet.</li>
+    <li>Settle sees that price only by spending the identity unit. The beacon’s read leaf carries the packet unchanged and adds <code>readFee</code>, 1,000 sats, on output 0. The vault pays it.</li>
+    <li>Attest stores the signed price. The sample is <code>sha256(ctrlTxid || BTCUSD || price || time)</code>. At least <code>threshold</code> of the oracle keys must sign. The smoke test uses one key. The sample time is at or before key + keyLag, and <code>checkTime(key + keyLag)</code> has passed.</li>
     <li>Attest moves the round by one, refuses a key already in a slot, and continues the same script and the same unit.</li>
     <li>Migrate needs three of the five oracle keys and the oracle service key, and continues the unit and the packet onto the signed next program. The vault’s constructor does not contain the beacon script or the committee keys.</li>
     <li>Cancel after the deadline returns the intent coin to the writer program. Unilateral leaves wait 2,048 seconds.</li>
@@ -1037,7 +1038,7 @@
   </ul>
   <h2>Not claimed</h2>
   <ul class="checks">
-    <li>The oracles’ prices match the market. The script checks nine signatures and the arithmetic, not where the prices came from. The Mutinynet prints came from test keys.</li>
+    <li>The oracle’s price matches the market. The script checks the signatures and the arithmetic, not where the price came from. The smoke test signs the strike with its own oracle key.</li>
     <li>Which valid prints are used. When more than three oracles sign inside a slice, the oracle service picks the three. The script accepts any valid three.</li>
     <li>A print names no beacon, so an oracle’s signature is valid on every beacon that lists its key. That is the design.</li>
     <li>The oracle service publishes the expiry key before it falls out of the eight slots, and someone submits the settle. A read is free. Lateness of a fixing is not bounded. A version byte other than 0x01 fails settle and leaves the coin to the writer’s unilateral leaf after the delay.</li>
@@ -1049,13 +1050,14 @@
   </ul>
 </section>
 
-<p class="src">Contracts read at commit <span id="commit">1f38cc34c3064c2e3fb03068c69586952d772d0f</span>. Scripts: <code>contracts/option_intent.ark</code>, <code>contracts/option_vault.ark</code>, <code>contracts/attestation_beacon.ark</code>, <code>contracts/non_interactive_swap.ark</code>, <code>contracts/single_sig.ark</code>. Builders: <code>desk/fill.ts</code>, <code>app/src/fund.ts</code>, <code>protocol/cospend.ts</code>, <code>protocol/contracts.ts</code>, <code>protocol/beacon.ts</code>, <code>oracle/service.ts</code>. Payoff and fixing: <code>app/settle-math.js</code> <code>holderPayoff</code>, <code>settlementOutputs</code>, and <code>fixing</code>. Live parameters: Mutinynet <code>/v1/info</code> on 2026-09-27. English only.</p>
+<p class="src">Amounts from <code>scripts/smoke-regtest.test.ts</code> and <code>app/settle-math.js</code> <code>holderPayoff</code> / <code>settlementOutputs</code>. Scripts: <code>contracts/option_intent.ark</code>, <code>contracts/option_vault.ark</code>, <code>contracts/attestation_beacon.ark</code>. Builders: <code>desk/fill.ts</code>, <code>protocol/cospend.ts</code>, <code>protocol/beacon.ts</code>, <code>oracle/service.ts</code>, <code>settle/vault.ts</code>. Live parameters: regtest <code>http://127.0.0.1:7070/v1/info</code> on 2026-10-09. English only.</p>
 </main>
 <script type="module">
 import { holderPayoff, settlementOutputs } from "./settle-math.js";
 
-const Q = 20_000n;
+const Q = 50_000n;
 const K = 9_700_000n;
+const READ_FEE = 1_000n;
 const BEACON = 330n;
 const kindEl = document.querySelector("#kind");
 const priceEl = document.querySelector("#price");
@@ -1075,7 +1077,7 @@ function fmt(n) {
 function draw(kind, mark) {
   const x0 = 5_000_000;
   const x1 = 12_000_000;
-  const yMax = 20_000;
+  const yMax = 50_000;
   const X = (st) => 44 + ((st - x0) / (x1 - x0)) * 584;
   const Y = (ph) => 182 - (ph / yMax) * 170;
   let d = "";
@@ -1104,9 +1106,9 @@ function render() {
   }
   const kind = Number(kindEl.value);
   const ph = holderPayoff(kind, price, K, Q);
-  const out = settlementOutputs(ph, Q);
+  const out = settlementOutputs(ph, Q, READ_FEE);
   const totalIn = Q + BEACON;
-  const beaconOut = BEACON;
+  const beaconOut = BEACON + READ_FEE;
   draw(kind, price);
   holderOut.hidden = out.holder === 0n;
   writerOut.hidden = out.writer === 0n;
