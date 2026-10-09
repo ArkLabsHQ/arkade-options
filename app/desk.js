@@ -11,15 +11,7 @@ import {
   WALLET_URL,
   writerPayoutAddress,
 } from "./src/fund.ts";
-import {
-  callbackAllowed,
-  hasWalletParams,
-  pageCallback,
-  readWalletHandoff,
-  stripWalletParams,
-  walletConnectUrl,
-  walletSendUrl,
-} from "./src/wallet-link.ts";
+import { callbackAllowed, pageCallback, readWalletHandoff, stripWalletParams, walletAppUrl } from "./src/wallet-link.ts";
 import { artifactLine } from "./src/program.ts";
 import { requestQuotes } from "./src/rfq.ts";
 import { deribitPremium, fetchSurface } from "../protocol/deribit.ts";
@@ -31,8 +23,7 @@ import { readIntent, watchIntents } from "./src/watch.ts";
 
 const STORE = "arkade-options-desk-v1";
 const REFRESH_MS = 18_000;
-const CONNECT_PENDING = "arkade-options-wallet-connect";
-const SEND_PENDING = "arkade-options-wallet-send";
+const WALLET_ASK = "arkade-options-wallet";
 
 const state = {
   spotCents: null,
@@ -192,9 +183,6 @@ function expiryUnix() {
 }
 
 let pinnedStrike = null;
-let walletNote = "";
-let resumeId = "";
-let connectError = "";
 
 function ladder() {
   const steps = state.kind === 0 ? [105n, 110n, 115n, 125n, 140n] : [95n, 90n, 85n, 75n, 60n];
@@ -593,9 +581,8 @@ function renderSell() {
   }
 
   let note = "";
-  if (walletNote && position && position.status === "locking") {
-    note = walletNote;
-  } else if (!frozen) {
+  if (position?.status === "locking" && position.walletTxid) note = statusLead(position);
+  else if (!frozen) {
     if (quote && quote.sats <= DUST) {
       note = dustNote(quote.sats);
     } else if (!quote && state.quoting) {
@@ -840,7 +827,7 @@ function txLinks(position) {
 function detail(position) {
   const box = document.createElement("div");
   box.className = "lab";
-  const leadText = position.id === resumeId && walletNote ? walletNote : statusLead(position);
+  const leadText = statusLead(position);
   if (leadText) {
     const lead = document.createElement("p");
     lead.className = "lock-note";
@@ -934,7 +921,7 @@ function depositBlock(position) {
     pay.className = "copy-uri";
     pay.textContent = "Pay in Arkade wallet";
     pay.addEventListener("click", () => {
-      payInWallet(position);
+      openWallet(position);
     });
     frag.append(pay);
   }
@@ -972,12 +959,10 @@ async function copyToClipboard(button, text) {
 
 function adoptQuote() {
   if (termsTouched) return;
-  const resumed = resumeId && visiblePositions().find((position) => position.id === resumeId);
-  const latest = resumed || visiblePositions()
+  const latest = visiblePositions()
     .filter((position) => position.kind === state.kind && position.address)
     .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))[0];
-  if (!latest || state.spotCents == null) return;
-  if (resumed) state.kind = resumed.kind;
+  if (!latest) return;
   pinnedStrike = latest.strike;
   const idx = ladder().findIndex((cents) => cents === latest.strike);
   if (idx < 0) return;
@@ -985,7 +970,6 @@ function adoptQuote() {
   if (latest.tenorSec > 0) {
     state.tenorSec = latest.tenorSec;
     state.days = 0;
-    if (resumeId && latest.id === resumeId) pinnedExpiry = Number(latest.expiry) || 0;
   } else if (latest.days === 7 || latest.days === 30 || latest.days === 90) {
     state.tenorSec = 0;
     state.days = latest.days;
@@ -996,7 +980,6 @@ function adoptQuote() {
 }
 
 function onTermsChanged() {
-  if (termsTouched) walletNote = "";
   pinnedExpiry = 0;
   state.market = null;
   state.deskQuote = null;
@@ -1397,127 +1380,68 @@ function listen(id, type, fn) {
   if (node) node.addEventListener(type, fn);
 }
 
-function sessionGet(key) {
+function askWallet(value) {
   try {
-    return sessionStorage.getItem(key) || "";
-  } catch {
-    return "";
-  }
-}
-
-function sessionSet(key, value) {
-  try {
-    sessionStorage.setItem(key, value);
+    sessionStorage.setItem(WALLET_ASK, value);
     return true;
   } catch {
     return false;
   }
 }
 
-function sessionDel(key) {
+function takeWalletAsk() {
   try {
-    sessionStorage.removeItem(key);
+    const value = sessionStorage.getItem(WALLET_ASK) || "";
+    sessionStorage.removeItem(WALLET_ASK);
+    return value;
   } catch {
-    // Private mode can refuse storage. The return is ignored without the flag.
+    return "";
   }
 }
 
-function walletReturnError(err) {
-  return err instanceof Error ? err.message : "The wallet link could not be opened.";
-}
-
-function openWalletConnect() {
-  const callback = pageCallback(location.href, { flow: "connect" });
-  const error = $("wallet-connect-error");
-  if (!callbackAllowed(callback)) {
-    if (error) error.textContent = "The wallet only returns to https, or to localhost. Paste the address instead.";
+function openWallet(position) {
+  if (position && position.status !== "locking") return;
+  const request = position ? (position.uri || paymentUri(position.address, position.collateral)) : "";
+  const back = pageCallback(location.href, position ? { flow: "send", position: position.id } : { flow: "connect" });
+  const tell = $(position ? "status" : "account-error");
+  if (!callbackAllowed(back)) {
+    if (tell) tell.textContent = "The wallet only returns to https, or to localhost.";
     return;
   }
-  if (!sessionSet(CONNECT_PENDING, "1")) {
-    if (error) error.textContent = "This browser is not keeping the wallet return. Paste the address instead.";
+  if (!askWallet(position ? position.id : "connect")) {
+    if (tell) tell.textContent = "This browser is not keeping the wallet return.";
     return;
   }
-  sessionDel(SEND_PENDING);
-  try {
-    location.assign(walletConnectUrl(WALLET_URL, callback));
-  } catch (err) {
-    sessionDel(CONNECT_PENDING);
-    if (error) error.textContent = walletReturnError(err);
-  }
-}
-
-function payInWallet(position) {
-  if (!position || position.status !== "locking") return;
-  const request = position.uri || paymentUri(position.address, position.collateral);
-  const callback = pageCallback(location.href, { flow: "send", position: position.id });
-  if (!callbackAllowed(callback)) {
-    walletNote = "The wallet only returns to https, or to localhost. Copy the payment link instead.";
-    renderSell();
-    renderBlotter();
-    return;
-  }
-  if (!sessionSet(SEND_PENDING, position.id)) {
-    walletNote = "This browser is not keeping the wallet return. Copy the payment link instead.";
-    renderSell();
-    renderBlotter();
-    return;
-  }
-  sessionDel(CONNECT_PENDING);
-  try {
-    location.assign(walletSendUrl(WALLET_URL, request, callback));
-  } catch (err) {
-    sessionDel(SEND_PENDING);
-    walletNote = walletReturnError(err);
-    renderSell();
-    renderBlotter();
-  }
+  location.assign(walletAppUrl(WALLET_URL, position ? "send" : "connect", back, request || undefined));
 }
 
 function consumeWalletHandoff() {
   const handoff = readWalletHandoff(location.search);
-  const pendingConnect = sessionGet(CONNECT_PENDING) === "1";
-  const pendingSend = sessionGet(SEND_PENDING);
-  sessionDel(CONNECT_PENDING);
-  sessionDel(SEND_PENDING);
-  if (hasWalletParams(location.search)) {
-    history.replaceState(null, "", stripWalletParams(location.href));
-  }
-  if (handoff.kind === "none") return;
-  if (handoff.kind === "connect" || handoff.kind === "connect-denied" || handoff.kind === "connect-invalid") {
-    if (!pendingConnect) return;
-    if (handoff.kind === "connect") {
-      try {
-        state.address = saveAddress(handoff.address);
-        connectError = "";
-      } catch (err) {
-        connectError = err instanceof Error ? err.message : "That address was not saved.";
-      }
-      return;
+  const pending = takeWalletAsk();
+  history.replaceState(null, "", stripWalletParams(location.href));
+  if (handoff.kind === "connect" && pending === "connect") {
+    try {
+      state.address = saveAddress(handoff.address);
+    } catch (err) {
+      const node = $("account-error");
+      if (node) node.textContent = err instanceof Error ? err.message : "That address was not saved.";
     }
-    connectError = handoff.kind === "connect-denied"
-      ? "The wallet did not share an address."
-      : "The wallet could not open that request.";
     return;
   }
-  if (!pendingSend || handoff.positionId !== pendingSend) return;
-  const position = state.positions.find((item) => item.id === pendingSend);
-  resumeId = pendingSend;
-  if (position) state.kind = position.kind;
-  if (handoff.kind === "sent") {
-    if (position && handoff.txid) {
-      position.walletTxid = handoff.txid;
-      persist();
-    }
-    walletNote = "The wallet sent this payment. Waiting for the deposit to show up.";
+  if (handoff.kind === "connect-error" && pending === "connect") {
+    const node = $("account-error");
+    if (node) node.textContent = "The wallet did not share an address.";
     return;
   }
-  walletNote = handoff.kind === "send-denied"
-    ? "The wallet did not send. You can pay from there, or copy the link."
-    : "The wallet could not open that payment. Copy the link instead.";
+  if (handoff.kind !== "sent" || handoff.positionId !== pending || !handoff.txid) return;
+  const position = state.positions.find((item) => item.id === pending);
+  if (!position) return;
+  position.walletTxid = handoff.txid;
+  persist();
 }
 
 function bind() {
-  listen("wallet-connect", "click", openWalletConnect);
+  listen("wallet-connect", "click", () => openWallet());
   listen("account-save", "click", connectAddress);
   listen("account-key", "keydown", (event) => {
     if (event.key === "Enter") connectAddress();
@@ -1594,7 +1518,7 @@ function bind() {
   listen("pay-wallet", "click", () => {
     const deposit = shownDeposit();
     const position = deposit && state.positions.find((item) => item.address === deposit.address);
-    if (position) payInWallet(position);
+    if (position) openWallet(position);
   });
   document.querySelectorAll("[data-kind]").forEach((btn) => {
     btn.addEventListener("click", () => openSell(Number(btn.dataset.kind)));
@@ -1664,15 +1588,11 @@ function showFromHash() {
 state.address = readAddress() || "";
 consumeWalletHandoff();
 bind();
-if (connectError) {
-  const error = $("wallet-connect-error");
-  if (error) error.textContent = connectError;
-}
 {
   const route = routeFromHash();
   if (!state.address) show("connect", "replace");
   else if (route.view === "sell") {
-    if (!resumeId) state.kind = route.kind;
+    state.kind = route.kind;
     show("sell", "replace");
   } else if (route.view === "home") show("home", "replace");
   else show("sell", "replace");
