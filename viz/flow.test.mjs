@@ -2,12 +2,13 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-import { fixing, holderPayoff, settlementOutputs } from "../app/settle-math.js";
+import { holderPayoff, settlementOutputs } from "../app/settle-math.js";
 
 const html = readFileSync(new URL("./index.html", import.meta.url), "utf8");
-const Q = 20_000n;
+const Q = 50_000n;
 const K = 9_700_000n;
 const PREM = 1_000n;
+const READ = 1_000n;
 
 function tx(name) {
   const match = html.match(new RegExp(`<section class="tx" data-name="${name}"([\\s\\S]*?)</section>`));
@@ -49,7 +50,7 @@ function scenario(id) {
 }
 
 function optionNet(kind, settlement) {
-  const outputs = settlementOutputs(holderPayoff(kind, settlement, K, Q), Q);
+  const outputs = settlementOutputs(holderPayoff(kind, settlement, K, Q), Q, READ);
   return {
     writer: Number(PREM + outputs.writer - Q),
     desk: Number(outputs.holder - PREM),
@@ -83,25 +84,27 @@ test("every drawn bitcoin transaction conserves sats", () => {
 test("scenario nets match the vault payoff", () => {
   assert.deepEqual(scenario("call-itm"), optionNet(0, 10_000_000n));
   assert.deepEqual(scenario("call-otm"), optionNet(0, K));
-  assert.deepEqual(scenario("dust"), optionNet(0, 9_863_237n));
-  assert.deepEqual(scenario("put-all"), optionNet(1, 4_849_878n));
-  assert.deepEqual(scenario("refund"), { writer: 0, desk: 0 });
+  assert.deepEqual(scenario("dust"), optionNet(0, 9_764_642n));
+  assert.deepEqual(scenario("put-all"), optionNet(1, 4_850_000n));
+  assert.deepEqual(scenario("refund"), { writer: 50_000, desk: 0 });
 
-  const split = settlementOutputs(holderPayoff(0, 10_000_000n, K, Q), Q);
+  const split = settlementOutputs(holderPayoff(0, 10_000_000n, K, Q), Q, READ);
   const foldedWriter = Number(1_330n + split.writer - Q);
   const foldedDesk = Number(split.holder - 1_330n);
   assert.deepEqual(scenario("fill-dust"), { writer: foldedWriter, desk: foldedDesk });
-  assert.equal(holderPayoff(0, 9_862_736n, K, Q), 330n);
-  assert.equal(holderPayoff(0, 9_863_237n, K, Q), 331n);
-  assert.equal(holderPayoff(1, 4_849_878n, K, Q), Q);
-  assert.equal(split.holder, 600n);
-  assert.equal(split.writer, 19_400n);
+  assert.equal(holderPayoff(0, 9_764_641n, K, Q), 330n);
+  assert.equal(holderPayoff(0, 9_764_642n, K, Q), 331n);
+  assert.equal(holderPayoff(1, 4_850_000n, K, Q), Q);
+  assert.equal(split.holder, 1_500n);
+  assert.equal(split.writer, 47_500n);
+  assert.equal(settlementOutputs(0n, Q, READ).writer, Q - READ);
 });
 
 test("the page names the live parameters and the sources", () => {
   assert.match(html, /lang="en"/);
-  assert.match(html, /1f38cc34c3064c2e3fb03068c69586952d772d0f/);
-  assert.match(html, /2026-09-27/);
+  assert.match(html, /scripts\/smoke-regtest\.test\.ts/);
+  assert.match(html, /2026-10-09/);
+  assert.match(html, /127\.0\.0\.1:7070\/v1\/info/);
   assert.match(html, /vtxoMinAmount/);
   assert.match(html, /maxOpReturnOutputs/);
   assert.match(html, /unilateralExitDelay/);
@@ -136,20 +139,11 @@ test("the page names the live parameters and the sources", () => {
   for (const id of links) assert.equal(id.length, 64, id);
 });
 
-test("the prints table is the TWAP attest computes", () => {
-  const table = html.match(/<table id="prints" data-expiry="(\d+)" data-twap="(\d+)">/);
-  assert.ok(table);
-  const expiry = BigInt(table[1]);
-  const slices = [0, 1, 2].map(() => ({ price: [], time: [], who: [] }));
-  for (const [, slice, who, price, offset] of html.matchAll(/data-print="(\d):(\d):(\d+):(-?\d+)"/g)) {
-    slices[Number(slice)].price.push(BigInt(price));
-    slices[Number(slice)].time.push(expiry + BigInt(offset));
-    slices[Number(slice)].who.push(BigInt(who));
-  }
-  assert.equal(fixing(expiry, slices).twap, BigInt(table[2]));
-  assert.equal(fixing(expiry - 10n, slices).error, undefined);
-  assert.equal(fixing(expiry + 30n, slices).error, undefined);
-  assert.ok(fixing(expiry - 11n, slices).error);
-  assert.ok(fixing(expiry + 31n, slices).error);
-  assert.match(html, /1,790,463,982 to 1,790,464,022/);
+test("the strike settlement is the smoke test's published price", () => {
+  assert.equal(holderPayoff(0, K, K, Q), 0n);
+  assert.match(html, /9,700,000/);
+  assert.match(html, /pnpm smoke:regtest/);
+  assert.match(html, /49,000/);
+  assert.match(html, /1,330/);
+  assert.doesNotMatch(html, /id="prints"/);
 });

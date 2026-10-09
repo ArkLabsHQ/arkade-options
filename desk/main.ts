@@ -7,7 +7,6 @@ import {
   asset,
   ContractManager,
   DefaultVtxo,
-  networks,
   RestArkProvider,
   RestEmulatorProvider,
   RestIndexerProvider,
@@ -27,6 +26,7 @@ import {
 } from "../protocol/constants.ts";
 import { assertServerExit, bindContracts, directPayoutKey, payoutVtxo, type Terms } from "../protocol/contracts.ts";
 import { bytesToHex, hexToBytes } from "../protocol/hex.ts";
+import { networkByName } from "../protocol/network.ts";
 import { intentProgram } from "../protocol/programs.ts";
 import {
   parsePosition,
@@ -124,20 +124,21 @@ const contractManager = await ContractManager.create({
   walletRepository: storage.walletRepository,
   vtxoSyncMaxAgeMs: 60_000,
 });
+const network = networkByName((await ark.getInfo()).network);
 const client = await arkade.Arkade.connect({
   arkade: ark,
   indexer,
   emulator: new RestEmulatorProvider(emulatorUrl),
   identity,
   contractManager,
-  network: networks.mutinynet,
+  network,
 });
 if (!client.emulatorKey) throw new Error("emulator key missing");
 await assertServerExit(arkUrl);
 
 const holderPk = await identity.xOnlyPublicKey();
 const deskScript: DefaultVtxo.Script = payoutVtxo(holderPk, client.serverKey, EXIT);
-const address = deskScript.address(networks.mutinynet.hrp, client.serverKey).encode();
+const address = deskScript.address(network.hrp, client.serverKey).encode();
 const pubkey = nostrPubkey(secret);
 
 let balance = 0n;

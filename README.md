@@ -113,3 +113,11 @@ docker run --rm -p 8080:80 arkade-options
 ```bash
 pnpm test
 ```
+
+Local arkade regtest (Docker, bitcoin regtest + arkd + emulator):
+
+```bash
+pnpm smoke:regtest
+```
+
+That runs the option the contracts settle. The oracle service issues and deploys the beacon, one intent is finalized, the other is cancelled, the oracle publishes the strike, and the vault settles. It fails unless the beacon is deployed and the strike payout lands. The coins in that run are drawn at [viz/index.html](viz/index.html), also linked from the page as Fund flow. Details are in [docs/runbook.md](docs/runbook.md).

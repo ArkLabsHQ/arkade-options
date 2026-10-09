@@ -332,3 +332,42 @@ test("settleEmulatorTx finalizes the package send() returned, and submits it whe
   assert.equal(submits, 1);
   assert.deepEqual(finalized, ["submitted", arkTx.id]);
 });
+
+test("settleEmulatorTx treats an already-finalized package as done", async () => {
+  const desk = key(5);
+  const server = Uint8Array.from(Buffer.from(SERVER, "hex"));
+  const script = payoutVtxo(await desk.xOnlyPublicKey(), server, EXIT);
+  const { arkTx, checkpoints } = buildOffchainTx(
+    [{
+      txid: "ee".repeat(32),
+      vout: 0,
+      value: 1_000,
+      tapLeafScript: script.forfeit(),
+      tapTree: script.encode(),
+    } as unknown as ArkTxInput],
+    [{ script: script.pkScript, amount: 1_000n }],
+    { script: new Uint8Array([0x51]), params: { timelock: { type: "seconds", value: EXIT }, pubkeys: [server] } } as never,
+  );
+  let submits = 0;
+  const done = await settleEmulatorTx({
+    identity: desk,
+    deskScript: script,
+    txid: arkTx.id,
+    signedArkTx: base64.encode(arkTx.toPSBT()),
+    signedCheckpointTxs: [base64.encode(checkpoints[0]!.toPSBT())],
+    ark: {
+      async getPendingTxs() {
+        return [];
+      },
+      async finalizeTx() {
+        throw new Error("INTERNAL_ERROR (0): failed to finalize offchain tx: not in a valid stage to finalize offchain tx");
+      },
+      async submitTx() {
+        submits += 1;
+        return { arkTxid: arkTx.id, signedCheckpointTxs: [] };
+      },
+    },
+  });
+  assert.equal(done, true);
+  assert.equal(submits, 0);
+});

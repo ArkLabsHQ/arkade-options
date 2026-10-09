@@ -2,7 +2,7 @@ import path from "node:path";
 
 import {
   defaultEmulatorPubkey,
-  networks,
+  RestArkProvider,
   RestEmulatorProvider,
   SingleKey,
   Wallet,
@@ -10,6 +10,7 @@ import {
 
 import { ARK_URL, EMULATOR_URL } from "../protocol/constants.ts";
 import { bytesToHex, hexToBytes } from "../protocol/hex.ts";
+import { networkByName } from "../protocol/network.ts";
 import { openSqliteStorage } from "../protocol/sqlite-storage.ts";
 import { btcUsdCents } from "./price.ts";
 import { createOracle, type OracleWallet } from "./service.ts";
@@ -99,7 +100,7 @@ const oracle = await createOracle({
   oracleKey,
   signerKeys: signerKeys.length ? signerKeys : undefined,
   threshold,
-  emulatorKey: hexToBytes(defaultEmulatorPubkey(networks.mutinynet)),
+  emulatorKey: hexToBytes(defaultEmulatorPubkey(networkByName((await new RestArkProvider(arkUrl).getInfo()).network))),
   wallet: wallet as unknown as OracleWallet | undefined,
   indexer: wallet?.indexerProvider,
   emulator: new RestEmulatorProvider(emulatorUrl),
