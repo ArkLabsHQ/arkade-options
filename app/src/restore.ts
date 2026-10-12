@@ -15,6 +15,8 @@ export type VaultCoin = {
   isSpent?: boolean;
   spentBy?: string;
   arkTxId?: string;
+  /** Indexer pkScript. When set, it must be this vault. */
+  script?: string;
 };
 
 export type RestoreInput = {
@@ -137,6 +139,18 @@ export function parseRestoreFields(fields: RestoreFields): Omit<RestoreInput, "s
   };
 }
 
+/** The outpoint coin has to be the script these terms derive. */
+export function assertVaultCoin(vaultPkScript: Uint8Array, script: string | undefined): void {
+  const got = (script ?? "").trim().toLowerCase();
+  if (!got || got !== bytesToHex(vaultPkScript)) {
+    throw new Error("That outpoint is not the vault for these terms.");
+  }
+}
+
+export function vaultPkScriptHex(input: RestoreInput): string {
+  return bytesToHex(bindRestore(input).vaultPkScript);
+}
+
 function bindRestore(input: RestoreInput) {
   const terms: Terms = {
     kind: input.kind,
@@ -160,6 +174,7 @@ function bindRestore(input: RestoreInput) {
 
 export function restoreFromCoin(input: RestoreInput, coin: VaultCoin): RestoredVault {
   const bound = bindRestore(input);
+  if (coin.script !== undefined) assertVaultCoin(bound.vaultPkScript, coin.script);
   const settled = coinSettled(coin);
   return {
     id: `restore:${input.txid}:${input.vout}`,
@@ -212,5 +227,6 @@ export async function restoreVault(fields: RestoreFields): Promise<RestoredVault
   await vault.register();
   const coin = await readOutpoint(input.txid, input.vout);
   if (!coin) throw new Error("The indexer has no coin at that outpoint.");
+  assertVaultCoin(bound.vaultPkScript, coin.script);
   return restoreFromCoin(input, coin);
 }

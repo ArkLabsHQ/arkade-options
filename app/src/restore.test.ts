@@ -4,7 +4,7 @@ import test from "node:test";
 import { SingleKey } from "@arkade-os/sdk";
 
 import { bytesToHex } from "../../protocol/hex.ts";
-import { restoreFromCoin, SAMPLE_VAULT_TXID, type RestoreInput } from "./restore.ts";
+import { restoreFromCoin, SAMPLE_VAULT_TXID, vaultPkScriptHex, type RestoreInput } from "./restore.ts";
 
 const key = (n: number) => SingleKey.fromHex(n.toString(16).padStart(64, "0"));
 
@@ -51,4 +51,35 @@ test("the sample outpoint is an open vault when unspent and settled when spentBy
   const linked = restoreFromCoin(input, { isSpent: true, spentBy, arkTxId: ark });
   assert.equal(linked.status, "settled");
   assert.equal(linked.settleTxid, ark);
+});
+
+test("a coin with another script is not this vault", async () => {
+  const writer = key(1);
+  const holder = key(2);
+  const server = key(8);
+  const emulator = key(9);
+  const input: RestoreInput = {
+    txid: SAMPLE_VAULT_TXID,
+    vout: 1,
+    kind: 0,
+    strike: 10_000_000n,
+    expiry: 1_790_000_000n,
+    collateral: 100_000n,
+    writerPk: await writer.xOnlyPublicKey(),
+    holderPk: await holder.xOnlyPublicKey(),
+    beaconTxidHex: "07".repeat(32),
+    beaconGidx: 0,
+    exit: 2048n,
+    readFee: 1000n,
+    serverKey: await server.xOnlyPublicKey(),
+    emulatorKey: await emulator.compressedPublicKey(),
+  };
+  const script = vaultPkScriptHex(input);
+  const wrongStrike = { ...input, strike: input.strike + 1n };
+  assert.notEqual(vaultPkScriptHex(wrongStrike), script);
+  assert.throws(
+    () => restoreFromCoin(wrongStrike, { isSpent: true, spentBy: "ab".repeat(32), script }),
+    /not the vault/,
+  );
+  assert.equal(restoreFromCoin(input, { isSpent: false, spentBy: "", script }).status, "filled");
 });

@@ -1657,11 +1657,11 @@ async function fillKept() {
   let any = false;
   await Promise.all(rows.map(async (position) => {
     if (position.keptChecked || position.writerKeep || !settlementKnown(position)) return;
-    position.keptChecked = true;
     const script = writerScriptOf(position);
     if (!script) return;
     const split = await readKept(position.settleTxid, script);
     if (!split) return;
+    position.keptChecked = true;
     position.writerKeep = split.writer.toString();
     position.deskTake = split.desk.toString();
     any = true;
