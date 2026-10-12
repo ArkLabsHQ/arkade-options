@@ -1,7 +1,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { callbackAllowed, readWalletHandoff, stripWalletParams, walletAppUrl } from "./src/wallet-link.ts";
+import {
+  callbackAllowed,
+  pageCallback,
+  popupHandoffMessage,
+  readWalletHandoff,
+  readWalletHandoffMessage,
+  stripWalletParams,
+  walletAppUrl,
+  walletHandoffMessage,
+  walletMessageTarget,
+} from "./src/wallet-link.ts";
 
 const ADDRESS =
   "tark1qqcpq7yq3e8hhsx6ml3fud93m7827qggaurtzu3zwsr4a0qs0gf848nste9qrnlrjwdc39u8pmyczeuwf2g4cfjhqa8esm8mt05u9ev8d3v5pf";
@@ -42,4 +52,66 @@ test("a wallet link encodes the callback, and a denial drops the address", () =>
     stripWalletParams(`https://arkade.trade/?flow=send&position=pos-1&status=sent&txid=${TXID}&dev=1#/positions`),
     "/?dev=1#/positions",
   );
+});
+
+test("a popup posts the handoff, and a full-page return does not", () => {
+  const callback = pageCallback("https://arkade.trade/?dev=1#/connect", { flow: "connect", popup: "1" });
+  const opened = new URL(walletAppUrl(ORIGIN, "connect", callback));
+  assert.equal(opened.searchParams.get("popup"), null);
+  assert.equal(opened.searchParams.get("callback"), callback);
+
+  const returned = new URL(callback);
+  returned.searchParams.set("address", ADDRESS);
+  returned.searchParams.set("pubkey", PUBKEY.toUpperCase());
+  const connect = {
+    type: "arkade-wallet-handoff",
+    handoff: { kind: "connect", address: ADDRESS, pubkey: PUBKEY },
+  };
+  assert.deepEqual(walletHandoffMessage(returned.search), connect);
+  assert.deepEqual(popupHandoffMessage(returned.search, true), connect);
+  assert.equal(popupHandoffMessage(returned.search, false), null);
+  assert.deepEqual(readWalletHandoffMessage({
+    ...connect,
+    handoff: { ...connect.handoff, request: `bitcoin:?ark=${ADDRESS}` },
+  }), connect.handoff);
+
+  const denied = `?flow=connect&popup=1&error=denied&address=${ADDRESS}&pubkey=${PUBKEY}`;
+  assert.deepEqual(popupHandoffMessage(denied, true), {
+    type: "arkade-wallet-handoff",
+    handoff: { kind: "connect-error" },
+  });
+  assert.deepEqual(readWalletHandoffMessage(popupHandoffMessage(denied, true)), { kind: "connect-error" });
+
+  const sent = `?flow=send&popup=1&position=pos-1&status=sent&txid=${TXID}`;
+  assert.deepEqual(walletHandoffMessage(sent), {
+    type: "arkade-wallet-handoff",
+    handoff: { kind: "sent", positionId: "pos-1", txid: TXID },
+  });
+  assert.equal(popupHandoffMessage(sent.replace("&popup=1", ""), true), null);
+  assert.deepEqual(walletHandoffMessage(`?flow=send&position=pos-1&status=sent&txid=nope`), {
+    type: "arkade-wallet-handoff",
+    handoff: { kind: "sent", positionId: "pos-1" },
+  });
+  assert.equal(readWalletHandoffMessage({
+    type: "arkade-wallet-handoff",
+    handoff: { kind: "sent", positionId: "pos-1", txid: "nope" },
+  }), null);
+
+  assert.deepEqual(popupHandoffMessage(`?flow=send&popup=1&position=pos-1&error=denied`, true), {
+    type: "arkade-wallet-handoff",
+    handoff: { kind: "none" },
+  });
+  assert.equal(walletHandoffMessage("?dev=1"), null);
+  assert.equal(popupHandoffMessage("?popup=1&dev=1", true), null);
+  assert.equal(readWalletHandoffMessage({ type: "other", handoff: { kind: "connect-error" } }), null);
+  assert.equal(
+    stripWalletParams(`https://arkade.trade/?flow=connect&popup=1&address=${ADDRESS}&pubkey=${PUBKEY}&dev=1#/connect`),
+    "/?dev=1#/connect",
+  );
+
+  assert.equal(walletMessageTarget("https://arkade.trade"), "https://arkade.trade");
+  assert.equal(walletMessageTarget("http://127.0.0.1:4173"), "http://127.0.0.1:4173");
+  assert.equal(walletMessageTarget("http://192.168.1.20:4173"), null);
+  assert.equal(walletMessageTarget("https://arkade.trade/connect"), null);
+  assert.equal(walletMessageTarget("https://user:pass@arkade.trade"), null);
 });

@@ -11,7 +11,16 @@ import {
   WALLET_URL,
   writerPayoutAddress,
 } from "./src/fund.ts";
-import { callbackAllowed, pageCallback, readWalletHandoff, stripWalletParams, walletAppUrl } from "./src/wallet-link.ts";
+import {
+  callbackAllowed,
+  pageCallback,
+  popupHandoffMessage,
+  readWalletHandoff,
+  readWalletHandoffMessage,
+  stripWalletParams,
+  walletAppUrl,
+  walletMessageTarget,
+} from "./src/wallet-link.ts";
 import { artifactLine } from "./src/program.ts";
 import { requestQuotes } from "./src/rfq.ts";
 import { deribitPremium, fetchSurface } from "../protocol/deribit.ts";
@@ -46,6 +55,7 @@ const state = {
 
 let quoteGen = 0;
 const expiring = new Set();
+let walletWindow = null;
 
 const $ = (id) => document.getElementById(id);
 
@@ -1391,29 +1401,56 @@ function takeWalletAsk() {
   }
 }
 
+function openWalletPopup(url) {
+  if (walletWindow && !walletWindow.closed) {
+    try {
+      walletWindow.close();
+    } catch {
+      // The previous wallet window is already gone.
+    }
+  }
+  walletWindow = null;
+  let popup = null;
+  try {
+    // No `noopener`: the callback window has to see this page as `window.opener`.
+    popup = window.open(url, "_blank");
+  } catch {
+    popup = null;
+  }
+  if (!popup || popup === window) return false;
+  walletWindow = popup;
+  return true;
+}
+
 function openWallet(position) {
   if (position && position.status !== "locking") return;
   const request = position ? (position.uri || paymentUri(position.address, position.collateral)) : "";
-  const back = pageCallback(location.href, position ? { flow: "send", position: position.id } : { flow: "connect" });
+  const params = position ? { flow: "send", position: position.id } : { flow: "connect" };
+  const back = pageCallback(location.href, params);
   const tell = $(position ? "status" : "account-error");
   if (!callbackAllowed(back)) {
     if (tell) tell.textContent = "The wallet only returns to https, or to localhost.";
     return;
   }
+  const action = position ? "send" : "connect";
+  const payment = request || undefined;
+  const popupUrl = walletAppUrl(WALLET_URL, action, pageCallback(location.href, { ...params, popup: "1" }), payment);
+  const pageUrl = walletAppUrl(WALLET_URL, action, back, payment);
   if (!askWallet(position ? position.id : "connect")) {
     if (tell) tell.textContent = "This browser is not keeping the wallet return.";
     return;
   }
-  location.assign(walletAppUrl(WALLET_URL, position ? "send" : "connect", back, request || undefined));
+  // The wallet redirects the window it was opened in. Keep this page, and let
+  // that window post the return. A blocked popup still does the round trip.
+  if (!openWalletPopup(popupUrl)) location.assign(pageUrl);
 }
 
-function consumeWalletHandoff() {
-  const handoff = readWalletHandoff(location.search);
-  const pending = takeWalletAsk();
-  history.replaceState(null, "", stripWalletParams(location.href));
+function applyWalletHandoff(handoff, pending) {
   if (handoff.kind === "connect" && pending === "connect") {
     try {
       state.address = saveAddress(handoff.address);
+      const node = $("account-error");
+      if (node) node.textContent = "";
     } catch (err) {
       const node = $("account-error");
       if (node) node.textContent = err instanceof Error ? err.message : "That address was not saved.";
@@ -1430,6 +1467,55 @@ function consumeWalletHandoff() {
   if (!position) return;
   position.walletTxid = handoff.txid;
   persist();
+}
+
+function showWalletHandoff(handoff) {
+  if (handoff.kind === "connect" && state.address) show("sell");
+  if (handoff.kind !== "sent" || !handoff.txid) return;
+  if (state.view === "home") renderBlotter();
+  else if (state.view === "sell") renderSell();
+}
+
+function onWalletMessage(event) {
+  const target = walletMessageTarget(location.origin);
+  if (!target || event.origin !== target) return;
+  if (!walletWindow || event.source !== walletWindow) return;
+  const handoff = readWalletHandoffMessage(event.data);
+  if (!handoff) return;
+  applyWalletHandoff(handoff, takeWalletAsk());
+  showWalletHandoff(handoff);
+}
+
+function walletOpener() {
+  try {
+    if (!window.opener || window.opener === window) return null;
+    return window.opener;
+  } catch {
+    return null;
+  }
+}
+
+function consumeWalletHandoff() {
+  const opener = walletOpener();
+  const message = popupHandoffMessage(location.search, opener != null);
+  if (opener && message) {
+    const target = walletMessageTarget(location.origin);
+    history.replaceState(null, "", stripWalletParams(location.href));
+    if (target) {
+      try {
+        opener.postMessage(message, target);
+      } catch {
+        // The opener is gone.
+      }
+    }
+    window.close();
+    return true;
+  }
+  const handoff = readWalletHandoff(location.search);
+  const pending = takeWalletAsk();
+  history.replaceState(null, "", stripWalletParams(location.href));
+  applyWalletHandoff(handoff, pending);
+  return false;
 }
 
 function bind() {
@@ -1587,30 +1673,32 @@ function showFromHash() {
 }
 
 state.address = readAddress() || "";
-consumeWalletHandoff();
-bind();
-{
-  const route = routeFromHash();
-  if (!state.address) show("connect", "replace");
-  else if (route.view === "sell") {
-    state.kind = route.kind;
-    show("sell", "replace");
-  } else if (route.view === "home") show("home", "replace");
-  else show("sell", "replace");
+window.addEventListener("message", onWalletMessage);
+if (!consumeWalletHandoff()) {
+  bind();
+  {
+    const route = routeFromHash();
+    if (!state.address) show("connect", "replace");
+    else if (route.view === "sell") {
+      state.kind = route.kind;
+      show("sell", "replace");
+    } else if (route.view === "home") show("home", "replace");
+    else show("sell", "replace");
+  }
+  window.addEventListener("hashchange", showFromHash);
+  loadSpot().then(() => {
+    $("spot-source").textContent = state.spotSource;
+    $("spot-px").textContent = state.spotCents == null ? "—" : fmtUsdFromCents(state.spotCents);
+    adoptQuote();
+    if (state.view === "sell") renderSell();
+    renderBlotter();
+  });
+  loadArtifact();
+  startWatch();
+  setInterval(tick, 1000);
+  setInterval(startWatch, 15_000);
+  setInterval(() => {
+    void refreshPositionMarkets();
+  }, REFRESH_MS);
+  void hydrateMissing();
 }
-window.addEventListener("hashchange", showFromHash);
-loadSpot().then(() => {
-  $("spot-source").textContent = state.spotSource;
-  $("spot-px").textContent = state.spotCents == null ? "—" : fmtUsdFromCents(state.spotCents);
-  adoptQuote();
-  if (state.view === "sell") renderSell();
-  renderBlotter();
-});
-loadArtifact();
-startWatch();
-setInterval(tick, 1000);
-setInterval(startWatch, 15_000);
-setInterval(() => {
-  void refreshPositionMarkets();
-}, REFRESH_MS);
-void hydrateMissing();
