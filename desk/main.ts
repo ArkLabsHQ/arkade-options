@@ -39,7 +39,7 @@ import {
 } from "../protocol/messages.ts";
 import { connectTransport, nostrPubkey, type Incoming } from "../protocol/nostr.ts";
 import { deribitPremium, fetchSurface, surfaceStatus } from "../protocol/deribit.ts";
-import { premiumSats } from "../protocol/pricing.ts";
+import { payablePremium, premiumSats } from "../protocol/pricing.ts";
 import { openSqliteStorage } from "../protocol/sqlite-storage.ts";
 import { Book, hasBeacon, openPremium, pageQuotes, quoteCounts, type QuoteFilter, type QuoteRow } from "./book.ts";
 import { countFill, countQuote, emptyHour, hourLine, msUntilNextHour } from "./digest.ts";
@@ -258,6 +258,7 @@ async function onRequest(message: RfqRequest, from: string) {
     }
     sats = priced.sats;
   }
+  sats = payablePremium(sats);
   const dust = premiumRefusal(sats, BigInt(message.amount));
   if (dust) {
     await refuse(from, message.rfq_id, dust);

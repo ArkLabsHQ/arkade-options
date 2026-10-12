@@ -15,6 +15,7 @@ import { callbackAllowed, pageCallback, readWalletHandoff, stripWalletParams, wa
 import { artifactLine } from "./src/program.ts";
 import { requestQuotes } from "./src/rfq.ts";
 import { deribitPremium, fetchSurface } from "../protocol/deribit.ts";
+import { payablePremium } from "../protocol/pricing.ts";
 import { bestQuote } from "./quote.js";
 import { PINNED_DESKS, RELAYS } from "./rfq-config.js";
 import { DUST, Q_MAX, Q_MIN, writerPayoff } from "./settle-math.js";
@@ -44,7 +45,6 @@ const state = {
 };
 
 let quoteGen = 0;
-let quoteTimer = 0;
 const expiring = new Set();
 
 const $ = (id) => document.getElementById(id);
@@ -548,14 +548,14 @@ function renderSell() {
     confirm.hidden = false;
     confirm.textContent = state.confirming ? "Confirming" : "Sell again";
     const tooSmall = quote && quote.sats <= DUST;
-    confirm.disabled = state.confirming || Boolean(err) || !quote || tooSmall;
+    confirm.disabled = state.quoting || state.confirming || Boolean(err) || state.spotCents == null || !state.address || tooSmall;
   } else if (frozen) {
     confirm.hidden = true;
   } else if (!deposit || moved) {
     confirm.hidden = false;
     confirm.textContent = state.confirming ? "Confirming" : (moved ? "Confirm the new payout" : "Confirm");
     const tooSmall = quote && quote.sats <= DUST;
-    confirm.disabled = state.confirming || Boolean(err) || !quote || tooSmall;
+    confirm.disabled = state.quoting || state.confirming || Boolean(err) || state.spotCents == null || !state.address || tooSmall;
   } else {
     confirm.hidden = true;
   }
@@ -585,8 +585,8 @@ function renderSell() {
   else if (!frozen) {
     if (quote && quote.sats <= DUST) {
       note = dustNote(quote.sats);
-    } else if (!quote && state.quoting) {
-      note = state.market ? "Getting a quote." : "";
+    } else if (state.quoting) {
+      note = "Getting a quote.";
     } else if (!quote) {
       note = humanNote(state.quoteNote);
     } else if (state.quoteNote && !state.deskQuote) {
@@ -984,83 +984,74 @@ function onTermsChanged() {
   state.market = null;
   state.deskQuote = null;
   state.quoteNote = "";
-  state.quoting = state.spotCents != null && !sizeError(sizeSats());
-  clearTimeout(quoteTimer);
-  const gen = ++quoteGen;
+  state.quoting = false;
+  quoteGen += 1;
   renderSell();
-  if (!state.quoting) return;
-  quoteTimer = setTimeout(() => {
-    void refreshLive(gen);
-  }, 200);
 }
 
-async function refreshLive(gen) {
-  if (state.view !== "sell") return;
+async function askQuote() {
+  if (state.view !== "sell" || state.quoting || state.confirming) return;
   const sats = sizeSats();
   const err = state.spotCents == null ? "spot" : sizeError(sats);
-  if (gen !== quoteGen || sats == null || err || state.spotCents == null || !state.address) {
-    state.quoting = false;
-    if (gen === quoteGen) renderSell();
+  if (sats == null || err || state.spotCents == null || !state.address) {
+    renderSell();
     return;
   }
+  const gen = ++quoteGen;
+  state.quoting = true;
+  state.market = null;
+  state.deskQuote = null;
+  state.quoteNote = "";
+  renderSell();
   const expiry = expiryUnix();
   const picked = strike();
   try {
-    const points = await fetchSurface();
-    if (gen !== quoteGen) return;
-    const priced = deribitPremium({
-      kind: state.kind,
-      strikeUsd: Number(picked) / 100,
-      expiry: Number(expiry),
-      now: Math.floor(Date.now() / 1000),
-      collateralSats: sats,
-      spotUsd: Number(state.spotCents) / 100,
-      points,
-    });
-    state.market = priced
-      ? { sats: priced.sats, usd: priced.usd, iv: priced.iv, name: "Market" }
-      : null;
-    if (!priced && !state.deskQuote) state.quoteNote = "No market for this strike yet.";
-    else if (priced) state.quoteNote = "";
-  } catch {
-    if (gen !== quoteGen) return;
-    if (!state.deskQuote && !state.market) state.quoteNote = "The market did not answer.";
-  }
-  if (gen === quoteGen) renderSell();
-  if (PINNED_DESKS.length === 0) {
-    state.quoting = false;
-    if (gen === quoteGen) renderSell();
-    return;
-  }
-  try {
-    const live = await requestQuotes({
-      relays: RELAYS,
-      desks: PINNED_DESKS,
-      kind: state.kind,
-      strike: picked,
-      collateral: sats,
-      expiry,
-      spotCents: state.spotCents,
-      writerAddress: state.address,
-    });
-    if (gen !== quoteGen) return;
-    const best = live.quotes.length ? bestQuote(live.quotes, 0) : null;
-    if (best) {
-      state.deskQuote = best;
-      state.quoteNote = "";
+    if (PINNED_DESKS.length === 0) {
+      const points = await fetchSurface();
+      if (gen !== quoteGen) return;
+      const priced = deribitPremium({
+        kind: state.kind,
+        strikeUsd: Number(picked) / 100,
+        expiry: Number(expiry),
+        now: Math.floor(Date.now() / 1000),
+        collateralSats: sats,
+        spotUsd: Number(state.spotCents) / 100,
+        points,
+      });
+      if (!priced) {
+        state.quoteNote = "No market for this strike yet.";
+      } else {
+        const paid = payablePremium(priced.sats);
+        state.market = {
+          sats: paid,
+          usd: Number(paid) / 1e8 * (Number(state.spotCents) / 100),
+          iv: priced.iv,
+          name: "Market",
+        };
+      }
     } else {
-      clearStaleDeskQuote();
-      if (!state.deskQuote) state.quoteNote = live.note || "The desk did not answer.";
+      const live = await requestQuotes({
+        relays: RELAYS,
+        desks: PINNED_DESKS,
+        kind: state.kind,
+        strike: picked,
+        collateral: sats,
+        expiry,
+        spotCents: state.spotCents,
+        writerAddress: state.address,
+      });
+      if (gen !== quoteGen) return;
+      const best = live.quotes.length ? bestQuote(live.quotes, 0) : null;
+      if (best) state.deskQuote = best;
+      else state.quoteNote = live.note || "The desk did not answer.";
     }
   } catch (err) {
     if (gen !== quoteGen) return;
-    clearStaleDeskQuote();
-    if (!state.deskQuote) {
-      state.quoteNote = err instanceof Error ? err.message : "The desk did not answer.";
-    }
+    state.quoteNote = err instanceof Error ? err.message : "The desk did not answer.";
   }
+  if (gen !== quoteGen) return;
   state.quoting = false;
-  if (gen === quoteGen) renderSell();
+  renderSell();
 }
 
 async function confirm() {
@@ -1353,8 +1344,9 @@ async function refreshPositionMarkets() {
       points,
     });
     if (!priced) continue;
-    position.marketSats = priced.sats;
-    position.marketApy = annualized(priced.sats, position.collateral, tenorDays(position));
+    const paid = payablePremium(priced.sats);
+    position.marketSats = paid;
+    position.marketApy = annualized(paid, position.collateral, tenorDays(position));
     changed = true;
   }
   if (!changed) return;
@@ -1497,7 +1489,16 @@ function bind() {
     termsTouched = true;
     onTermsChanged();
   });
+  listen("size", "keydown", (event) => {
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    void askQuote();
+  });
   listen("confirm", "click", () => {
+    if (!liveQuote()) {
+      void askQuote();
+      return;
+    }
     void confirm();
   });
   listen("abort", "click", () => {
@@ -1602,7 +1603,7 @@ loadSpot().then(() => {
   $("spot-source").textContent = state.spotSource;
   $("spot-px").textContent = state.spotCents == null ? "—" : fmtUsdFromCents(state.spotCents);
   adoptQuote();
-  if (state.view === "sell") onTermsChanged();
+  if (state.view === "sell") renderSell();
   renderBlotter();
 });
 loadArtifact();
@@ -1610,9 +1611,6 @@ startWatch();
 setInterval(tick, 1000);
 setInterval(startWatch, 15_000);
 setInterval(() => {
-  if (state.view === "sell" && state.spotCents != null && state.address) {
-    void refreshLive(++quoteGen);
-  }
   void refreshPositionMarkets();
 }, REFRESH_MS);
 void hydrateMissing();
