@@ -12,37 +12,39 @@ Traefik serves these domains with its default certificate. `curl` needs `-k`.
 | --- | --- |
 | Page | <https://arkade.trade/> |
 | Fund flow | <https://arkade.trade/viz/> |
-| Oracle | <https://arkadeoptions-oracle-bhuczu-39c492-138-199-218-130.traefik.me/> |
-| Desk | <https://arkadeoptions-desk-jxdh3j-37969b-138-199-218-130.traefik.me/> |
-| Oracle volume | `arkade-options-oracle-data` mounted at `/data` (`oracle.json`, `arkade.sqlite`) |
-| Desk volume | `arkade-options-desk-data` mounted at `/data` (`book.json`, `arkade.sqlite`) |
+| Oracle | <https://app-input-bluetooth-program-he5gtr-bb8d3b-138-199-218-130.traefik.me/> |
+| Desk | <https://app-quantify-cross-platform-bus-bwux4e-31e3a4-138-199-218-130.traefik.me/> |
+| Settler | <https://app-back-up-redundant-system-a7rla7-995a33-138-199-218-130.traefik.me/> |
+| Oracle volume | `oracle-week-data` mounted at `/data` (`oracle.json`, `arkade.sqlite`) |
+| Desk volume | `desk-week-data` mounted at `/data` (`book.json`, `arkade.sqlite`) |
+| Settler volume | `settler-week-data` mounted at `/data` (`progress.json`) |
 
 Beacon (Mutinynet). `BEACON_TXID` is the oracle's `issueTxid`. `ctrlTxid` is that same txid with the bytes reversed; the script compares the reversed form.
 
 | | |
 | --- | --- |
-| `issueTxid` / `BEACON_TXID` | `76ba29707601e65f696a3ac36f2b6eaf68d33cfb8506385500b67118e761da89` |
-| `assetId` | `76ba29707601e65f696a3ac36f2b6eaf68d33cfb8506385500b67118e761da890000` |
-| `deployTxid` | `e7a1c7a30ed54992617a96b5617ad11cfaf6699bb00a8a9c772d25769a96973b` |
-| `ctrlTxid` | `89da61e71871b60055380685fb3cd368af6e2b6fc33a6a695fe601767029ba76` |
-| Beacon address | `tark1qqcpq7yq3e8hhsx6ml3fud93m7827qggaurtzu3zwsr4a0qs0gf85kzzx3q8kt4h9krw7w36wz6yxucn2pzrts4c0tty5nzgth9nj39y2v8p8v` |
+| `issueTxid` / `BEACON_TXID` | `c919606acba781572d5f72e53ffc6d125c98fbbd36df69eaf6f9613bae25499d` |
+| `assetId` | `c919606acba781572d5f72e53ffc6d125c98fbbd36df69eaf6f9613bae25499d0000` |
+| `deployTxid` | `8faf199b199ddd3f3b88c1b290805a1dd78254864f1dd9963d5278d7f45836fa` |
+| `ctrlTxid` | `9d4925ae3b61f9f6ea69df36bdfb985c126dfc3fe5725f2d5781a7cb6a6019c9` |
+| Beacon address | `tark1qqcpq7yq3e8hhsx6ml3fud93m7827qggaurtzu3zwsr4a0qs0gf8449krp83vcrs7yq9vlyn3k7kr3739l3y5dsqqg5xl3tqwtwse5u4kf3yhw` |
 | Oracle wallet | `tark1qqcpq7yq3e8hhsx6ml3fud93m7827qggaurtzu3zwsr4a0qs0gf85q9pwqnt6gkk63gqu8kq6hn67g6rxft96nc3tschxa2mrxn8a63d3ltm5j` |
 | Admin pubkey | `e96d459a88359d713db09e7b226644b84765ac33b0b84f4cb60bc9d39ffb5bbe` |
 | Desk nostr pubkey | `eb36be79b231beeecbea9609767139974137d1f5dbaab56f19396bda3f07edc9` |
 | Desk deposit address | `tark1qqcpq7yq3e8hhsx6ml3fud93m7827qggaurtzu3zwsr4a0qs0gf85yqmhrwnt5zuhcr935nk7w7avtt3nf3kvvucn63tmrsx6q7h9x4txm6sw2` |
 
-`ORACLE_KEY`, `ORACLE_ADMIN`, and `DESK_KEY` live in Dokploy, not on the volume. A redeploy keeps the beacon, the wallet, and the quote book. Replacing a volume, or rotating `ORACLE_KEY`, starts a different beacon. The coin at `76ba2970…da89` was deployed with the old five-key script. This build will not spend it. Issue and deploy a new beacon, then point the desk at that `issueTxid`.
+`ORACLE_KEY`, `ORACLE_ADMIN`, and `DESK_KEY` live in Dokploy, not on the volume. A redeploy keeps the beacon, the wallet, and the quote book. Replacing a volume, or rotating `ORACLE_KEY`, starts a different beacon. The page settles the beacon in this table. `app/src/beacon-status.ts` is a copy of the oracle `GET /api/status`, because the browser does not trust the Traefik certificate. Quotes use the desk nostr pubkey in `app/rfq-config.js`. The coin at `76ba2970…da89` remains on the previous Oracle and Desk services.
 
 ## Day to day
 
 Oracle status is `GET /api/status`. Desk status is `GET /` (same body as `GET /status`). That body lists live quotes only, one page of 50. Finished quotes are not kept. `GET /quotes?status=live&limit=50&offset=0` is the next page (`status` is `live`, `open`, `filled`, or `all`).
 
 ```bash
-curl -k https://arkadeoptions-oracle-bhuczu-39c492-138-199-218-130.traefik.me/api/status
-curl -k https://arkadeoptions-desk-jxdh3j-37969b-138-199-218-130.traefik.me/
+curl -k https://app-input-bluetooth-program-he5gtr-bb8d3b-138-199-218-130.traefik.me/api/status
+curl -k https://app-quantify-cross-platform-bus-bwux4e-31e3a4-138-199-218-130.traefik.me/
 ```
 
-Oracle `balance` is spendable sats on the admin wallet. The beacon coin itself is separate. Desk `balance` is the float. After the new beacon is deployed, set the desk `BEACON_TXID` to that `issueTxid`.
+Oracle `balance` is spendable sats on the admin wallet. The beacon coin itself is separate. Desk `balance` is the float. The desk `BEACON_TXID` is the `issueTxid` in the table above.
 
 Fund the desk at its deposit address. Send enough for premiums. The seller's collateral does not come from this float. `balance` stays `0` until the coins arrive. The desk refuses a quote it cannot pay and logs `float short`.
 
@@ -51,7 +53,7 @@ The aggregator holds one to five oracle keys (`ORACLE_SIGNERS`, or just `ORACLE_
 ```bash
 curl -k -X POST -H "Authorization: Bearer $ORACLE_ADMIN" -H "content-type: application/json" \
   -d '{"expiry":1790463992}' \
-  https://arkadeoptions-oracle-bhuczu-39c492-138-199-218-130.traefik.me/api/publish
+  https://app-input-bluetooth-program-he5gtr-bb8d3b-138-199-218-130.traefik.me/api/publish
 ```
 
 The beacon keeps the eight newest fixings. Settle a vault before eight later expiries are published, or publish that expiry again.
