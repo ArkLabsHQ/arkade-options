@@ -139,6 +139,22 @@ function exact(body: Record<string, unknown>, keys: readonly string[]) {
   if (got.length !== keys.length || got.some((key) => !keys.includes(key))) throw new HttpError(400, "unknown field");
 }
 
+/**
+ * Admin samples take `price` and an optional `time`. The beacon requires
+ * `time > 0` and `time <= key + keyLag` once the clock has reached `key + keyLag`.
+ * It does not require `time >= key` or `time` equal to the wall clock, so a
+ * backdated stamp is signed as given. A missing `time` stays the service clock.
+ */
+function sampleRequest(body: Record<string, unknown>, clock: number): { price: bigint; time: number } {
+  const got = Object.keys(body);
+  if (!got.includes("price") || got.some((key) => key !== "price" && key !== "time")) throw new HttpError(400, "unknown field");
+  const price = whole(body.price, "price");
+  if (body.time === undefined) return { price, time: clock };
+  const time = Number(whole(body.time, "time"));
+  if (!Number.isSafeInteger(time)) throw new HttpError(400, "time");
+  return { price, time };
+}
+
 function whole(value: unknown, label: string): bigint {
   if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0) return BigInt(value);
   if (typeof value === "string" && /^[0-9]+$/.test(value)) return BigInt(value);
@@ -441,8 +457,8 @@ export async function createOracle(deps: OracleDeps) {
         requireAdmin(req);
         const body = asRecord(await readBody(req, 4096));
         if (url === "/api/samples") {
-          exact(body, ["price"]);
-          return sendJson(res, 200, await recordSample(whole(body.price, "price"), now()));
+          const sample = sampleRequest(body, now());
+          return sendJson(res, 200, await recordSample(sample.price, sample.time));
         }
         exact(body, []);
         if (url === "/api/issue") return sendJson(res, 200, await issue());

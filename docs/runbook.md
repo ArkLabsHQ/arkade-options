@@ -158,15 +158,18 @@ The Oracle dashboard (`GET /`) previews a settlement and, separately, publishes 
 
 Type the kind (covered call or limited put), the price in USD cents, the strike in USD cents, and the collateral in sats. The line under the fields is the holder and writer amounts. The math is the vault's: `holderPayoff`, then the 1000-sat read fee, then the dust fold ([oracle/preview.ts](../oracle/preview.ts), [app/settle-math.js](../app/settle-math.js), [contracts/option_vault.ark](../contracts/option_vault.ark)). A filled vault locks the collateral, so the preview treats the locked coin as that collateral. Typing does not call `/api/samples` or `/api/publish`.
 
-**Publish price** is a separate button. It needs the admin token and the position's expiry (unix seconds). It `POST`s `/api/samples` with the typed price, then `POST`s `/api/publish` with that expiry. The server stamps the sample with its own clock. Publish is allowed only after `expiry + 60`. If you click early, the sample is stored and the page reports the publish error. The settler calls publish again after the window and then settles. The beacon keeps eight fixings. Settle before eight newer expiries replace this one, or publish it again.
+**Publish price** is a separate button. It needs the admin token and the position's expiry (unix seconds). It `POST`s `/api/samples` with the typed price, then `POST`s `/api/publish` with that expiry. Omit `time` and the server stamps the sample with its own clock. The sample-time field is a testing control and starts empty. When it is set, that unix second is the signed sample time. The beacon accepts it when it is positive and at or before `expiry + 60`, after the clock has reached that close. The script does not require the signed time to equal the wall clock, and it does not require `time >= expiry`. Publish still chooses a stored sample inside `[expiry, expiry + 60]`. Publish is allowed only after `expiry + 60`. If you click early, the sample is stored and the page reports the publish error. The settler calls publish again after the window and then settles. The beacon keeps eight fixings. Settle before eight newer expiries replace this one, or publish it again.
 
-**Record price**, lower on the same page, only stores a sample. It does not publish.
+**Record price**, lower on the same page, only stores a sample. It sends the same optional sample time. It does not publish.
 
 The same two calls, if you are not on the dashboard:
 
 ```bash
 curl -k -X POST -H "Authorization: Bearer $ORACLE_ADMIN" -H "content-type: application/json" \
   -d '{"price":"<integer cents>"}' https://<oracle>/api/samples
+
+curl -k -X POST -H "Authorization: Bearer $ORACLE_ADMIN" -H "content-type: application/json" \
+  -d '{"price":"8277570","time":1791822006}' https://<oracle>/api/samples
 
 curl -k -X POST -H "Authorization: Bearer $ORACLE_ADMIN" -H "content-type: application/json" \
   -d '{"expiry":<unix expiry>}' https://<oracle>/api/publish
