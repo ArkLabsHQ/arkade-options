@@ -1,16 +1,15 @@
 /**
  * Public constructor the page settles against. The oracle certificate is not
- * trusted by the browser, so this is a copy of GET /api/status. Replace it
- * after the one-key beacon is issued. The previous committee coin is a
- * different script.
+ * trusted by the browser, so this is a copy of GET /api/status on the
+ * Mutinynet oracle. Replace it when that beacon changes.
  */
 export const LIVE_BEACON_STATUS = {
   pubkeys: ["e96d459a88359d713db09e7b226644b84765ac33b0b84f4cb60bc9d39ffb5bbe"],
-  assetId: "76ba29707601e65f696a3ac36f2b6eaf68d33cfb8506385500b67118e761da890000",
-  issueTxid: "76ba29707601e65f696a3ac36f2b6eaf68d33cfb8506385500b67118e761da89",
-  address: "tark1qqcpq7yq3e8hhsx6ml3fud93m7827qggaurtzu3zwsr4a0qs0gf85kzzx3q8kt4h9krw7w36wz6yxucn2pzrts4c0tty5nzgth9nj39y2v8p8v",
+  assetId: "c919606acba781572d5f72e53ffc6d125c98fbbd36df69eaf6f9613bae25499d0000",
+  issueTxid: "c919606acba781572d5f72e53ffc6d125c98fbbd36df69eaf6f9613bae25499d",
+  address: "tark1qqcpq7yq3e8hhsx6ml3fud93m7827qggaurtzu3zwsr4a0qs0gf8449krp83vcrs7yq9vlyn3k7kr3739l3y5dsqqg5xl3tqwtwse5u4kf3yhw",
   args: {
-    ctrlTxid: "89da61e71871b60055380685fb3cd368af6e2b6fc33a6a695fe601767029ba76",
+    ctrlTxid: "9d4925ae3b61f9f6ea69df36bdfb985c126dfc3fe5725f2d5781a7cb6a6019c9",
     signersN: 1,
     threshold: 1,
     domain: "4254435553442d464958",
