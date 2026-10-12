@@ -44,7 +44,7 @@ curl -k https://app-input-bluetooth-program-he5gtr-bb8d3b-138-199-218-130.traefi
 curl -k https://app-quantify-cross-platform-bus-bwux4e-31e3a4-138-199-218-130.traefik.me/
 ```
 
-Oracle `balance` is spendable sats on the admin wallet. The beacon coin itself is separate. Desk `balance` is the float. After the new beacon is deployed, set the desk `BEACON_TXID` to that `issueTxid`.
+Oracle `balance` is spendable sats on the admin wallet. The beacon coin itself is separate. Desk `balance` is the float. The desk `BEACON_TXID` is the `issueTxid` in the table above.
 
 Fund the desk at its deposit address. Send enough for premiums. The seller's collateral does not come from this float. `balance` stays `0` until the coins arrive. The desk refuses a quote it cannot pay and logs `float short`.
 
