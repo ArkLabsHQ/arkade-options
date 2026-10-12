@@ -47,6 +47,63 @@
     </section>
 
     <section id="home" class="home" hidden>
+      <section class="restore" aria-labelledby="restore-title">
+        <h2 id="restore-title">Restore</h2>
+        <p class="copy">Paste the vault outpoint and the terms the transaction does not carry. This page already has the contract and the Mutinynet keys.</p>
+        <form id="restore-form">
+          <div class="field">
+            <label class="field-label" for="restore-outpoint">Outpoint</label>
+            <input id="restore-outpoint" class="mono-input" autocomplete="off" spellcheck="false" placeholder="txid:vout" required>
+          </div>
+          <div class="field">
+            <span class="field-label">Contract</span>
+            <div class="seg" role="group" aria-label="Contract">
+              <button type="button" data-restore-kind="0" aria-pressed="true">Covered call</button>
+              <button type="button" data-restore-kind="1">Limited put</button>
+            </div>
+          </div>
+          <div class="restore-grid">
+            <div class="field">
+              <label class="field-label" for="restore-strike">Strike, USD cents</label>
+              <input id="restore-strike" class="mono-input" inputmode="numeric" autocomplete="off" spellcheck="false" required>
+            </div>
+            <div class="field">
+              <label class="field-label" for="restore-expiry">Expiry, unix time</label>
+              <input id="restore-expiry" class="mono-input" inputmode="numeric" autocomplete="off" spellcheck="false" required>
+            </div>
+            <div class="field">
+              <label class="field-label" for="restore-collateral">Collateral, sats</label>
+              <input id="restore-collateral" class="mono-input" inputmode="numeric" autocomplete="off" spellcheck="false" required>
+            </div>
+            <div class="field">
+              <label class="field-label" for="restore-exit">Exit, seconds</label>
+              <input id="restore-exit" class="mono-input" inputmode="numeric" autocomplete="off" spellcheck="false" value="2048" required>
+            </div>
+            <div class="field">
+              <label class="field-label" for="restore-beacon">Beacon txid</label>
+              <input id="restore-beacon" class="mono-input" autocomplete="off" spellcheck="false" required>
+            </div>
+            <div class="field">
+              <label class="field-label" for="restore-gidx">Beacon output</label>
+              <input id="restore-gidx" class="mono-input" inputmode="numeric" autocomplete="off" spellcheck="false" value="0" required>
+            </div>
+          </div>
+          <div class="field">
+            <label class="field-label" for="restore-fee">Beacon read fee, sats</label>
+            <input id="restore-fee" class="mono-input" inputmode="numeric" autocomplete="off" spellcheck="false" value="1000" required>
+          </div>
+          <div class="field">
+            <label class="field-label" for="restore-writer">Writer public key</label>
+            <input id="restore-writer" class="mono-input" autocomplete="off" spellcheck="false" placeholder="The taproot key premium is paid to" required>
+          </div>
+          <div class="field">
+            <label class="field-label" for="restore-holder">Holder public key</label>
+            <input id="restore-holder" class="mono-input" autocomplete="off" spellcheck="false" required>
+          </div>
+          <p id="restore-error" class="error" role="status"></p>
+          <button type="submit" class="lock" id="restore-submit">Restore</button>
+        </form>
+      </section>
       <section class="blotter" aria-label="Positions">
         <h2>Positions</h2>
         <div id="blotter"></div>

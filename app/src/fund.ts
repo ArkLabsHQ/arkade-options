@@ -18,6 +18,7 @@ import { beaconIdOf } from "../../protocol/beacon-id.ts";
 import { ARK_URL, BEACON_READ_FEE, EMULATOR_URL, EXIT } from "../../protocol/constants.ts";
 import { assertServerExit, bindContracts, payoutVtxo, type Terms } from "../../protocol/contracts.ts";
 import { bytesToHex, hexToBytes, xOnly } from "../../protocol/hex.ts";
+import { networkByName } from "../../protocol/network.ts";
 import { intentProgram, vaultProgram } from "./program.ts";
 
 export const NETWORK_NAME = "Mutinynet";
@@ -78,6 +79,40 @@ function contracts(): Promise<ContractManager> {
     vtxoSyncMaxAgeMs: 60_000,
   });
   return managerPromise;
+}
+
+let operatorPromise: Promise<Session> | null = null;
+
+/** Mutinynet server and emulator keys. Does not read the desk's saved positions. */
+export function operatorSession(): Promise<Session> {
+  if (!operatorPromise) {
+    operatorPromise = (async () => {
+      const ark = new RestArkProvider(ARK_URL);
+      const info = await ark.getInfo();
+      if (info.network.trim().toLowerCase() !== "mutinynet") {
+        throw new Error("This page restores Mutinynet vaults.");
+      }
+      const contractManager = await contracts();
+      const client = await arkade.Arkade.connect({
+        arkade: ark,
+        indexer,
+        emulator: new RestEmulatorProvider(EMULATOR_URL),
+        contractManager,
+        network: networkByName(info.network),
+      });
+      return { client };
+    })();
+    operatorPromise.catch(() => {
+      operatorPromise = null;
+    });
+  }
+  return operatorPromise;
+}
+
+export async function readOutpoint(txid: string, vout: number) {
+  const page = await indexer.getVtxos({ outpoints: [{ txid, vout }] });
+  const want = txid.toLowerCase();
+  return (page.vtxos ?? []).find((coin) => (coin.txid || "").toLowerCase() === want && coin.vout === vout) ?? null;
 }
 const ADDRESS_KEY = "arkade-options-address-v1";
 const SESSION_KEY = "arkade-options-session-v1";

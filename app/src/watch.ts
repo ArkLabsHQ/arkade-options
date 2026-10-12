@@ -4,6 +4,7 @@ import { ARK_URL } from "../../protocol/constants.ts";
 import { bytesToHex } from "../../protocol/hex.ts";
 import { classifyIntent, psbtView, type CoinView, type IntentPhase, type TxOutput } from "../../protocol/intent-state.ts";
 import { intentCoins, onContractEvent } from "./fund.ts";
+import { splitPayouts } from "./position-status.ts";
 
 export type WatchRow = {
   address: string;
@@ -31,6 +32,22 @@ const vtxoReads = new Map<string, Promise<{ txid: string; value: number; spentBy
 
 function scriptOf(address: string): string {
   return bytesToHex(ArkAddress.decode(address).pkScript);
+}
+
+export function pkScriptOf(address: string): string {
+  return scriptOf(address);
+}
+
+/** Writer and desk sats on a settlement transaction. Output 0 is the beacon. */
+export async function readKept(settleTxid: string, writerScript: string): Promise<{ writer: bigint; desk: bigint } | null> {
+  try {
+    const page = await indexer.getVirtualTxs([settleTxid]);
+    const raw = page.txs?.[0];
+    if (!raw) return null;
+    return splitPayouts(psbtView(raw).outputs, writerScript);
+  } catch {
+    return null;
+  }
 }
 
 function writerCoins(script: string) {
