@@ -1,225 +1,205 @@
-# Deploy and bootstrap
+# Mutinynet user test (Dokploy)
 
-The live Mutinynet oracle and desk are already up. Identifiers, addresses, and day-to-day steps are in the [README](../README.md). Use this when standing up a new one, or when a volume was replaced.
+Use this after `pnpm smoke:regtest` has passed. This is a fresh Mutinynet deploy: one oracle, one beacon, one desk, and one settler. In the Dokploy project `Arkade-Options`, create three new services: **Oracle**, **Desk**, and **Settler**. Do not edit the old Oracle and Desk in place, and do not mount their volumes. The identity asset recorded in the README (`76ba2970…da89`) was deployed with the old script. This build will not spend it.
 
-Order: oracle (fund, issue, deploy) → desk (`BEACON_TXID`) → fund the desk → pin the desk pubkey on the page → settler. The app provider runs the settler. Anyone else can run another one against the same vaults.
+The public HTTPS origin is the globe Dokploy puts on that new service. This repo does not store those origins. `curl` against a Traefik default certificate needs `-k`, as noted in the [README](../README.md).
 
-Never put `ORACLE_KEY`, `ORACLE_ADMIN`, or `DESK_KEY` in the repo.
+The three images clone GitHub `master` ([oracle/Dockerfile](../oracle/Dockerfile), [Dockerfile](../Dockerfile), [settle/Dockerfile](../settle/Dockerfile)). Build them after this change is on `master`, or the oracle dashboard will not have the settlement screen.
 
-## Local regtest
-
-The contracts use a 2048-second exit and zero intent fees, the same as Mutinynet. `.env.regtest` is the arkade-regtest override that sets those delays (all in seconds) and starts only bitcoin regtest, arkd, and the emulator.
-
-Docker has to be running. From this repo:
+Never put `ORACLE_KEY`, `ORACLE_ADMIN`, or `DESK_KEY` in the repo. Generate them locally and paste them into the new services.
 
 ```bash
-pnpm smoke:regtest
+openssl rand -hex 32   # ORACLE_KEY and, separately, DESK_KEY
+openssl rand -hex 16   # ORACLE_ADMIN
 ```
 
-The test clones [arkade-regtest](https://github.com/ArkLabsHQ/arkade-regtest) into `arkade-regtest/` (gitignored) if it is not there and starts the stack when `http://127.0.0.1:7070` is not already this configuration. It then runs the oracle service: issue, deploy, fund two intents and the desk, finalize one, cancel the other, publish the strike, and settle the vault. A missing beacon or a missing strike payout fails the test. The coins are drawn in [viz/index.html](../viz/index.html).
+## What not to change
 
-`ARK_URL` and `EMULATOR_URL` override the endpoints (defaults `http://127.0.0.1:7070` and `http://127.0.0.1:7073`). Desk, oracle, and settler take the network from arkd `/v1/info`, so the same variables point them at this stack. The exit check still requires `unilateralExitDelay` 2048.
+- Do not write a second settler. The process is [settle/main.ts](../settle/main.ts), image [settle/Dockerfile](../settle/Dockerfile).
+- Do not change `EXIT`, `DUST_SATS`, or `BEACON_READ_FEE` in [protocol/constants.ts](../protocol/constants.ts). There is no env var for them. Dust stays `330` sats. The read fee stays `1000` sats so the number is easy to account. Do not zero either one. The zeros in [.env.regtest](../.env.regtest) are arkade-regtest intent fees for the smoke stack only. They are not service settings, and this deploy does not copy them onto Mutinynet.
+- Mutinynet only. Do not point `ARK_URL` at the regtest ports from the smoke test, or at any other network.
+- No Deribit feed. Set `SAMPLE_MS=0` on the new Oracle service. The default `60000` would store a Deribit sample every minute ([oracle/price.ts](../oracle/price.ts)).
+- Do not change the wallet target. The page already uses `https://mutinynet.arkade.money` ([app/src/fund.ts](../app/src/fund.ts), [app/index.html](../app/index.html)).
 
-## Oracle
+## Exit delay
 
-`ORACLE_KEY` is the only key. It issues the identity asset, deploys the beacon coin, signs each BTCUSD sample, and publishes fixings. It is never auto-generated.
+Contracts use `EXIT = 2048` seconds ([protocol/constants.ts](../protocol/constants.ts)). BIP68 seconds must be a multiple of 512, and arkd refuses a vtxo whose shortest exit leaf is below `unilateralExitDelay`. The desk calls `assertServerExit` on boot and exits if the server delay is not `2048` ([protocol/contracts.ts](../protocol/contracts.ts), [desk/main.ts](../desk/main.ts)).
 
-Env: `ORACLE_KEY` and `ORACLE_ADMIN` (bearer for admin routes; unset disables them). `ARK_URL` defaults to `https://mutinynet.arkade.sh`. `EMULATOR_URL` defaults to the Mutinynet emulator. `DATA_DIR` holds `oracle.json` and `arkade.sqlite` (SDK wallet, not an in-memory repository). `PORT` defaults to `8789`.
+The repo does not record a live Mutinynet `/v1/info`. Before issue:
 
 ```bash
-export ORACLE_KEY=$(openssl rand -hex 32)
-export ORACLE_ADMIN=$(openssl rand -hex 16)
-pnpm oracle
+curl -fsS https://mutinynet.arkade.sh/v1/info
 ```
 
-```bash
-export ORACLE_KEY=$(openssl rand -hex 32)
-export ORACLE_ADMIN=$(openssl rand -hex 16)
-docker build -f oracle/Dockerfile -t arkade-options-oracle .
-docker run --rm -p 8789:8789 -e ORACLE_KEY -e ORACLE_ADMIN -v oracle-data:/data arkade-options-oracle
-```
+`network` must be `mutinynet` (the name [protocol/network.ts](../protocol/network.ts) accepts) and `unilateralExitDelay` must be `2048`. If it is not, stop. Do not edit `EXIT` to match the server. The smoke stack forces the same delay with `ARKD_UNILATERAL_EXIT_DELAY=2048` in [.env.regtest](../.env.regtest). That file does not configure the public arkd.
 
-The image starts Node with `--experimental-eventsource`. Without that flag the contract watcher polls every 20 seconds.
+## Environment
 
-Dokploy, building `master`:
+Set these on the **new** service. Defaults below are what the process uses when the variable is unset. Each service gets a new volume mounted at `/data`. Do not reuse the volumes already mounted on the old Oracle and Desk services.
 
-- Build type Dockerfile. **Docker File** `oracle/Dockerfile`. **Docker Context Path** `/oracle` or `/`. The image clones the repo, so either context works. Do not use the repository-root `./Dockerfile`: that image is the desk (port `8788`) and will 502 behind an oracle domain on `8789`.
-- Port `8789` behind the Dokploy HTTPS domain. The dashboard is `GET /`. Browsers only let it sign over HTTPS or localhost.
-- Set `ORACLE_KEY` and `ORACLE_ADMIN`. Keep both. `ORACLE_KEY` is the only key that writes fixings on the beacon it deploys.
-- Mount a volume at `/data`. The live name is `arkade-options-oracle-data`. A fresh volume means a new beacon; keys, issue, and deploy run again.
-- If Traefik shows Bad Gateway, open Logs. Exited replicas mean the wrong image or a crash on boot. Confirm the container listens on `8789`.
+### Oracle service
 
-### Bootstrap the beacon
+From [oracle/main.ts](../oracle/main.ts) and [oracle/Dockerfile](../oracle/Dockerfile).
 
-Dashboard: open `https://<oracle>/`, paste the admin token, then Issue → Deploy. Or curl the same order. Status is `GET /api/status`. The constructor in `args` (`keyLag` 60, `readFee` 1000, `exit` 2048, domain `BTCUSD-FIX`) is fixed in the service. `ORACLE_KEY` signs prices. No committee keys. The beacon already on Mutinynet is the old script. Issue a new one and point the desk at its `issueTxid`.
+| Env | Fresh deploy |
+| --- | --- |
+| `ORACLE_KEY` | New 32-byte hex. Wallet, issuer, and the only price signer. |
+| `ORACLE_ADMIN` | New bearer for `/api/issue`, `/api/deploy`, `/api/recover`, `/api/samples`, and `/api/publish`. Unset disables those routes. |
+| `ARK_URL` | `https://mutinynet.arkade.sh` (the code default). |
+| `EMULATOR_URL` | `https://emulator.mutinynet.arkade.sh` (the code default). |
+| `SAMPLE_MS` | `0`. Required. Turns the Deribit sampler off. |
+| `DATA_DIR` | Leave the image value `/data`. |
+| `PORT` | Leave `8789`. |
+| `ORACLE_SIGNERS`, `ORACLE_THRESHOLD` | Leave unset. One `ORACLE_KEY` is the signer, threshold 1. |
 
-1. **Fund the oracle wallet.** `GET /api/status` returns `wallet` and `balance`. Send Mutinynet sats to `wallet` and wait until `balance` is at least 330 before Issue. An empty wallet returns `{"error":"fund wallet"}`. Keep enough left after issue for the 330-sat beacon coin at deploy.
+Build type Dockerfile. **Docker File** `oracle/Dockerfile`. **Docker Context Path** `/oracle` or `/`. The image clones the repo, so either context works. Do not use the repository-root `Dockerfile` for this service: that image is the desk (port `8788`). Port `8789` behind the domain on this service. The dashboard is `GET /`.
 
-2. **Issue** the identity asset (supply 1). `issueTxid` is the desk's `BEACON_TXID`.
+### Desk service
+
+The desk is public. It has no admin bearer. `GET /` and `GET /quotes` are open. It speaks Mutinynet only.
+
+From [desk/main.ts](../desk/main.ts) and the root [Dockerfile](../Dockerfile).
+
+| Env | Fresh deploy |
+| --- | --- |
+| `DESK_KEY` | New 32-byte hex. Nostr pubkey and the option holder key. |
+| `BEACON_TXID` | The new oracle `issueTxid`, 64 hex characters. The process exits if this is missing or not 64 hex. Set it after deploy, then restart. |
+| `BEACON_GIDX` | Leave unset (`0`) unless status shows the identity asset at another vout. |
+| `ARK_URL` | `https://mutinynet.arkade.sh`. |
+| `EMULATOR_URL` | `https://emulator.mutinynet.arkade.sh`. |
+| `RELAYS` | Leave unset. Default is `wss://nostr.arkade.sh`. |
+| `DATA_DIR` | Leave `/data`. |
+| `PORT` | Leave `8788`. |
+| `DESK_STRIKE_CAP`, `DESK_TOTAL_CAP`, `DESK_VOL`, `DESK_LOG` | Leave unset. Defaults are 1 BTC per strike, 5 BTC total, Deribit vol for quotes, and an hourly log line. `DESK_VOL` overrides the quote vol. It does not set the settlement price. |
+
+Build the repository-root `Dockerfile`. Port `8788`. Turn the public globe on.
+
+`ARK_URL` and `EMULATOR_URL` select the host. The network name comes from arkd `GET /v1/info`. The same two variables are how Oracle, Desk, and Settler point at Mutinynet.
+
+### Settler service
+
+A vault should settle when its window opens after the published price, without a tester clicking. This service does that. It does not quote, fill, or call the desk.
+
+From [settle/main.ts](../settle/main.ts) and [settle/Dockerfile](../settle/Dockerfile).
+
+| Env | Fresh deploy |
+| --- | --- |
+| `ORACLE_URL` | Origin of the new Oracle service (the globe). The beacon script comes from `GET /api/status`. |
+| `ORACLE_ADMIN` | The same bearer as the Oracle service, so a missing fixing can be published. |
+| `ARK_URL` | `https://mutinynet.arkade.sh`. |
+| `EMULATOR_URL` | `https://emulator.mutinynet.arkade.sh`. |
+| `RELAYS` | Leave unset. Default is `wss://nostr.arkade.sh`. Filled vaults are kind `30078`. |
+| `DATA_DIR` | Leave `/data`. Holds `progress.json` for this process only. |
+| `PORT` | Leave `8790`. |
+| `DESK_KEY` | Do not set it. |
+| `POSITIONS` | Leave unset. The relay subscription is the path. |
+
+**Docker File** `settle/Dockerfile`. **Docker Context Path** `/` or `/settle`. Port `8790`. New volume at `/data`.
+
+The image starts `node --experimental-strip-types settle/main.ts`. On boot it connects to Mutinynet, subscribes to the relay, and ticks every 2 seconds. `GET /status` returns `commit`, `oracle`, `relay`, `watching`, and `settled`.
+
+When a fill is published, the settler rebuilds the vault from that event. Once `expiry` has passed it reads the beacon. If the fixing is missing it `POST`s `/api/publish` for that expiry. Publish is refused until `expiry + 60` (`keyLag` in [oracle/service.ts](../oracle/service.ts)). The settler retries. The next tick after a successful publish spends the vault and the beacon together. One beacon coin settles one vault per pass. The 1,000-sat read fee comes out of the vault. The settler holds no key and no fee wallet.
+
+## Beacon fees
+
+Fixed in [protocol/constants.ts](../protocol/constants.ts) and copied into the beacon at deploy ([oracle/service.ts](../oracle/service.ts)). Not a Dokploy schedule.
+
+| | Value | Where |
+| --- | --- | --- |
+| Dust on the beacon coin | `330` sats (`DUST_SATS`) | Deploy pays this onto the beacon ([protocol/beacon.ts](../protocol/beacon.ts)). A payoff leg at or below 330 sats is folded into the other output ([contracts/option_vault.ark](../contracts/option_vault.ark)). |
+| Read fee | `1000` sats (`BEACON_READ_FEE`) | `args.readFee`. Kept at 1000 so settlement is easy to account. The vault pays it out of collateral. The regtest smoke test asserts both numbers. |
+
+`GET /api/status` then shows `args.exit` `2048`, `args.readFee` `1000`, `args.keyLag` `60`, and `args.domain` hex of `BTCUSD-FIX`.
+
+## Fund, issue, deploy
+
+`GET /api/status` on the new Oracle returns `wallet` and `balance`.
+
+1. **Fund the oracle wallet.** Send Mutinynet sats to `wallet`. Issue requires `balance` of at least 330. An empty wallet returns `{"error":"fund wallet"}`. Deploy puts 330 sats on the beacon coin and, when the remainder is at least 330, returns the rest as change. The smoke test funds `Q_MIN` (10_000 sats) so that split can happen. **That 10_000 figure is the smoke-test funding amount, not a Mutinynet fee.**
+
+2. **Issue** the identity asset (supply 1). `issueTxid` is the desk's `BEACON_TXID`. Dashboard: open the Oracle origin, paste the admin token, then Issue. Or:
 
 ```bash
 curl -k -X POST -H "Authorization: Bearer $ORACLE_ADMIN" -H "content-type: application/json" \
   -d '{}' https://<oracle>/api/issue
 ```
 
-Issue uses the SDK submit-then-finalize path. If the process dies after `submitTx` and before `finalizeTx`, the explorer shows an unfinalized spend and `balance` stays `0`. The SQLite wallet keeps the pending flag. Boot calls finalize, or:
+`<oracle>` is the new Oracle service origin.
+
+Issue uses submit-then-finalize. If the process dies after submit and before finalize, `balance` stays `0` and the wallet keeps a pending flag. Boot finalizes, or Recover pending on the dashboard, or:
 
 ```bash
 curl -k -X POST -H "Authorization: Bearer $ORACLE_ADMIN" -H "content-type: application/json" \
   -d '{}' https://<oracle>/api/recover
 ```
 
-`finalized` lists what the server still had pending. An empty `finalized` and `pending` means the server no longer has that spend. Fund the wallet again. Do not reuse an old `BEACON_TXID` unless that coin and this `ORACLE_KEY` still match.
+An empty `finalized` and `pending` means the server no longer has that spend. Fund the wallet again.
 
-3. **Deploy** the unit into the beacon script.
+3. **Deploy** the unit into the beacon script (dashboard Deploy, or the curl below).
 
 ```bash
 curl -k -X POST -H "Authorization: Bearer $ORACLE_ADMIN" -H "content-type: application/json" \
   -d '{}' https://<oracle>/api/deploy
 ```
 
-`/api/status` then shows `assetId`, `issueTxid`, `deployTxid`, `address` (the beacon), and `args`. Copy `issueTxid` into the desk env. `args.ctrlTxid` is that txid reversed.
+Status then includes `assetId`, `issueTxid`, `deployTxid`, `address` (the beacon), and `args`. Set `BEACON_TXID` on the **new Desk service** to `issueTxid` and restart it. `GET /` on the desk must show that `beaconTxid`. `commit` must match the image you built. `args.ctrlTxid` is the issue txid reversed.
 
-### Prices and publish
+Start the Settler after the Oracle origin and `ORACLE_ADMIN` are set. It can boot before the beacon is deployed. It waits until a fill's expiry and a fixing exist.
 
-The process samples Deribit BTCUSD about once a minute and stores the signature. History is public:
+## Fund the desk
 
-```bash
-curl -k "https://<oracle>/api/prices?from=<unix>&to=<unix>"
-```
+`GET /` returns `address` and `balance`. Send Mutinynet sats to `address`. That float pays premiums. Collateral does not come from it. `balance` stays `0` until the coins are indexed. The desk refuses a quote it cannot pay and logs `float short`. A premium at or below 330 sats is refused (`premium below dust` in [protocol/messages.ts](../protocol/messages.ts)). There is no other desk funding amount in the repo.
 
-A manual sample, if the feed is down, is one price at the current time. The server signs it:
+`GET /` also returns `pubkey`. Put that pubkey in the Mutinynet entry of [app/rfq-config.js](../app/rfq-config.js) and push `master` so the public page asks this desk. Leave the wallet URL alone. Automatic settlement does not read [app/src/beacon-status.ts](../app/src/beacon-status.ts). Leave that file unless you also want the page's own Settle button to spend this beacon.
+
+## Price screen
+
+The Oracle dashboard (`GET /`) previews a settlement and, separately, publishes the price. No Deribit sample is involved while `SAMPLE_MS=0`.
+
+Type the kind (covered call or limited put), the price in USD cents, the strike in USD cents, and the collateral in sats. The line under the fields is the holder and writer amounts. The math is the vault's: `holderPayoff`, then the 1000-sat read fee, then the dust fold ([oracle/preview.ts](../oracle/preview.ts), [app/settle-math.js](../app/settle-math.js), [contracts/option_vault.ark](../contracts/option_vault.ark)). A filled vault locks the collateral, so the preview treats the locked coin as that collateral. Typing does not call `/api/samples` or `/api/publish`.
+
+**Publish price** is a separate button. It needs the admin token and the position's expiry (unix seconds). It `POST`s `/api/samples` with the typed price, then `POST`s `/api/publish` with that expiry. The server stamps the sample with its own clock. Publish is allowed only after `expiry + 60`. If you click early, the sample is stored and the page reports the publish error. The settler calls publish again after the window and then settles. The beacon keeps eight fixings. Settle before eight newer expiries replace this one, or publish it again.
+
+**Record price**, lower on the same page, only stores a sample. It does not publish.
+
+The same two calls, if you are not on the dashboard:
 
 ```bash
 curl -k -X POST -H "Authorization: Bearer $ORACLE_ADMIN" -H "content-type: application/json" \
-  -d '{"price":"10000000"}' https://<oracle>/api/samples
-```
+  -d '{"price":"<integer cents>"}' https://<oracle>/api/samples
 
-After `expiry + 60` the settler calls publish, or you can:
-
-```bash
 curl -k -X POST -H "Authorization: Bearer $ORACLE_ADMIN" -H "content-type: application/json" \
-  -d '{"expiry":1790463992}' https://<oracle>/api/publish
+  -d '{"expiry":<unix expiry>}' https://<oracle>/api/publish
 ```
 
-## Desk
+`"<integer cents>"` is the operator's price. `"10000000"` is $100,000.00, the shape this API already accepts. `GET /api/status` lists `fixings`. History is `GET /api/prices?from=<unix>&to=<unix>`.
 
-`BEACON_TXID` is the oracle `issueTxid`, 64 hex characters. `BEACON_GIDX` defaults to `0`.
+## Testers
+
+Testers use the public page ([README](../README.md) records <https://arkade.trade/>) and the public desk. Quotes go to `wss://nostr.arkade.sh`. **Open Arkade wallet** goes to `https://mutinynet.arkade.money`. The page talks to Mutinynet arkd at the same default `ARK_URL` and `EMULATOR_URL` ([app/src/fund.ts](../app/src/fund.ts)).
+
+Testers fund themselves at <https://faucet.mutinynet.com>. The seller pays collateral from that wallet to the intent address the page shows. The desk pays the premium to the seller's Mutinynet address.
+
+They do not have to click Settle. After you publish the price, the Settler spends the vault once `expiry + 60` has passed.
+
+## Checks
+
+Use one small option. Collateral must be at least `Q_MIN` (10_000 sats). Pick an expiry you can wait out. The fill deadline on the quote is not the expiry.
+
+**Fill.** On the page, take a quote from this desk and send the collateral to the intent address before the deadline. The desk finalizes. The page shows the position filled. `GET /` on the desk includes that quote with a `fillTxid` while it is still live (a filled row is dropped once its expiry has passed). A fill also logs a txid. `GET /quotes?status=filled` is the filled page. The settler's `watching` count on `GET /status` includes the fill once the relay event arrives.
+
+**Cancel.** Fund an intent and let the deadline pass without a fill. The page marks it expired and shows **Refund** when the coin is still unspent ([protocol/intent-state.ts](../protocol/intent-state.ts)). Refund spends `cancel` back to the seller. The button is not a fill. Cancel before the deadline is **Cancel trade**, which drops the row only while the intent is still open.
+
+**Settle.** On the Oracle dashboard, preview the holder and writer amounts for that position's kind, strike, collateral, and the price you want. Then **Publish price** with the position expiry. After `expiry + 60`, `GET /api/status` shows the fixing and the Settler logs `settled` with a txid. `GET /status` on the Settler increments `settled`. No page click is required. The 1,000-sat read fee is the difference between the collateral and the holder plus writer amounts in the preview.
+
+`scripts/e2e-mutinynet.ts` (`pnpm e2e`) is a scripted Mutinynet fill and cancel against `BEACON_TXID`. It is not the tester path, and its default keys are not the Dokploy `DESK_KEY`.
+
+## Local regtest
+
+The smoke test is the gate before this deploy, not a second production stack. From this repo, with Docker running:
 
 ```bash
-pnpm install
-export DESK_KEY=$(openssl rand -hex 32)
-export BEACON_TXID=<64-hex issueTxid>
-pnpm desk
+pnpm smoke:regtest
 ```
 
-```bash
-export DESK_KEY=$(openssl rand -hex 32)
-export BEACON_TXID=<64-hex issueTxid>
-docker build -f desk/Dockerfile --build-arg GIT_COMMIT=$(git rev-parse HEAD) -t arkade-options-desk .
-docker run --rm -p 8788:8788 -e DESK_KEY -e BEACON_TXID -v desk-data:/data arkade-options-desk
-```
-
-Dokploy, building `master`:
-
-- Build the repository-root `Dockerfile`. That image is the desk.
-- Port `8788`.
-- Set `DESK_KEY` (32-byte hex) and keep it. Set `BEACON_TXID`. The process exits if the txid is missing or not 64 hex characters.
-- Set `BEACON_GIDX` only when the identity asset is not at vout `0`.
-- Optional: `DESK_STRIKE_CAP` (default 1 BTC), `DESK_TOTAL_CAP` (default 5 BTC), `DESK_VOL` (override the Deribit mark), `DESK_LOG=debug` (print each quote; default is the hourly digest).
-- Mount a volume at `/data`. The live name is `arkade-options-desk-data`. It holds `book.json` and `arkade.sqlite`.
-- `commit` in `GET /` must match the image you just built.
-
-`GET /` returns `commit`, `pubkey`, `address`, `balance`, `beaconTxid`, `beaconGidx`, and the quote book. Paste `pubkey` into `app/rfq-config.js` and push `master` so the page asks this desk. Leave `PINNED_DESKS` empty to price from Deribit in the browser only. A filled vault is also a public event on nostr.arkade.sh, which is what a settler reads.
-
-Fund `address` with Mutinynet sats for premiums. Collateral stays on the seller's side.
-
-## Settler
-
-The app provider runs this next to the oracle and the desk. An independent party runs the same process, with its own volume and its own key, and can settle the same contracts. `OptionVault.settle` is anyone-can-spend after expiry. The first valid spend wins. The other settler sees the vault already spent, records that txid, and stops.
-
-The settler does not use `DESK_KEY`, `book.json`, the desk float, or a desk URL. The RFQ stays a sealed ephemeral message to the client. A third party cannot open it, and the relay does not keep it.
-
-When a fill lands, the desk publishes the vault in the clear on `wss://nostr.arkade.sh`:
-
-| | |
-| --- | --- |
-| Kind | `30078` (NIP-78, replaceable) |
-| Tags | `t` = `arkade-option`, `d` = the rfq id |
-| Signer | The desk holder key, the same key as `holder_pubkey` |
-
-That event is the fill txid plus the contract parameters. Catching it is enough to settle with no further input. This is the path the provider's process uses, and the path any other process uses by subscribing to the same relay.
-
-A vault txid on its own is not enough. The indexer coin is an amount and a tweaked taproot key. The spending leaf, which holds the terms, is not on the unspent coin. The fill transaction reveals the intent, not the vault. Settlement has to rebuild `OptionVault` with the same constructor, or the tweaked key will not match the coin.
-
-The event carries:
-
-| Field | Role |
-| --- | --- |
-| `fill_txid` | Transaction that created the vault output |
-| `kind` | `0` covered call, `1` limited put |
-| `strike` | USD cents |
-| `expiry` | Unix time the vault may settle. Not the intent's fill deadline |
-| `collateral` | Sats locked in the vault |
-| `exit` | Exit delay, `2048` on Mutinynet |
-| `writer_pubkey`, `writer_pk_script` | Seller key and the script the seller is paid to |
-| `holder_pubkey` | Desk key. Must match the event signer |
-| `beacon_txid`, `beacon_gidx` | Oracle identity asset |
-| `vault_address` | Checked by rebuilding the contract. A mismatch is skipped |
-
-The price is not in the event. The settler reads it from the beacon coin, the same state packet `OptionVault.settle` reads. The beacon script (signers, `readFee`, address) comes from the oracle `GET /api/status`.
-
-### Run one
-
-```bash
-export ORACLE_URL=https://<oracle>
-pnpm settle
-```
-
-```bash
-docker build -f settle/Dockerfile -t arkade-options-settle .
-docker run --rm -p 8790:8790 -e ORACLE_URL -e ORACLE_ADMIN -v settle-data:/data arkade-options-settle
-```
-
-Dokploy, building `master`:
-
-- Docker File `settle/Dockerfile`. Docker Context Path `/` or `/settle`. The image clones the repo, so either context works.
-- Port `8790`.
-- Set `ORACLE_URL` to the oracle origin and `ORACLE_ADMIN` to the same bearer the oracle uses. Do not set `DESK_KEY`.
-- Mount a volume at `/data`. Name it `arkade-options-settle-data`. It holds `progress.json` for this process only: events already seen, and vaults it has progressed. It does not write the desk book.
-- The read fee is 1,000 sats, above dust, and comes out of the vault. The settler does not hold a key.
-- `RELAYS` defaults to `wss://nostr.arkade.sh`. Leave it unset unless the desks publish somewhere else.
-- `GET /status` returns `commit`, `oracle`, `relay`, `watching`, and `settled`.
-
-One beacon coin settles one vault per pass. The next vault is the following tick, about two seconds later. A vault with no fixing yet does not block a later expiry. Settle before eight newer fixings replace that expiry on the beacon, or publish the expiry again.
-
-### Hand it a vault
-
-Same process. `POSITIONS` is a JSON file of the same records the event carries. The relay subscription stays on. Use the file when you already have the txid and the parameters and do not want to wait for the event. One object, an array, or `{ "positions": [ ... ] }` all work. Incomplete rows are skipped. The vault address is still checked before a spend.
-
-```bash
-export ORACLE_URL=https://<oracle>
-export POSITIONS=./vaults.json
-pnpm settle
-```
-
-```json
-{
-  "v": 1,
-  "type": "option_position",
-  "rfq_id": "<64-hex>",
-  "pair": "arkade:BTC->arkade:BTC-OPTION",
-  "kind": 0,
-  "collateral": "20000",
-  "strike": "9700000",
-  "expiry": 1790463992,
-  "exit": 2048,
-  "writer_pubkey": "<32-byte hex>",
-  "writer_pk_script": "<34-byte script hex>",
-  "holder_pubkey": "<32-byte hex>",
-  "beacon_txid": "<64-hex display txid>",
-  "beacon_gidx": 0,
-  "vault_address": "tark1...",
-  "fill_txid": "<64-hex>"
-}
-```
+[.env.regtest](../.env.regtest) sets `ARKD_UNILATERAL_EXIT_DELAY=2048` and zero intent fees, then starts bitcoin regtest, arkd, and the emulator. The test issues, deploys, fills one intent, cancels the other, publishes the strike, and settles. `ARK_URL` and `EMULATOR_URL` override the endpoints (defaults `http://127.0.0.1:7070` and `http://127.0.0.1:7073`). Leave those overrides off the Dokploy services.

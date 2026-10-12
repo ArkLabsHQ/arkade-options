@@ -19,7 +19,25 @@
     <p id="admin-error" class="err"></p>
   </section>
   <section>
-    <p class="muted">The oracle also samples BTCUSD on its own. This records one price at the current time.</p>
+    <h2>Settlement</h2>
+    <p class="muted">Typing a price previews the vault payoff. It does not record a sample and it does not publish.</p>
+    <label>Kind
+      <select id="kind">
+        <option value="0">Covered call</option>
+        <option value="1">Limited put</option>
+      </select>
+    </label>
+    <label>Price, USD cents <input id="settle-price" inputmode="numeric" autocomplete="off"></label>
+    <label>Strike, USD cents <input id="strike" inputmode="numeric" autocomplete="off"></label>
+    <label>Collateral, sats <input id="collateral" inputmode="numeric" autocomplete="off"></label>
+    <p id="payout" class="mono"></p>
+    <p class="muted">Publish is separate. It records this price, then writes it on the beacon for one expiry so the settler can spend the vault.</p>
+    <label>Expiry, unix seconds <input id="expiry" inputmode="numeric" autocomplete="off"></label>
+    <button id="publish-price" type="button">Publish price</button>
+    <p id="publish-error" class="err"></p>
+  </section>
+  <section>
+    <p class="muted">This records one price at the current time and does not publish it. Leave the sampler off (<code>SAMPLE_MS=0</code>) so nothing else writes a price.</p>
     <form id="sample">
       <label>Price, USD cents <input id="price" inputmode="numeric"></label>
       <button type="submit">Record price</button>

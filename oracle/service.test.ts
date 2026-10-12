@@ -132,6 +132,10 @@ test("status, admin order, deploy change, and a print that becomes a fixing", as
     assert.equal(home.headers.get("access-control-allow-origin"), null);
     const html = await home.text();
     assert.match(html, /src="\/page\.js"/);
+    assert.match(html, /id="settle-price"/);
+    assert.match(html, /id="publish-price"/);
+    assert.match(html, /id="payout"/);
+    assert.doesNotMatch(html, /publish-price" type="submit"/);
     assert.doesNotMatch(html, /<script(?![^>]*src=)/);
     assert.equal((await fetch(ctx.oracle.url + "/page.js")).status, 200);
     assert.equal((await fetch(ctx.oracle.url + "/page.css")).status, 200);
