@@ -135,6 +135,10 @@ test("status, admin order, deploy change, and a print that becomes a fixing", as
     assert.match(html, /id="settle-price"/);
     assert.match(html, /id="publish-price"/);
     assert.match(html, /id="payout"/);
+    assert.match(html, /id="sample-time"/);
+    assert.match(html, /Testing only/);
+    const timeInput = html.match(/<input id="sample-time"[^>]*>/)?.[0] ?? "";
+    assert.equal(timeInput.includes("value="), false);
     assert.doesNotMatch(html, /publish-price" type="submit"/);
     assert.doesNotMatch(html, /<script(?![^>]*src=)/);
     assert.equal((await fetch(ctx.oracle.url + "/page.js")).status, 200);
@@ -233,6 +237,47 @@ test("status, admin order, deploy change, and a print that becomes a fixing", as
     assert.deepEqual(statePacketOf(tx), next);
     const witness = Extension.fromTx(tx).getEmulatorPacket()!.entries[0]!.witness!;
     const digest = sampleDigest(beaconIdOf(asset.AssetId.create("ee".repeat(32), 0)).txid, 10_000_000n, expiry + 60n);
+    const pubkey = schnorr.getPublicKey(secret(9));
+    let found = false;
+    for (let i = 0; i + 64 <= witness.length; i += 1) {
+      try {
+        if (schnorr.verify(witness.subarray(i, i + 64), digest, pubkey)) found = true;
+      } catch {
+        // not a signature at this offset
+      }
+    }
+    assert.equal(found, true, bytesToHex(witness));
+  } finally {
+    await ctx.close();
+  }
+});
+
+test("admin backdate publishes a sample inside a closed window", async () => {
+  const expiry = 1_791_821_976;
+  const sampleTime = 1_791_822_006;
+  const price = "8277570";
+  const ctx = await boot({ now: () => expiry + 120 });
+  try {
+    assert.equal((await call(ctx.oracle.url, "/api/samples", { price, time: sampleTime })).status, 401);
+    assert.equal((await call(ctx.oracle.url, "/api/issue", {}, "test-token")).status, 200);
+    assert.equal((await call(ctx.oracle.url, "/api/deploy", {}, "test-token")).status, 200);
+    assert.equal((await call(ctx.oracle.url, "/api/samples", { price, time: 0 }, "test-token")).status, 400);
+    assert.equal((await call(ctx.oracle.url, "/api/samples", { price, time: expiry + 121 }, "test-token")).status, 400);
+    const beforeKey = await call(ctx.oracle.url, "/api/samples", { price: "1", time: expiry - 1 }, "test-token");
+    assert.equal(beforeKey.status, 200, JSON.stringify(beforeKey.json));
+    const recorded = await call(ctx.oracle.url, "/api/samples", { price, time: sampleTime }, "test-token");
+    assert.equal(recorded.status, 200, JSON.stringify(recorded.json));
+    assert.equal(recorded.json.time, sampleTime);
+    assert.equal(recorded.json.price, price);
+    const published = await call(ctx.oracle.url, "/api/publish", { expiry }, "test-token");
+    assert.equal(published.status, 200, JSON.stringify(published.json));
+    assert.equal(published.json.expiry, expiry);
+    assert.equal(published.json.price, price);
+    assert.equal(published.json.time, sampleTime);
+    const tx = Transaction.fromPSBT(base64.decode(ctx.submitted[0]!));
+    assert.deepEqual(statePacketOf(tx), nextState(genesisState(), BigInt(expiry), priceValue(BigInt(price))));
+    const witness = Extension.fromTx(tx).getEmulatorPacket()!.entries[0]!.witness!;
+    const digest = sampleDigest(beaconIdOf(asset.AssetId.create("ee".repeat(32), 0)).txid, BigInt(price), BigInt(sampleTime));
     const pubkey = schnorr.getPublicKey(secret(9));
     let found = false;
     for (let i = 0; i + 64 <= witness.length; i += 1) {

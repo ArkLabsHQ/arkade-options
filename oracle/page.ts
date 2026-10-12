@@ -53,6 +53,11 @@ async function refresh(): Promise<void> {
   ]);
 }
 
+function sampleBody(price: string): { price: string; time?: string } {
+  const time = byId("sample-time").value.trim();
+  return time ? { price, time } : { price };
+}
+
 function shown(errorId: string, work: () => Promise<void>): void {
   byId(errorId).textContent = "";
   work().then(refresh).catch((err: Error) => {
@@ -89,7 +94,7 @@ byId("publish-price").addEventListener("click", () => {
   shown("publish-error", async () => {
     const price = byId("settle-price").value.trim();
     const expiry = byId("expiry").value.trim();
-    await post("/api/samples", { price });
+    await post("/api/samples", sampleBody(price));
     try {
       await post("/api/publish", { expiry });
     } catch (err) {
@@ -100,7 +105,7 @@ byId("publish-price").addEventListener("click", () => {
 });
 byId("sample").addEventListener("submit", (event) => {
   event.preventDefault();
-  shown("sample-error", () => post("/api/samples", { price: byId("price").value }));
+  shown("sample-error", () => post("/api/samples", sampleBody(byId("price").value)));
 });
 
 void refresh().catch((err: Error) => {
