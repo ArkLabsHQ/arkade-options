@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { deribitPremium, parseBook, parseInstrument, type SurfacePoint } from "./deribit.ts";
+import { payablePremium } from "./pricing.ts";
 
 const now = 1_700_000_000;
 const week = now + 7 * 24 * 60 * 60;
@@ -96,6 +97,48 @@ test("a limited put is the Deribit put spread", () => {
   assert.ok(Math.abs(priced.markBtc - 0.029) < 1e-12);
   assert.equal(priced.sats, 2_900_000n);
   assert.ok(Math.abs(priced.usd - 0.029 * 80_000) < 1e-6);
+});
+
+test("a 10-minute 40% call on 0.002 BTC quotes 331 when the mark is dust", () => {
+  const expiry = now + 600;
+  const spotUsd = 82_633.43;
+  const points = [
+    point(now + 86_400, 90_000, true, 0, 0.5),
+    point(now + 86_400, 80_000, true, 0.01, 0.4),
+  ];
+  const far = deribitPremium({
+    kind: 0,
+    strikeUsd: 115_500,
+    expiry,
+    now,
+    collateralSats: 200_000n,
+    spotUsd,
+    points,
+  });
+  assert.equal(far?.sats, 0n);
+  assert.equal(payablePremium(far?.sats ?? 0n), 331n);
+  const closer = deribitPremium({
+    kind: 0,
+    strikeUsd: spotUsd,
+    expiry,
+    now,
+    collateralSats: 200_000n,
+    spotUsd,
+    points,
+  });
+  const larger = deribitPremium({
+    kind: 0,
+    strikeUsd: spotUsd,
+    expiry,
+    now,
+    collateralSats: 10_000_000n,
+    spotUsd,
+    points,
+  });
+  assert.ok(closer && larger);
+  assert.ok(closer.sats > 330n);
+  assert.equal(payablePremium(closer.sats), closer.sats);
+  assert.equal(payablePremium(larger.sats), larger.sats);
 });
 
 test("a strike past the listed wing is cheaper than the wing", () => {

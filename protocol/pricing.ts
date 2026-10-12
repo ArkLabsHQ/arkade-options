@@ -1,3 +1,5 @@
+import { DUST_SATS } from "./constants.ts";
+
 /** Black-Scholes, r = 0. A covered call is a vanilla call. A limited put is the put spread K against K/2. */
 
 function erf(x: number) {
@@ -40,4 +42,14 @@ export function premiumSats(input: {
     : Math.max(0, bsPut(spot, strike, input.years, input.vol) - bsPut(spot, strike / 2, input.years, input.vol)) * notional;
   const sats = BigInt(Math.max(0, Math.round((usd / spot) * 1e8)));
   return { sats, usd };
+}
+
+/**
+ * Sats a quote will pay. The formula result is kept when it can be an output.
+ * Chain dust stays 330. A result at or below that is quoted at 331, and that
+ * is the amount the desk pays.
+ */
+export function payablePremium(sats: bigint): bigint {
+  if (sats <= DUST_SATS) return DUST_SATS + 1n;
+  return sats;
 }

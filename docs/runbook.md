@@ -148,7 +148,7 @@ Start the Settler after the Oracle origin and `ORACLE_ADMIN` are set. It can boo
 
 ## Fund the desk
 
-`GET /` returns `address` and `balance`. Send Mutinynet sats to `address`. That float pays premiums. Collateral does not come from it. `balance` stays `0` until the coins are indexed. The desk refuses a quote it cannot pay and logs `float short`. A premium at or below 330 sats is refused (`premium below dust` in [protocol/messages.ts](../protocol/messages.ts)). There is no other desk funding amount in the repo.
+`GET /` returns `address` and `balance`. Send Mutinynet sats to `address`. That float pays premiums. Collateral does not come from it. `balance` stays `0` until the coins are indexed. The desk refuses a quote it cannot pay and logs `float short`. A formula premium at or below 330 sats is quoted at 331 (`payablePremium` in [protocol/pricing.ts](../protocol/pricing.ts)). Chain dust stays 330, and `premiumRefusal` in [protocol/messages.ts](../protocol/messages.ts) still rejects a premium that was not lifted. There is no other desk funding amount in the repo.
 
 `GET /` also returns `pubkey`. Put that pubkey in the Mutinynet entry of [app/rfq-config.js](../app/rfq-config.js) and push `master` so the public page asks this desk. Leave the wallet URL alone. Automatic settlement does not read [app/src/beacon-status.ts](../app/src/beacon-status.ts). Leave that file unless you also want the page's own Settle button to spend this beacon.
 

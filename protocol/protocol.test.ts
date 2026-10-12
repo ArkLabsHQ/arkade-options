@@ -10,7 +10,7 @@ import { bytesToHex, hexToBytes, xOnly } from "./hex.ts";
 import { PAIR, POSITION_KIND } from "./constants.ts";
 import { parsePosition, parseWire, premiumRefusal, requestRefusal, type OptionPosition, type RfqRequest } from "./messages.ts";
 import { nostrPubkey, openSealed, positionEvent, quoteRelay, readPosition, seal } from "./nostr.ts";
-import { premiumSats } from "./pricing.ts";
+import { payablePremium, premiumSats } from "./pricing.ts";
 
 const key = (n: number) => SingleKey.fromHex(n.toString(16).padStart(64, "0"));
 
@@ -102,6 +102,10 @@ test("the reference swap derives a pinned address", async () => {
 test("a premium at or below 330 sats is a refusal", () => {
   assert.equal(premiumRefusal(330n), "premium below dust");
   assert.equal(premiumRefusal(331n), "");
+  assert.equal(payablePremium(0n), 331n);
+  assert.equal(payablePremium(330n), 331n);
+  assert.equal(payablePremium(331n), 331n);
+  assert.equal(payablePremium(1_158n), 1_158n);
   assert.equal(premiumRefusal(10_000n, 10_000n), "premium");
   assert.equal(premiumRefusal(9_999n, 10_000n), "");
   const priced = premiumSats({
