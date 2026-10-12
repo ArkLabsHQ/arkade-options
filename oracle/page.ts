@@ -1,3 +1,5 @@
+import { previewFromFields } from "./preview.ts";
+
 type Sample = { price: string; time: number };
 type Status = {
   assetId: string | null;
@@ -58,9 +60,44 @@ function shown(errorId: string, work: () => Promise<void>): void {
   });
 }
 
+function renderPreview(): void {
+  const price = byId("settle-price").value;
+  const strike = byId("strike").value;
+  const collateral = byId("collateral").value;
+  const out = byId("payout");
+  if (!price.trim() || !strike.trim() || !collateral.trim()) {
+    out.textContent = "";
+    return;
+  }
+  const seen = previewFromFields({ kind: byId("kind").value, price, strike, collateral });
+  if ("error" in seen) {
+    out.textContent = seen.error;
+    return;
+  }
+  const fold = seen.mode === "split" ? "" : " Dust folded the small leg into the other output.";
+  out.textContent = `Holder ${seen.holder} sats. Writer ${seen.writer} sats. Read fee ${seen.readFee} sats.${fold}`;
+}
+
 byId("issue").addEventListener("click", () => shown("admin-error", () => post("/api/issue", {})));
 byId("recover").addEventListener("click", () => shown("admin-error", () => post("/api/recover", {})));
 byId("deploy").addEventListener("click", () => shown("admin-error", () => post("/api/deploy", {})));
+for (const id of ["kind", "settle-price", "strike", "collateral"]) {
+  byId(id).addEventListener("input", renderPreview);
+  byId(id).addEventListener("change", renderPreview);
+}
+byId("publish-price").addEventListener("click", () => {
+  shown("publish-error", async () => {
+    const price = byId("settle-price").value.trim();
+    const expiry = byId("expiry").value.trim();
+    await post("/api/samples", { price });
+    try {
+      await post("/api/publish", { expiry });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "publish failed";
+      throw new Error(`Sample stored. Publish failed: ${message}`);
+    }
+  });
+});
 byId("sample").addEventListener("submit", (event) => {
   event.preventDefault();
   shown("sample-error", () => post("/api/samples", { price: byId("price").value }));

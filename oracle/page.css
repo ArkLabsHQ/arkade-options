@@ -43,7 +43,7 @@ label {
   gap: 0.2rem;
 }
 
-input, button {
+input, button, select {
   font: inherit;
   padding: 0.4rem 0.55rem;
 }
