@@ -1,8 +1,13 @@
 // Wallet app links (arkade-os/wallet #1033). URLSearchParams, because a BIP21
-// and a callback both contain "?" and "&".
+// and a callback both contain "?" and "&". The wallet redirects the window it
+// was opened in; it does not postMessage. A popup callback carries `popup=1`
+// so that window can hand the return to its opener and close.
 
 const LOCAL = new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
-const RETURN = ["address", "pubkey", "error", "status", "txid", "flow", "position"];
+const RETURN = ["address", "pubkey", "error", "status", "txid", "flow", "position", "popup"];
+const OUTCOME = ["address", "pubkey", "error", "status", "txid"];
+
+export const WALLET_HANDOFF_TYPE = "arkade-wallet-handoff";
 
 export type WalletHandoff =
   | { kind: "none" }
@@ -50,6 +55,85 @@ export function walletAppUrl(origin: string, action: "connect" | "send", callbac
 function hex64(value: string | null): string | undefined {
   const hex = value?.trim().toLowerCase() ?? "";
   return /^[0-9a-f]{64}$/.test(hex) ? hex : undefined;
+}
+
+export type WalletHandoffMessage = {
+  type: typeof WALLET_HANDOFF_TYPE;
+  handoff: WalletHandoff;
+};
+
+/** postMessage targetOrigin. A callback origin, with no path or userinfo. */
+export function walletMessageTarget(origin: string): string | null {
+  if (!callbackAllowed(origin)) return null;
+  try {
+    const url = new URL(origin);
+    if (url.origin !== origin) return null;
+    return url.origin;
+  } catch {
+    return null;
+  }
+}
+
+function hasWalletOutcome(search: string): boolean {
+  const params = new URLSearchParams(search);
+  return OUTCOME.some((key) => {
+    const value = params.get(key);
+    return value != null && value !== "";
+  });
+}
+
+function messageHandoff(handoff: WalletHandoff): WalletHandoff {
+  if (handoff.kind === "connect") {
+    return { kind: "connect", address: handoff.address, pubkey: handoff.pubkey };
+  }
+  if (handoff.kind === "connect-error") return { kind: "connect-error" };
+  if (handoff.kind === "sent") {
+    return handoff.txid
+      ? { kind: "sent", positionId: handoff.positionId, txid: handoff.txid }
+      : { kind: "sent", positionId: handoff.positionId };
+  }
+  return { kind: "none" };
+}
+
+/** The return the opener applies. Nothing to report is not a message. */
+export function walletHandoffMessage(search: string): WalletHandoffMessage | null {
+  const handoff = readWalletHandoff(search);
+  if (handoff.kind === "none" && !hasWalletOutcome(search)) return null;
+  return { type: WALLET_HANDOFF_TYPE, handoff: messageHandoff(handoff) };
+}
+
+/**
+ * A wallet return loaded in the window this page opened. A full-page round
+ * trip has no `popup=1`, so it stays on this page instead of posting.
+ */
+export function popupHandoffMessage(search: string, hasOpener: boolean): WalletHandoffMessage | null {
+  if (!hasOpener || new URLSearchParams(search).get("popup") !== "1") return null;
+  return walletHandoffMessage(search);
+}
+
+/** Accept only the handoff this page posts. Extra fields are dropped. */
+export function readWalletHandoffMessage(data: unknown): WalletHandoff | null {
+  if (!data || typeof data !== "object") return null;
+  const record = data as { type?: unknown; handoff?: unknown };
+  if (record.type !== WALLET_HANDOFF_TYPE || !record.handoff || typeof record.handoff !== "object") return null;
+  const handoff = record.handoff as Record<string, unknown>;
+  if (handoff.kind === "none") return { kind: "none" };
+  if (handoff.kind === "connect-error") return { kind: "connect-error" };
+  if (handoff.kind === "connect") {
+    const address = typeof handoff.address === "string" ? handoff.address.trim() : "";
+    const pubkey = hex64(typeof handoff.pubkey === "string" ? handoff.pubkey : null);
+    if (!address || !pubkey) return null;
+    return { kind: "connect", address, pubkey };
+  }
+  if (handoff.kind === "sent") {
+    if (typeof handoff.positionId !== "string") return null;
+    const positionId = handoff.positionId.trim();
+    if (handoff.txid == null) return { kind: "sent", positionId };
+    const txid = hex64(typeof handoff.txid === "string" ? handoff.txid : null);
+    if (!txid) return null;
+    return { kind: "sent", positionId, txid };
+  }
+  return null;
 }
 
 /** An error wins, so a denial does not keep a prefilled address. */
