@@ -45,7 +45,7 @@ import { Book, hasBeacon, openPremium, pageQuotes, quoteCounts, type QuoteFilter
 import { countFill, countQuote, emptyHour, hourLine, msUntilNextHour } from "./digest.ts";
 import { finalizeDeskSpends } from "./finalize.ts";
 import { fillQuote } from "./fill.ts";
-import { spotCents } from "./spot.ts";
+import { spotCents } from "../protocol/spot.ts";
 
 /**
  * One process: Nostr RFQ, the quote book, and fills from the contract manager.

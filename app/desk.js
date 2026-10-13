@@ -25,6 +25,7 @@ import { artifactLine } from "./src/program.ts";
 import { requestQuotes } from "./src/rfq.ts";
 import { deribitPremium, fetchSurface } from "../protocol/deribit.ts";
 import { payablePremium } from "../protocol/pricing.ts";
+import { spotCents } from "../protocol/spot.ts";
 import { bestQuote } from "./quote.js";
 import { PINNED_DESKS, RELAYS } from "./rfq-config.js";
 import { DUST, Q_MAX, Q_MIN, writerPayoff } from "./settle-math.js";
@@ -1709,29 +1710,17 @@ async function submitRestore() {
   }
 }
 
+// The desk's spot: the median of Coinbase, Kraken and Binance, from any two that answer.
+// Binance refuses US visitors (HTTP 451), so the page needs the third venue too.
 async function loadSpot() {
-  const sources = [
-    ["Coinbase", "https://api.coinbase.com/v2/prices/BTC-USD/spot", (body) => body.data.amount],
-    ["Binance", "https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT", (body) => body.price],
-  ];
-  const live = [];
-  for (const [name, url, pick] of sources) {
-    try {
-      const res = await fetch(url);
-      if (!res.ok) continue;
-      const price = Number(pick(await res.json()));
-      if (price > 1000 && price < 10_000_000) live.push({ name, cents: BigInt(Math.round(price * 100)) });
-    } catch {
-      // try the next source
-    }
-  }
-  if (live.length < 2) {
+  try {
+    const tick = await spotCents();
+    state.spotCents = tick.cents;
+    state.spotSource = tick.sources.join(" · ");
+  } catch {
     state.spotCents = null;
     state.spotSource = "Spot unavailable";
-    return;
   }
-  state.spotCents = (live[0].cents + live[1].cents) / 2n;
-  state.spotSource = live.map((item) => item.name).join(" · ");
 }
 
 function loadArtifact() {
