@@ -501,7 +501,11 @@ function drawChart(host, { kind, k, q, pay, at, day }) {
     width: W,
     height: H,
     viewBox: `0 0 ${W} ${H}`,
-    role: "img",
+    role: "slider",
+    tabindex: 0,
+    "aria-valuemin": Math.round(x0),
+    "aria-valuemax": Math.round(x1),
+    "aria-valuenow": Math.round(at ? at.p : k),
     "aria-label": `What you end up with on ${day}: ₿${fmtBtc(backSats(kind, k, k, q) + pay)} if BTC is ${safe} ${usd0(k)}, and less the further it goes ${kind === 0 ? "above" : "below"}.`,
   });
   const defs = svgEl("defs", {});
@@ -548,7 +552,60 @@ function drawChart(host, { kind, k, q, pay, at, day }) {
   };
   mark(k, "mark", `Your line ${usd0(k)}`, right);
   if (at) mark(at.p, "today", `${at.label} ${usd0(at.p)}`, !right);
-  host.replaceChildren(svg);
+  // The scrub reads any price on a $250 grid. Prices refresh while the chart is open,
+  // so a redraw keeps the reading and the focus.
+  const probe = svgEl("g", { class: "probe" });
+  const tip = el("div", "tip");
+  const key = `${kind}:${k}:${q}`;
+  const row = (name, value, className = "r") => {
+    const node = el("div", className);
+    node.append(el("span", "", name), el("span", "", value));
+    return node;
+  };
+  let now = null;
+  const read = (p) => {
+    now = p == null ? null : Math.min(x1, Math.max(x0, Math.round(p / 250) * 250));
+    host.dataset.scrub = now == null ? "" : `${key}@${now}`;
+    tip.hidden = now == null;
+    probe.replaceChildren();
+    if (now == null) return;
+    const back = backSats(kind, now, k, q);
+    const total = back + pay;
+    const x = X(now);
+    probe.append(svgEl("line", { x1: x, x2: x, y1: yt, y2: yb }), svgEl("circle", { cx: x, cy: Y(Number(total)), r: 7 }));
+    tip.replaceChildren(
+      el("div", "t", `If BTC is ${usd0(now)} on ${day}`),
+      row("You get back", `${int(back)} sats`),
+      ...(pay > 0n ? [row("Paid now", `+${int(pay)} sats`)] : []),
+      row("You end with", `${int(total)} sats`, "r end"),
+      el("div", "s", `₿${fmtBtc(total)} · worth ${usd0(worth(total, now))}`),
+    );
+    const room = tip.offsetWidth + 16;
+    tip.style.left = `${x + room > W ? Math.max(0, x - room) : x + 16}px`;
+    svg.setAttribute("aria-valuenow", String(now));
+    svg.setAttribute("aria-valuetext", `If BTC is ${usd0(now)} on ${day}, you end with ${int(total)} sats.`);
+  };
+  const aim = (event) => read(x0 + ((event.clientX - svg.getBoundingClientRect().left - 2) / (W - 4)) * (x1 - x0));
+  svg.addEventListener("pointerdown", aim);
+  svg.addEventListener("pointermove", aim);
+  // A mouse that leaves clears the reading; a finger that lifts leaves it up, unless it was scrolling.
+  svg.addEventListener("pointerleave", (event) => {
+    if (event.pointerType === "mouse") read(null);
+  });
+  svg.addEventListener("pointercancel", () => read(null));
+  svg.addEventListener("blur", () => read(null));
+  svg.addEventListener("keydown", (event) => {
+    const step = { ArrowLeft: -1, ArrowDown: -1, ArrowRight: 1, ArrowUp: 1 }[event.key];
+    if (!step) return;
+    event.preventDefault();
+    read((now ?? (at ? at.p : k)) + step * (event.shiftKey ? 1000 : 250));
+  });
+  const [was, price] = (host.dataset.scrub || "").split("@");
+  const focused = host.contains(document.activeElement);
+  svg.append(probe);
+  host.replaceChildren(svg, tip);
+  read(was === key ? Number(price) : null);
+  if (focused) svg.focus({ preventScroll: true });
 }
 
 function renderSell() {
@@ -738,7 +795,7 @@ function renderCheckout() {
   $("agree-text").textContent = worst;
   $("chart-title").textContent = `What you end up with on ${day}`;
   $("chart-cap").textContent = clears(pay)
-    ? `Back from the lock, plus the ${int(pay)} sats paid now.`
+    ? `Back from the lock, plus the ${int(pay)} sats paid now. Drag across to explore.`
     : "No payment: this doesn’t pay more than the 1,000-sat price-check fee.";
   drawChart($("checkout-chart"), { kind, k, q, pay: clears(pay) ? pay : 0n, at: { p: spotUsd(), label: "Today" }, day });
   renderFoot();
