@@ -44,6 +44,7 @@ const VERBS = {
   now: ["I’ll lock", "give up gains above", "take the loss below"],
   ing: ["You’re locking", "giving up gains above", "taking the loss below"],
   past: ["You locked", "gave up gains above", "took the loss below"],
+  none: ["You were going to lock", "give up gains above", "take the loss below"],
 };
 
 let promotedSettled = false;
@@ -366,14 +367,14 @@ function markStep(item, kind, busy = false) {
   item.append(spin);
 }
 
-function progressSteps(status) {
+function progressSteps(status, received) {
   const list = document.createElement("ol");
   list.className = "steps";
   list.setAttribute("aria-label", "Progress");
   if (status === "expired" || status === "refunded") {
     const labels = status === "refunded"
       ? ["Waiting for your BTC", "BTC received", "Sent back"]
-      : ["Waiting for your BTC", "BTC received", "Time ran out"];
+      : received ? ["Waiting for your BTC", "BTC received", "Time ran out"] : ["Waiting for your BTC", "Time ran out"];
     labels.forEach((label, step) => {
       const item = document.createElement("li");
       item.textContent = label;
@@ -868,7 +869,7 @@ function renderBlotter() {
     icon.append(kindIcon(position.kind));
     const what = el("span");
     what.append(
-      el("b", "", `${capital(VERBS.past[1 + position.kind])} ${usd0(Number(position.strike) / 100)}`),
+      el("b", "", `${capital(VERBS[["expired", "refunded"].includes(position.status) ? "none" : "past"][1 + position.kind])} ${usd0(Number(position.strike) / 100)}`),
       el("span", "m", `${fmtBtc(position.collateral)} BTC · until ${whenShort(position.expiry)}`),
     );
     const done = position.status === "settled" || settlementKnown(position);
@@ -899,8 +900,9 @@ function renderPosition(p) {
   const now = Math.floor(Date.now() / 1000);
   const done = p.status === "settled" || settlementKnown(p);
   const live = p.status === "locking" || p.status === "deposited";
+  const unlocked = p.status === "expired" || p.status === "refunded";
   const side = (price) => (p.kind === 0 ? (price > k ? "above" : "under") : (price < k ? "below" : "above"));
-  sentenceInto($("position-sentence"), p.kind, q, p.expiry, k, live ? "ing" : "past");
+  sentenceInto($("position-sentence"), p.kind, q, p.expiry, k, live ? "ing" : unlocked ? "none" : "past");
   const head = el("h2");
   const body = [];
   let at = state.spotCents == null ? null : { p: spotUsd(), label: "Now" };
@@ -988,7 +990,7 @@ function renderPosition(p) {
   const host = $("position-body");
   const opened = Boolean(host.querySelector("details")?.open);
   host.replaceChildren(head, ...body);
-  const steps = progressSteps(p.status);
+  const steps = progressSteps(p.status, p.refundable || Boolean(p.fundingTxid));
   if (steps) host.append(steps);
   const txs = txLinks(p);
   if (txs) host.append(txs);
@@ -1005,6 +1007,8 @@ function renderPosition(p) {
   }
   more.append(el("summary", "", "Details"), facts);
   host.append(more);
+  $("position-chart").parentElement.hidden = unlocked;
+  if (unlocked) return;
   $("position-chart-title").textContent = `What you end up with on ${whenDay(p.expiry)}`;
   drawChart($("position-chart"), { kind: p.kind, k, q, pay, at, day: whenDay(p.expiry) });
 }
