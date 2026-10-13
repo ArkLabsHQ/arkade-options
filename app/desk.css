@@ -362,6 +362,14 @@ a { color: var(--accent); }
 
 .payoff { margin: 26px 0 0; }
 
+.lab > .payoff:first-child { margin-top: 0; }
+
+.payoff figcaption { margin-bottom: 14px; }
+
+.payoff-lead { margin: 0; max-width: 42rem; color: var(--ink); text-wrap: pretty; }
+
+.payoff-note { margin: 6px 0 0; max-width: 42rem; font-size: 13px; text-wrap: pretty; }
+
 .payoff svg { width: 100%; height: auto; display: block; overflow: visible; }
 
 .payoff text {

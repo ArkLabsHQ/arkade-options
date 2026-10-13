@@ -157,13 +157,17 @@ function fmtWhen(unix) {
   })} UTC`;
 }
 
-function upfront(sats, usd) {
-  const amount = `${sats} sats`;
+/** A premium in dollars, from spot or else from the quote's own USD figure. */
+function aboutUsd(sats, usd) {
   let cents = null;
   if (state.spotCents != null && sats != null) cents = (sats * state.spotCents + 50_000_000n) / 100_000_000n;
   else if (usd != null && Number.isFinite(Number(usd))) cents = BigInt(Math.round(Number(usd) * 100));
-  if (cents == null) return amount;
-  return `${amount} · about $${fmtUsdFromCents(cents)}`;
+  return cents == null ? "" : `about $${fmtUsdFromCents(cents)}`;
+}
+
+function upfront(sats, usd) {
+  const about = aboutUsd(sats, usd);
+  return about ? `${sats} sats · ${about}` : `${sats} sats`;
 }
 
 function annualized(premiumSats, collateralSats, days) {
@@ -438,23 +442,59 @@ function pctFromSpot(cents) {
   return `${sign}${delta.toFixed(1)}%`;
 }
 
-function renderPayoff() {
-  const host = $("payoff");
-  if (!$("payoff-details").open) {
-    host.replaceChildren();
-    return;
-  }
+// The Quote page's summary is built by the same code as each position's.
+const quoteSummary = payoffFigure();
+$("sell").querySelector(".book").append(quoteSummary.figure);
+
+function renderPayoff(quoted) {
   const sats = sizeSats();
-  if (state.spotCents == null || sats == null || sizeError(sats)) {
-    host.replaceChildren();
-    return;
-  }
-  drawPayoff(host, {
+  const ready = state.spotCents != null && sats != null && !sizeError(sats);
+  quoteSummary.figure.hidden = !ready;
+  if (!ready) return;
+  const terms = {
     kind: state.kind,
     strike: strike(),
     collateral: sats,
     spot: state.spotCents,
-  });
+    expiry: expiryUnix(),
+    premium: quoted?.sats ?? null,
+    premiumUsd: quoted?.usd ?? null,
+    days: selectedDays(),
+  };
+  writeSummary(quoteSummary, terms);
+  drawPayoff(quoteSummary.host, terms);
+}
+
+/** Summary sentence, note and chart: the Quote page has one, and so does each open position. */
+function payoffFigure() {
+  const figure = document.createElement("figure");
+  figure.className = "payoff";
+  const caption = document.createElement("figcaption");
+  const lead = document.createElement("p");
+  lead.className = "payoff-lead";
+  const note = document.createElement("p");
+  note.className = "payoff-note";
+  const host = document.createElement("div");
+  caption.append(lead, note);
+  figure.append(caption, host);
+  return { figure, lead, note, host };
+}
+
+/** "You put X, earn Y (APR) and get back X if BTC stays on your side of the strike." */
+function writeSummary({ lead, note }, { kind, strike: k, collateral: q, expiry, premium, premiumUsd, days }) {
+  const back = writerKeep(kind, k, k, q, BEACON_READ_FEE);
+  let earn = `earn a premium (${state.quoting ? "getting a quote" : "Confirm to see it"})`;
+  if (premium != null) {
+    const apr = annualized(premium, q, days);
+    const rate = apr != null && Number.isFinite(apr) ? `${apr.toFixed(Math.abs(apr) >= 100 ? 0 : 1)}% APR` : "";
+    const parts = [aboutUsd(premium, premiumUsd), rate].filter(Boolean).map((part) => part.replaceAll(" ", "\u00a0"));
+    earn = `earn ${btcUnit(premium)}${parts.length ? ` (${parts.join(", ")})` : ""}`;
+  }
+  lead.textContent = `You put ${btcUnit(q)}, ${earn} and get back ${btcUnit(back)} if BTC is at or ${kind === 0 ? "below" : "above"} ${usd(k)} on ${fmtWhen(expiry).replaceAll(" ", "\u00a0")}.`;
+  const fee = `The read fee takes ${BEACON_READ_FEE} sats of the collateral.`;
+  note.textContent = kind === 0
+    ? `Above ${usd(k)}, part of it goes to the desk. ${fee}`
+    : `Below ${usd(k)}, part of it goes to the desk, and all of it at ${wholeUsd(keepCrossing(kind, 0n, k, q, BEACON_READ_FEE))} or lower. ${fee}`;
 }
 
 function usd(cents) {
@@ -682,7 +722,6 @@ function renderSell() {
   const err = state.spotCents == null ? "" : sizeError(sats);
   $("size-error").textContent = err;
   renderStrikes();
-  renderPayoff();
 
   const deposit = shownDeposit();
   const position = deposit && state.positions.find((item) => item.address === deposit.address);
@@ -690,6 +729,7 @@ function renderSell() {
   const head = frozen
     ? { sats: position.premiumSats, name: position.solver || "Desk", usd: position.premiumUsd }
     : headlineQuote();
+  let quoted = null;
   if (!head || err) {
     $("premium").textContent = state.quoting && !err ? "…" : "—";
     $("premium-meta").textContent = err ? "" : (state.spotCents == null ? "Loading the price." : "");
@@ -698,7 +738,9 @@ function renderSell() {
     const source = frozen ? statusLabel(position) : (state.deskQuote ? "now" : "market");
     const pay = upfront(head.sats, head.usd);
     $("premium-meta").textContent = `${pay} · ${source}. The read fee takes ${BEACON_READ_FEE} sats of the collateral.`;
+    quoted = { sats: head.sats, usd: head.usd };
   }
+  renderPayoff(quoted);
 
   const quote = liveQuote();
   const moved = Boolean(quote && deposit && !frozen && quote.sats !== deposit.premium);
@@ -990,10 +1032,6 @@ function detail(position) {
     lead.textContent = leadText;
     box.append(lead);
   }
-  const pay = document.createElement("p");
-  pay.className = "premium-meta";
-  pay.textContent = `Pays ${fmtBtc(position.premiumSats)} BTC · ${upfront(position.premiumSats, position.premiumUsd)} · expires ${fmtWhen(position.expiry)}`;
-  box.append(pay);
   if (position.status === "locking" && position.marketSats && position.marketSats !== position.premiumSats) {
     const now = document.createElement("p");
     now.className = "market-now";
@@ -1003,6 +1041,21 @@ function detail(position) {
   if (position.address && !["filled", "refunded", "settled"].includes(position.status)) {
     box.append(depositBlock(position));
   }
+  const terms = {
+    kind: position.kind,
+    strike: position.strike,
+    collateral: position.collateral,
+    spot: state.spotCents,
+    expiry: position.expiry,
+    premium: position.premiumSats,
+    premiumUsd: position.premiumUsd,
+    days: tenorDays(position),
+  };
+  const summary = payoffFigure();
+  writeSummary(summary, terms);
+  box.append(summary.figure);
+  // The row is attached after detail() returns; draw once it is on the page.
+  queueMicrotask(() => drawPayoff(summary.host, terms));
   if (position.payoutAddress) {
     const where = document.createElement("p");
     where.className = "lock-note";
@@ -1012,23 +1065,6 @@ function detail(position) {
     addr.textContent = position.payoutAddress;
     box.append(where, addr);
   }
-  const chart = document.createElement("details");
-  chart.className = "more";
-  const summary = document.createElement("summary");
-  summary.textContent = "Payoff chart";
-  const host = document.createElement("div");
-  host.className = "payoff";
-  chart.append(summary, host);
-  chart.addEventListener("toggle", () => {
-    if (!chart.open) return;
-    drawPayoff(host, {
-      kind: position.kind,
-      strike: position.strike,
-      collateral: position.collateral,
-      spot: state.spotCents,
-    });
-  });
-  box.append(chart);
   if (position.status === "locking") {
     const cancel = document.createElement("button");
     cancel.type = "button";
@@ -1757,7 +1793,6 @@ function bind() {
   document.querySelectorAll("[data-kind]").forEach((btn) => {
     btn.addEventListener("click", () => openSell(Number(btn.dataset.kind)));
   });
-  listen("payoff-details", "toggle", renderPayoff);
   document.querySelectorAll("[data-restore-kind]").forEach((btn) => {
     btn.addEventListener("click", () => {
       restoreKind = Number(btn.dataset.restoreKind);
