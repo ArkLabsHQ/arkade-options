@@ -1,3 +1,4 @@
+import { BEACON_READ_FEE } from "../../protocol/constants.ts";
 import { btcAmount } from "./fund.ts";
 
 const TXID = /^[0-9a-f]{64}$/;
@@ -57,16 +58,17 @@ export function settledSummary(position: {
 }): string {
   const hasWriter = position.writerKeep != null && position.writerKeep !== "";
   const hasDesk = position.deskTake != null && position.deskTake !== "";
-  if (!hasWriter && !hasDesk) return "The collateral left the vault.";
+  const fee = ` The read fee took ${BEACON_READ_FEE} sats.`;
+  if (!hasWriter && !hasDesk) return `The collateral left the vault.${fee}`;
   const you = hasWriter ? BigInt(position.writerKeep as string) : 0n;
   const desk = hasDesk ? BigInt(position.deskTake as string) : 0n;
   const price = position.settleCents ? ` Price $${usd(BigInt(position.settleCents))}.` : "";
   if (you > 0n && desk > 0n) {
-    return `The collateral left the vault. You kept ${btc(you)} BTC. The desk kept ${btc(desk)} BTC.${price}`;
+    return `The collateral left the vault. You kept ${btc(you)} BTC. The desk kept ${btc(desk)} BTC.${fee}${price}`;
   }
-  if (you > 0n) return `The collateral left the vault. You kept ${btc(you)} BTC.${price}`;
-  if (desk > 0n) return `The collateral left the vault. The desk kept ${btc(desk)} BTC.${price}`;
-  return "The collateral left the vault.";
+  if (you > 0n) return `The collateral left the vault. You kept ${btc(you)} BTC.${fee}${price}`;
+  if (desk > 0n) return `The collateral left the vault. The desk kept ${btc(desk)} BTC.${fee}${price}`;
+  return `The collateral left the vault.${fee}`;
 }
 
 export function positionOutcome(
@@ -83,10 +85,11 @@ export function positionOutcome(
 ): string {
   if (position.status === "settled" || settlementKnown(position)) return settledSummary(position);
   const expiry = Number(position.expiry) || 0;
+  const fee = ` The read fee takes ${BEACON_READ_FEE} sats of the collateral.`;
   if (position.status === "filled" && expiry && expiry <= now) {
-    return "Expired. The collateral is still in the vault, so no one has won it yet.";
+    return `Expired. The collateral is still in the vault, so no one has won it yet.${fee}`;
   }
-  if (position.status === "filled") return "Premium paid. The collateral stays in the vault until expiry.";
+  if (position.status === "filled") return `Premium paid. The collateral stays in the vault until expiry.${fee}`;
   if (position.status === "refunded") return "The deposit came back to you. The trade did not fill.";
   return "";
 }

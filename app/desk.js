@@ -24,6 +24,7 @@ import {
 import { artifactLine } from "./src/program.ts";
 import { requestQuotes } from "./src/rfq.ts";
 import { deribitPremium, fetchSurface } from "../protocol/deribit.ts";
+import { BEACON_READ_FEE } from "../protocol/constants.ts";
 import { payablePremium } from "../protocol/pricing.ts";
 import { bestQuote } from "./quote.js";
 import { PINNED_DESKS, RELAYS } from "./rfq-config.js";
@@ -156,10 +157,13 @@ function fmtWhen(unix) {
   })} UTC`;
 }
 
-function fmtApy(value) {
-  if (value == null || !Number.isFinite(value)) return "";
-  const digits = Math.abs(value) >= 100 ? 0 : 1;
-  return `${value.toFixed(digits)}% APY`;
+function upfront(sats, usd) {
+  const amount = `${sats} sats`;
+  let cents = null;
+  if (state.spotCents != null && sats != null) cents = (sats * state.spotCents + 50_000_000n) / 100_000_000n;
+  else if (usd != null && Number.isFinite(Number(usd))) cents = BigInt(Math.round(Number(usd) * 100));
+  if (cents == null) return amount;
+  return `${amount} · about $${fmtUsdFromCents(cents)}`;
 }
 
 function annualized(premiumSats, collateralSats, days) {
@@ -549,19 +553,16 @@ function renderSell() {
   const position = deposit && state.positions.find((item) => item.address === deposit.address);
   const frozen = position && position.status !== "locking";
   const head = frozen
-    ? { sats: position.premiumSats, name: position.solver || "Desk" }
+    ? { sats: position.premiumSats, name: position.solver || "Desk", usd: position.premiumUsd }
     : headlineQuote();
-  const days = selectedDays();
   if (!head || err) {
     $("premium").textContent = state.quoting && !err ? "…" : "—";
     $("premium-meta").textContent = err ? "" : (state.spotCents == null ? "Loading the price." : "");
   } else {
-    const apy = frozen
-      ? position.apy
-      : annualized(head.sats, sats, days);
     $("premium").textContent = `${fmtBtc(head.sats)} BTC`;
     const source = frozen ? statusLabel(position) : (state.deskQuote ? "now" : "market");
-    $("premium-meta").textContent = [fmtApy(apy), source].filter(Boolean).join(" · ");
+    const pay = upfront(head.sats, head.usd);
+    $("premium-meta").textContent = `${pay} · ${source}. The read fee takes ${BEACON_READ_FEE} sats of the collateral.`;
   }
 
   const quote = liveQuote();
@@ -596,10 +597,7 @@ function renderSell() {
     $("deposit-amount").textContent = sent
       ? `${fmtBtc(deposit.amountSats)} BTC is on this address`
       : `Send ${fmtBtc(deposit.amountSats)} BTC`;
-    const apy = deposit.apy ?? annualized(deposit.premium, deposit.amountSats, selectedDays());
-    $("deposit-fixed").textContent = frozen
-      ? `This deposit pays ${fmtBtc(deposit.premium)} BTC · ${fmtApy(position.apy ?? apy)}`
-      : `This deposit pays ${fmtBtc(deposit.premium)} BTC · ${fmtApy(apy)}`;
+    $("deposit-fixed").textContent = `This deposit pays ${fmtBtc(deposit.premium)} BTC · ${upfront(deposit.premium, position?.premiumUsd)}. The read fee takes ${BEACON_READ_FEE} sats of the collateral.`;
     $("deposit-address").textContent = deposit.address;
     $("copy-address").disabled = false;
   }
@@ -859,13 +857,12 @@ function detail(position) {
   }
   const pay = document.createElement("p");
   pay.className = "premium-meta";
-  const apy = position.apyFrozen ? position.apy : annualized(position.premiumSats, position.collateral, tenorDays(position));
-  pay.textContent = `Pays ${fmtBtc(position.premiumSats)} BTC · ${fmtApy(apy)} · expires ${fmtWhen(position.expiry)}`;
+  pay.textContent = `Pays ${fmtBtc(position.premiumSats)} BTC · ${upfront(position.premiumSats, position.premiumUsd)} · expires ${fmtWhen(position.expiry)}`;
   box.append(pay);
   if (position.status === "locking" && position.marketSats && position.marketSats !== position.premiumSats) {
     const now = document.createElement("p");
     now.className = "market-now";
-    now.textContent = `Market now ${fmtBtc(position.marketSats)} BTC · ${fmtApy(position.marketApy)}`;
+    now.textContent = `Market now ${fmtBtc(position.marketSats)} BTC · ${upfront(position.marketSats)}`;
     box.append(now);
   }
   if (position.address && !["filled", "refunded", "settled"].includes(position.status)) {
@@ -1710,28 +1707,17 @@ async function submitRestore() {
 }
 
 async function loadSpot() {
-  const sources = [
-    ["Coinbase", "https://api.coinbase.com/v2/prices/BTC-USD/spot", (body) => body.data.amount],
-    ["Binance", "https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT", (body) => body.price],
-  ];
-  const live = [];
-  for (const [name, url, pick] of sources) {
-    try {
-      const res = await fetch(url);
-      if (!res.ok) continue;
-      const price = Number(pick(await res.json()));
-      if (price > 1000 && price < 10_000_000) live.push({ name, cents: BigInt(Math.round(price * 100)) });
-    } catch {
-      // try the next source
-    }
-  }
-  if (live.length < 2) {
+  try {
+    const res = await fetch("https://www.deribit.com/api/v2/public/get_index_price?index_name=btc_usd");
+    if (!res.ok) throw new Error("spot");
+    const price = Number((await res.json())?.result?.index_price);
+    if (!(price > 1000 && price < 10_000_000)) throw new Error("spot");
+    state.spotCents = BigInt(Math.round(price * 100));
+    state.spotSource = "Deribit";
+  } catch {
     state.spotCents = null;
     state.spotSource = "Spot unavailable";
-    return;
   }
-  state.spotCents = (live[0].cents + live[1].cents) / 2n;
-  state.spotSource = live.map((item) => item.name).join(" · ");
 }
 
 function loadArtifact() {

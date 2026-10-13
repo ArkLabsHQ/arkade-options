@@ -25,7 +25,7 @@ test("a spent vault says the collateral left and the writer kept 99000 sats", ()
     deskTake: split?.desk.toString(),
     settleCents: "8277570",
   }, 2_000_000_000);
-  assert.equal(line, "The collateral left the vault. You kept 0.00099 BTC. Price $82,775.70.");
+  assert.equal(line, "The collateral left the vault. You kept 0.00099 BTC. The read fee took 1000 sats. Price $82,775.70.");
   assert.doesNotMatch(line, /still in the vault|no one has won/);
 
   const open = positionOutcome({
@@ -35,4 +35,12 @@ test("a spent vault says the collateral left and the writer kept 99000 sats", ()
     closeTxid: FILL,
   }, 2_000_000_000);
   assert.match(open, /still in the vault/);
+  assert.match(open, /The read fee takes 1000 sats of the collateral/);
+
+  const paid = positionOutcome({
+    status: "filled",
+    expiry: 4_000_000_000n,
+    closeTxid: FILL,
+  }, 2_000_000_000);
+  assert.equal(paid, "Premium paid. The collateral stays in the vault until expiry. The read fee takes 1000 sats of the collateral.");
 });
