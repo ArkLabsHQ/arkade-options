@@ -5,182 +5,129 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Arkade Options</title>
-  <meta name="theme-color" content="#12140f">
+  <meta name="theme-color" content="#381993">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="desk.css">
 </head>
-<body data-view="connect">
-  <div class="chrome">
-    <header class="top">
-      <div>
-        <h1>Arkade Options</h1>
-        <p class="sub" id="sub">Open your Arkade wallet, or paste an address.</p>
-        <p class="who" id="who" hidden>
-          <span id="who-address"></span>
-          <button type="button" id="account-change">Change</button>
-        </p>
-      </div>
-      <p class="spot"><span id="network" class="network">Mutinynet</span><span id="spot-source">BTC/USD</span> <strong id="spot-px">Loading</strong></p>
-    </header>
-    <nav class="tabs" id="tabs" aria-label="Sections" hidden>
-      <button type="button" data-tab="sell" aria-pressed="true">Quote</button>
-      <button type="button" data-tab="home">Positions</button>
+<body>
+  <p class="strip" role="note"><span>Educational demo</span><span aria-hidden="true">·</span><span>Mutinynet</span><span aria-hidden="true">·</span><span>coins have no value</span></p>
+  <header class="top" id="top">
+    <a class="brandmark" href="#/"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M0 6L6 0H18L24 6V12H18V6H6V12H0ZM6 18V12H18V18ZM6 24H0V18H6ZM24 18V24H18V18Z"/></svg><span>Arkade <span class="lite">Options</span></span></a>
+    <nav class="nav" aria-label="Main">
+      <button type="button" data-tab="sell">New</button>
+      <button type="button" data-tab="home">Positions<span class="count" id="count" hidden></span></button>
     </nav>
-  </div>
+    <button type="button" class="wallet" id="who" hidden><span class="dot" aria-hidden="true"></span><span class="addr-l" id="who-address"></span><span class="addr-s" id="who-tail"></span></button>
+    <button type="button" class="connect" id="top-connect">Connect</button>
+  </header>
 
-  <main>
-    <section id="connect" class="connect" aria-labelledby="connect-title">
-      <h2 id="connect-title">Connect</h2>
-      <p class="copy">Open your Arkade wallet to share the address premium and settlement are paid to. Nothing is shared until you agree there.</p>
-      <button type="button" class="lock" id="wallet-connect">Open Arkade wallet</button>
-      <p class="lock-note">Or paste an address.</p>
-      <div class="field">
-        <label class="field-label" for="account-key">Arkade address</label>
-        <input id="account-key" autocomplete="off" spellcheck="false" placeholder="tark1…" aria-describedby="account-error">
+  <main class="page" id="main">
+    <section id="connect" class="card connect-card" aria-labelledby="connect-title" hidden>
+      <h2 id="connect-title">Connect your wallet</h2>
+      <p class="sub">What you get paid, and what comes back on the date, go to this wallet. Nothing is shared until you agree there.</p>
+      <p class="sub" id="connect-current" hidden>Connected: <span class="mono" id="connect-address"></span> <button type="button" class="textbtn" id="account-change">Use another wallet</button></p>
+      <button type="button" class="btn go" id="wallet-connect">Open Arkade wallet</button>
+      <div class="form">
+        <label>Or paste your Arkade address<input id="account-key" class="mono-input" autocomplete="off" spellcheck="false" placeholder="tark1…" aria-describedby="account-error"></label>
         <p id="account-error" class="error" role="status"></p>
+        <div><button type="button" class="btn quiet sm" id="account-save">Continue</button></div>
       </div>
-      <button type="button" class="lock" id="account-save">Continue</button>
-      <p class="lock-note">No wallet yet? <a href="https://mutinynet.arkade.money" target="_blank" rel="noopener">Get one at mutinynet.arkade.money</a></p>
-      <p class="lock-note"><a href="/viz/">How the contracts move sats</a></p>
+      <p class="foot">No wallet yet? <a href="https://mutinynet.arkade.money" target="_blank" rel="noopener">Get one at mutinynet.arkade.money</a> · <a href="/viz/">How the contracts move sats</a></p>
     </section>
 
-    <section id="home" class="home" hidden>
-      <section class="blotter" aria-label="Positions">
-        <h2>Positions</h2>
-        <div id="blotter"></div>
-      </section>
-      <details class="restore more">
-        <summary>Restore a vault</summary>
-        <p class="copy">Paste the vault outpoint and the terms the transaction does not carry. This page already has the contract and the Mutinynet keys.</p>
-        <form id="restore-form">
-          <div class="field">
-            <label class="field-label" for="restore-outpoint">Outpoint</label>
-            <input id="restore-outpoint" class="mono-input" autocomplete="off" spellcheck="false" placeholder="txid:vout" required>
-          </div>
-          <div class="field">
-            <span class="field-label">Contract</span>
-            <div class="seg" role="group" aria-label="Contract">
-              <button type="button" data-restore-kind="0" aria-pressed="true">Covered call</button>
-              <button type="button" data-restore-kind="1">Limited put</button>
-            </div>
-          </div>
-          <div class="restore-grid">
-            <div class="field">
-              <label class="field-label" for="restore-strike">Strike, USD cents</label>
-              <input id="restore-strike" class="mono-input" inputmode="numeric" autocomplete="off" spellcheck="false" required>
-            </div>
-            <div class="field">
-              <label class="field-label" for="restore-expiry">Expiry, unix time</label>
-              <input id="restore-expiry" class="mono-input" inputmode="numeric" autocomplete="off" spellcheck="false" required>
-            </div>
-            <div class="field">
-              <label class="field-label" for="restore-collateral">Collateral, sats</label>
-              <input id="restore-collateral" class="mono-input" inputmode="numeric" autocomplete="off" spellcheck="false" required>
-            </div>
-            <div class="field">
-              <label class="field-label" for="restore-exit">Exit, seconds</label>
-              <input id="restore-exit" class="mono-input" inputmode="numeric" autocomplete="off" spellcheck="false" value="2048" required>
-            </div>
-            <div class="field">
-              <label class="field-label" for="restore-beacon">Beacon txid</label>
-              <input id="restore-beacon" class="mono-input" autocomplete="off" spellcheck="false" required>
-            </div>
-            <div class="field">
-              <label class="field-label" for="restore-gidx">Beacon output</label>
-              <input id="restore-gidx" class="mono-input" inputmode="numeric" autocomplete="off" spellcheck="false" value="0" required>
-            </div>
-          </div>
-          <div class="field">
-            <label class="field-label" for="restore-fee">Beacon read fee, sats</label>
-            <input id="restore-fee" class="mono-input" inputmode="numeric" autocomplete="off" spellcheck="false" value="1000" required>
-          </div>
-          <div class="field">
-            <label class="field-label" for="restore-writer">Writer public key</label>
-            <input id="restore-writer" class="mono-input" autocomplete="off" spellcheck="false" placeholder="The taproot key premium is paid to" required>
-          </div>
-          <div class="field">
-            <label class="field-label" for="restore-holder">Holder public key</label>
-            <input id="restore-holder" class="mono-input" autocomplete="off" spellcheck="false" required>
-          </div>
-          <p id="restore-error" class="error" role="status"></p>
-          <button type="submit" class="lock" id="restore-submit">Restore</button>
-        </form>
-      </details>
-      <p id="artifact" class="artifact"></p>
+    <section id="sell" hidden>
+      <div class="opener"><span class="av"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M0 6L6 0H18L24 6V12H18V6H6V12H0ZM6 18V12H18V18ZM6 24H0V18H6ZM24 18V24H18V18Z"/></svg></span><p>Lock BTC until a date and get paid for it now. Tap any highlighted part to change it.</p></div>
+      <div class="seg" role="radiogroup" aria-label="What you give up">
+        <button type="button" role="radio" data-kind="0" aria-checked="true"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M2.5 16.5l4.5-4.5 3 2.5 6-7"/><path d="M2.5 4.5h15" stroke-dasharray="2.2 2.4"/></svg>Cap gains</button>
+        <button type="button" role="radio" data-kind="1" aria-checked="false"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M2.5 3.5l4.5 4.5 3-2.5 6 7"/><path d="M2.5 15.5h15" stroke-dasharray="2.2 2.4"/></svg>Take the loss</button>
+      </div>
+      <div class="sentence-wrap">
+        <h1 class="sentence" id="sentence">I’ll lock <button type="button" class="chip" data-chip="size" aria-haspopup="dialog" aria-expanded="false"></button> until&nbsp;<button type="button" class="chip" data-chip="date" aria-haspopup="dialog" aria-expanded="false"></button><br> <span id="verb">and give up gains above</span>&nbsp;<button type="button" class="chip" data-chip="line" aria-haspopup="dialog" aria-expanded="false"></button>.</h1>
+        <div class="pop" id="pop" role="dialog" aria-labelledby="pop-title" hidden></div>
+      </div>
+      <p class="estimate" id="estimate" aria-live="polite"></p>
+      <button type="button" class="btn light go" id="see" disabled>See what happens</button>
     </section>
 
-    <div id="sell" class="desk" hidden>
-      <section class="book" aria-label="Choose the option">
-        <div class="seg" role="group" aria-label="Contract">
-          <button type="button" data-kind="0" aria-pressed="true">Covered call</button>
-          <button type="button" data-kind="1">Limited put</button>
+    <section id="home" hidden>
+      <div id="list-view">
+        <div class="opener"><span class="av"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M0 6L6 0H18L24 6V12H18V6H6V12H0ZM6 18V12H18V18ZM6 24H0V18H6ZM24 18V24H18V18Z"/></svg></span><p>Your positions live in the vault, not in this browser. Connect the same wallet and they come back.</p></div>
+        <section class="card" aria-labelledby="positions-title">
+          <h2 id="positions-title">Your positions</h2>
+          <div class="plist" id="blotter"></div>
+          <details class="more">
+            <summary>Missing a position?</summary>
+            <p class="sub">Cleared your browser or switched devices? Bring it back here. Nothing is sent or signed.</p>
+            <form id="restore-form" class="form">
+              <label>Position ID (txid:vout)<input id="restore-outpoint" class="mono-input" autocomplete="off" spellcheck="false" placeholder="txid:vout" required></label>
+              <div class="label">What you did
+                <div class="mini-seg" role="group" aria-label="What you did">
+                  <button type="button" data-restore-kind="0" aria-pressed="true">Cap gains</button>
+                  <button type="button" data-restore-kind="1" aria-pressed="false">Take the loss</button>
+                </div>
+              </div>
+              <div class="two">
+                <label>Your line, US cents<input id="restore-strike" class="mono-input" inputmode="numeric" autocomplete="off" spellcheck="false" required></label>
+                <label>Date, unix time<input id="restore-expiry" class="mono-input" inputmode="numeric" autocomplete="off" spellcheck="false" required></label>
+                <label>Amount locked, sats<input id="restore-collateral" class="mono-input" inputmode="numeric" autocomplete="off" spellcheck="false" required></label>
+                <label>Exit delay, seconds<input id="restore-exit" class="mono-input" inputmode="numeric" autocomplete="off" spellcheck="false" value="2048" required></label>
+                <label>Price feed txid<input id="restore-beacon" class="mono-input" autocomplete="off" spellcheck="false" required></label>
+                <label>Price feed output<input id="restore-gidx" class="mono-input" inputmode="numeric" autocomplete="off" spellcheck="false" value="0" required></label>
+              </div>
+              <label>Price-check fee, sats<input id="restore-fee" class="mono-input" inputmode="numeric" autocomplete="off" spellcheck="false" value="1000" required></label>
+              <label>Your public key<input id="restore-writer" class="mono-input" autocomplete="off" spellcheck="false" placeholder="The key your payment went to" required></label>
+              <label>Desk key<input id="restore-holder" class="mono-input" autocomplete="off" spellcheck="false" required></label>
+              <p id="restore-error" class="error" role="status"></p>
+              <div><button type="submit" class="btn sm" id="restore-submit">Restore</button></div>
+            </form>
+          </details>
+        </section>
+        <p id="artifact" class="artifact"></p>
+      </div>
+      <div id="position-view" hidden>
+        <a class="back" href="#/positions"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10 3.5L5.5 8l4.5 4.5"/></svg>All positions</a>
+        <h1 class="sentence past" id="position-sentence"></h1>
+        <div class="grid">
+          <section class="card">
+            <div id="position-body"></div>
+            <p class="status" id="status" role="status"></p>
+          </section>
+          <section class="card chartcard">
+            <h3 id="position-chart-title"></h3>
+            <div class="chart" id="position-chart"></div>
+            <div class="legend"><span><i class="a"></i>What you end up with</span><span><i class="m"></i>More than you lock</span><span><i class="l"></i>Less than you lock</span><span><i class="d"></i>What you lock</span></div>
+          </section>
         </div>
-        <p id="kind-copy" class="copy"></p>
-
-        <div class="field">
-          <div class="field-label">
-            <span>Expiry</span>
-            <span id="expiry-when"></span>
-          </div>
-          <div class="seg" role="group" aria-label="Expiry">
-            <button type="button" data-tenor="600">10 min</button>
-            <button type="button" data-days="7">7 days</button>
-            <button type="button" data-days="30" aria-pressed="true">30 days</button>
-            <button type="button" data-days="90">90 days</button>
-          </div>
-        </div>
-
-        <div class="field">
-          <div class="field-label">
-            <span>Strike</span>
-            <span>Nearest first</span>
-          </div>
-          <div id="strikes" class="strikes" role="radiogroup" aria-label="Strike"></div>
-        </div>
-
-        <div class="field">
-          <label class="field-label" for="size">Notional</label>
-          <div class="size-row">
-            <input id="size" inputmode="decimal" autocomplete="off" spellcheck="false" value="0.001" aria-describedby="size-error">
-            <span>BTC</span>
-          </div>
-          <p id="size-error" class="error" role="status"></p>
-        </div>
-
-        <details class="more" id="payoff-details">
-          <summary>Payoff chart</summary>
-          <figure class="payoff">
-            <figcaption id="payoff-caption">What you keep of the collateral, across settlement prices.</figcaption>
-            <div id="payoff"></div>
-          </figure>
-        </details>
-      </section>
-
-      <aside class="ticket" aria-live="polite">
-        <p class="ticket-kicker" id="ticket-kicker">Payout now</p>
-        <p class="premium" id="premium">—</p>
-        <p class="premium-meta" id="premium-meta"></p>
-        <button type="button" class="lock" id="confirm">Confirm</button>
-        <div id="deposit" class="deposit" hidden>
-          <div class="field-label">
-            <span>Deposit</span>
-            <span>Mutinynet</span>
-          </div>
-          <p id="deposit-amount" class="deposit-amount"></p>
-          <p id="deposit-fixed" class="lock-note"></p>
-          <p id="deposit-address" class="deposit-address"></p>
-          <button type="button" class="lock" id="pay-wallet" hidden>Pay in Arkade wallet</button>
-          <button type="button" id="copy-address">Copy payment link</button>
-          <button type="button" id="abort" hidden>Cancel trade</button>
-          <button type="button" id="refund" hidden>Refund</button>
-        </div>
-        <ol class="steps" id="steps" aria-label="Progress" hidden></ol>
-        <p class="status" id="status" role="status"></p>
-      </aside>
-    </div>
+      </div>
+    </section>
   </main>
+  <p class="note" id="note"><b>Arkade Options is an educational demo</b> showing that selling BTC options works on Arkade. We plan to partner with options brands. <span id="spot-line"></span></p>
+
+  <div class="scrim" id="scrim" hidden></div>
+  <aside class="drawer" id="checkout" role="dialog" aria-modal="true" aria-labelledby="checkout-sentence" hidden>
+    <button type="button" class="back" id="checkout-change"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10 3.5L5.5 8l4.5 4.5"/></svg>Change</button>
+    <div class="scroll">
+      <p class="said" id="checkout-sentence"></p>
+      <h2 id="pay-head"></h2>
+      <p class="sub" id="pay-sub"></p>
+      <p class="fee"><span id="fee-label"></span><b>−1,000 sats</b></p>
+      <div class="rows-head"><span id="rows-when"></span><span>You get back</span></div>
+      <div id="rows"></div>
+      <section class="chartcard">
+        <h3 id="chart-title"></h3>
+        <p class="cap" id="chart-cap"></p>
+        <div class="chart" id="checkout-chart"></div>
+        <div class="legend"><span><i class="a"></i>What you end up with</span><span><i class="m"></i>More than you lock</span><span><i class="l"></i>Less than you lock</span><span><i class="d"></i>What you lock</span></div>
+      </section>
+    </div>
+    <div class="stick">
+      <label class="check"><input type="checkbox" id="agree"><span id="agree-text"></span></label>
+      <div class="sheet-foot"><button type="button" class="btn go" id="confirm">Lock and get paid</button><span class="firm" id="firm"></span></div>
+      <p class="status" id="checkout-status" role="status"></p>
+    </div>
+  </aside>
   <script type="module" src="./app.js"></script>
 </body>
 </html>
