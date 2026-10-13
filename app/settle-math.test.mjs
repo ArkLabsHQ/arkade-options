@@ -5,13 +5,14 @@ import { bestQuote, bsCall } from "./quote.js";
 import {
   fixing,
   holderPayoff,
-  writerPayoff,
   median3,
   oraclePreimage,
   settlementOutputs,
   sliceError,
   twap,
   windows,
+  writerKeep,
+  keepCrossing,
 } from "./settle-math.js";
 
 test("median matches the six orderings and ties", () => {
@@ -39,20 +40,28 @@ test("covered call and limited put payoffs", () => {
   assert.equal(holderPayoff(1, 10_000n, 10_000n, q), 0n);
 });
 
-test("writer payoff is the collateral the seller keeps", () => {
-  const q = 100_000n;
-  assert.equal(writerPayoff(0, 20_000n, 10_000n, q), 50_000n);
-  assert.equal(writerPayoff(0, 10_000n, 10_000n, q), q);
-  assert.equal(writerPayoff(1, 8_000n, 10_000n, q), 75_000n);
-  assert.equal(writerPayoff(1, 4_000n, 10_000n, q), 0n);
-  assert.equal(writerPayoff(0, 20_000n, 10_000n, q) + holderPayoff(0, 20_000n, 10_000n, q), q);
-});
-
 test("dust folds the small leg into the other output", () => {
   assert.deepEqual(settlementOutputs(50_000n, 100_000n), { mode: "split", holder: 50_000n, writer: 50_000n });
   assert.deepEqual(settlementOutputs(200n, 100_000n), { mode: "writer", holder: 0n, writer: 100_000n });
   assert.deepEqual(settlementOutputs(100_000n, 100_000n), { mode: "holder", holder: 100_000n, writer: 0n });
   assert.deepEqual(settlementOutputs(200n, 400n), { mode: "writer", holder: 0n, writer: 400n });
+});
+
+test("the writer keeps the collateral less the read fee, down to the crossing prices", () => {
+  const q = 100_000n;
+  const fee = 1_000n;
+  assert.equal(writerKeep(0, 9_000_000n, 9_200_000n, q, fee), 99_000n);
+  assert.equal(writerKeep(0, 18_400_000n, 9_200_000n, q, fee), 49_000n);
+  assert.equal(writerKeep(1, 6_000_000n, 7_500_000n, q, fee), 74_000n);
+  assert.equal(writerKeep(1, 3_700_000n, 7_500_000n, q, fee), 0n);
+  for (const [kind, strike] of [[0, 9_200_000n], [1, 7_500_000n]]) {
+    for (const level of [75_000n, 50_000n, 25_000n, 0n]) {
+      const price = keepCrossing(kind, level, strike, q, fee);
+      assert.ok(writerKeep(kind, price, strike, q, fee) <= level);
+      assert.ok(writerKeep(kind, kind === 0 ? price - 1n : price + 1n, strike, q, fee) > level);
+    }
+  }
+  assert.equal(keepCrossing(0, 0n, 9_200_000n, 1_000_000_000n, fee), null);
 });
 
 test("sample times used by the desk sit inside each slice", () => {

@@ -28,7 +28,7 @@ import { BEACON_READ_FEE } from "../protocol/constants.ts";
 import { payablePremium } from "../protocol/pricing.ts";
 import { bestQuote } from "./quote.js";
 import { PINNED_DESKS, RELAYS } from "./rfq-config.js";
-import { DUST, Q_MAX, Q_MIN, writerPayoff } from "./settle-math.js";
+import { DUST, Q_MAX, Q_MIN, keepCrossing, writerKeep } from "./settle-math.js";
 import { positionOutcome, settlementKnown } from "./src/position-status.ts";
 import { restoreVault } from "./src/restore.ts";
 import { settleFromPage } from "./src/settle.ts";
@@ -457,59 +457,194 @@ function renderPayoff() {
   });
 }
 
-function drawPayoff(host, { kind, strike: k, collateral: q, spot }) {
-  host.replaceChildren();
-  if (spot == null || q == null || q <= 0n || k == null) return;
-  let lo = kind === 0 ? k * 70n / 100n : k * 30n / 100n;
-  let hi = kind === 0 ? k * 160n / 100n : k * 130n / 100n;
-  if (spot < lo) lo = spot * 90n / 100n;
-  if (spot > hi) hi = spot * 110n / 100n;
-  if (hi <= lo) hi = lo + 1n;
-  const steps = 48;
-  const points = [];
-  for (let i = 0; i <= steps; i += 1) {
-    const px = lo + (hi - lo) * BigInt(i) / BigInt(steps);
-    const price = px === 0n ? 1n : px;
-    points.push([price, writerPayoff(kind, price, k, q)]);
-  }
-  const w = 480;
-  const h = 210;
-  const left = 78;
-  const right = 12;
-  const top = 16;
-  const bottom = 16;
-  const plotW = w - left - right;
-  const plotH = h - top - bottom;
-  const sx = (px) => left + Number(px - lo) / Number(hi - lo) * plotW;
-  const sy = (y) => top + (1 - Number(y) / Number(q)) * plotH;
-  const svg = svgEl("svg", {
-    viewBox: `0 0 ${w} ${h}`,
-    role: "img",
-    "aria-label": `Writer payoff. Spot ${fmtUsdFromCents(spot)}, strike ${fmtUsdFromCents(k)} (${pctFromSpot(k)}). You keep between 0 and ${fmtBtc(q)} BTC of collateral.`,
-  });
-  const levels = [0n, q / 2n, q];
-  for (const level of levels) {
-    const y = sy(level);
-    svg.append(svgEl("line", { x1: left, x2: w - right, y1: y, y2: y, class: "grid" }));
-    svg.append(svgEl("text", { x: left - 8, y, class: "ylab" }, fmtBtc(level)));
-  }
-  svg.append(svgEl("line", { x1: sx(spot), x2: sx(spot), y1: top, y2: top + plotH, class: "spot-line" }));
-  svg.append(svgEl("line", { x1: sx(k), x2: sx(k), y1: top, y2: top + plotH, class: "strike-line" }));
-  const line = points.map(([px, y], i) => `${i ? "L" : "M"}${sx(px).toFixed(1)},${sy(y).toFixed(1)}`).join(" ");
-  svg.append(svgEl("path", { d: line, class: "curve" }));
-  const legend = document.createElement("div");
-  legend.className = "payoff-legend";
-  legend.append(
-    legendItem("Spot", fmtUsdFromCents(spot)),
-    legendItem("Strike", `${fmtUsdFromCents(k)} · ${pctFromSpot(k)}`),
-  );
-  host.append(svg, legend);
+function usd(cents) {
+  const text = fmtUsdFromCents(cents);
+  return `$${text.endsWith(".00") ? text.slice(0, -3) : text}`;
 }
 
-function legendItem(name, value) {
-  const span = document.createElement("span");
-  span.textContent = `${name} ${value}`;
-  return span;
+/** A computed price, to the dollar. */
+function wholeUsd(cents) {
+  return usd(((cents + 50n) / 100n) * 100n);
+}
+
+/** An amount with its unit, on one line. */
+function btcUnit(sats) {
+  return `${fmtBtc(sats)}\u00a0BTC`;
+}
+
+// The chart is drawn at its rendered width so 11px labels stay 11px.
+const MONO_CHAR = 6.6;
+const AXIS_ROW = 16;
+const payoffDrawn = new WeakMap();
+const payoffResize = new ResizeObserver((entries) => {
+  for (const { target } of entries) {
+    if (target.isConnected) drawPayoff(target, payoffDrawn.get(target).terms);
+    else payoffResize.unobserve(target);
+  }
+});
+
+/** Price range: spot, the strike, and the crossings that fit, with room beside the outermost for its label. */
+function payoffModel({ kind, strike: k, collateral: q, spot }, plotWidth) {
+  const quarters = [3n, 2n, 1n, 0n].map((n) => {
+    const sats = (q * n) / 4n;
+    return { sats, price: keepCrossing(kind, sats, k, q, BEACON_READ_FEE) };
+  });
+  // A call shows down to half the collateral. Lower crossings sit far out, so they get an edge note.
+  const outer = quarters[kind === 0 ? 1 : 3].price ?? (kind === 0 ? k * 2n : k / 2n);
+  const anchor = Number(outer);
+  const room = Math.min(0.4, (wholeUsd(outer).length * MONO_CHAR + 12) / plotWidth);
+  const s = Number(spot);
+  const strikeN = Number(k);
+  if (kind === 0) {
+    const lo = Math.min(s, strikeN) * 0.8;
+    return { quarters, lo, hi: Math.max((anchor - room * lo) / (1 - room), s * 1.08) };
+  }
+  const hi = Math.max(s, strikeN) * 1.1;
+  return { quarters, hi, lo: Math.max(1, Math.min((anchor - room * hi) / (1 - room), s * 0.9)) };
+}
+
+/** Everything the chart paints, in pixels, with each positioned item keyed by what it shows. */
+function payoffScene(terms, width) {
+  const { kind, strike: k, collateral: q, spot } = terms;
+  const yText = [4n, 3n, 2n, 1n, 0n].map((n) => fmtBtc((q * n) / 4n));
+  const left = Math.ceil(Math.max(...yText.map((text) => text.length)) * MONO_CHAR) + 14;
+  const right = width - 14;
+  const top = 12;
+  const bottom = top + (width < 420 ? 148 : 172);
+  const { quarters, lo, hi } = payoffModel(terms, right - left);
+  const keepAt = (cents) => writerKeep(kind, cents, k, q, BEACON_READ_FEE);
+  const scene = {
+    width,
+    height: bottom + AXIS_ROW * 2 + 8,
+    left,
+    right,
+    top,
+    bottom,
+    lo,
+    hi,
+    grid: [0, 1, 2, 3, 4].map((i) => top + ((bottom - top) * i) / 4),
+    x: (cents) => left + ((Number(cents) - lo) / (hi - lo)) * (right - left),
+    y: (sats) => top + (1 - Number(sats) / Number(q)) * (bottom - top),
+    price: (x) => lo + ((x - left) / (right - left)) * (hi - lo),
+    curve: [],
+    corners: {},
+    items: {},
+  };
+  const { items, x: sx, y: sy } = scene;
+
+  // The curve is sampled every 3px, plus its corners: the strike, and where a put hits zero.
+  const sample = (x) => [x, sy(keepAt(BigInt(Math.max(1, Math.round(scene.price(x))))))];
+  for (let x = left; x < right; x += 3) scene.curve.push(sample(x));
+  scene.curve.push(sample(right));
+  const inside = (cents) => Number(cents) > lo && Number(cents) < hi;
+  if (inside(k)) scene.corners.strike = [sx(k), sy(keepAt(k))];
+  if (kind === 1 && quarters[3].price != null && inside(quarters[3].price)) scene.corners.floor = [sx(quarters[3].price), bottom];
+  scene.spotX = sx(spot);
+  scene.strikeX = sx(k);
+
+  yText.forEach((text, i) => {
+    items[`y${i}`] = { x: left - 8, y: scene.grid[i], text, cls: "ylab" };
+  });
+  if (scene.corners.strike) items[`kink${kind}`] = { dot: true, x: scene.corners.strike[0], y: scene.corners.strike[1] };
+
+  // Labels stay between `min` and `max` whichever way they are anchored.
+  const fit = (x, w, anchor, min, max) => {
+    const offset = { start: 0, middle: w / 2, end: w }[anchor];
+    return Math.min(Math.max(x, min + offset), max - w + offset);
+  };
+  // A point and its price where the curve crosses each quarter, on the side the curve leaves open.
+  const side = kind === 0 ? 1 : -1;
+  const label = (x, y, text, anchor, cls) => ({ x: fit(x, text.length * MONO_CHAR, anchor, left, right), y, text, anchor, cls });
+  quarters.forEach(({ sats, price }, i) => {
+    if (price == null) return;
+    const y = sy(sats);
+    if (Number(price) > hi) {
+      items[`edge${i}`] = label(right, y - 7, `${wholeUsd(price)} →`, "end", "halo");
+      return;
+    }
+    const x = sx(price);
+    items[`dot${i}${kind}`] = { dot: true, x, y };
+    items[`cross${i}${kind}`] = label(x + side * 7, y - 7, wholeUsd(price), side > 0 ? "start" : "end", "halo cross");
+  });
+
+  // The x axis carries two prices: the strike with its distance from spot, then spot below it.
+  // The strike label leans away from the spot line, which runs down past it.
+  const axis = (x, y, anchor, parts) => {
+    const w = parts.reduce((sum, [text]) => sum + text.length, 0) * MONO_CHAR;
+    return { x: fit(x, w, anchor, 0, width), y, anchor, parts, cls: "halo" };
+  };
+  const { spotX, strikeX } = scene;
+  const lean = Math.abs(spotX - strikeX) < 1 ? side : Math.sign(strikeX - spotX);
+  const anchor = lean > 0 ? "start" : "end";
+  const strikeAt = lean > 0 ? Math.max(strikeX - 4, spotX + 6) : Math.min(strikeX + 4, spotX - 6);
+  items[`strike${anchor}`] = axis(strikeAt, bottom + AXIS_ROW, anchor, [[usd(k), "ink"], [` ${pctFromSpot(k)}`, ""]]);
+  items.spot = axis(spotX, bottom + AXIS_ROW * 2, "middle", [["Spot ", ""], [usd(spot), "cross"]]);
+
+  const said = quarters
+    .filter(({ price }) => price != null)
+    .map(({ sats, price }) => `${btcUnit(sats)} at ${wholeUsd(price)}`)
+    .join(", ");
+  scene.aria = `What you get back at expiry: ${btcUnit(keepAt(k))} ${kind === 0 ? "up to" : "down to"} ${usd(k)}, then ${said}. Spot is ${usd(spot)}.`;
+  return scene;
+}
+
+function paintScene(svg, scene) {
+  const { width, height, left, right, top, bottom } = scene;
+  svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+  svg.setAttribute("width", width);
+  svg.setAttribute("height", height);
+  const nodes = scene.grid.map((y) => svgEl("line", { x1: left, x2: right, y1: y, y2: y, class: "grid" }));
+  const points = [...scene.curve, ...Object.values(scene.corners)].sort((a, b) => a[0] - b[0]);
+  const line = points.map(([x, y], i) => `${i ? "L" : "M"}${x.toFixed(1)},${y.toFixed(1)}`).join("");
+  nodes.push(
+    svgEl("path", { d: `${line}L${right},${bottom}L${left},${bottom}Z`, class: "area" }),
+    svgEl("line", { x1: scene.spotX, x2: scene.spotX, y1: top, y2: bottom + AXIS_ROW * 2 - 12, class: "spot-line" }),
+    svgEl("line", { x1: scene.strikeX, x2: scene.strikeX, y1: top, y2: bottom + AXIS_ROW - 12, class: "strike-line" }),
+    svgEl("path", { d: line, class: "curve" }),
+  );
+  const items = Object.values(scene.items);
+  for (const item of items) {
+    if (item.dot) nodes.push(svgEl("circle", { cx: item.x, cy: item.y, r: 4, class: "dot" }));
+  }
+  for (const item of items) {
+    if (item.dot) continue;
+    const attrs = { x: item.x, y: item.y, class: item.cls };
+    if (item.anchor) attrs["text-anchor"] = item.anchor;
+    const node = svgEl("text", attrs, item.parts ? null : item.text);
+    for (const [text, cls] of item.parts ?? []) node.append(svgEl("tspan", { class: cls }, text));
+    nodes.push(node);
+  }
+  svg.replaceChildren(...nodes);
+}
+
+function drawPayoff(host, terms) {
+  const width = host.clientWidth;
+  // Hidden or not on the page yet: whatever shows it calls this again.
+  if (!width) return;
+  let entry = payoffDrawn.get(host);
+  if (!entry) {
+    entry = { key: "" };
+    payoffDrawn.set(host, entry);
+    payoffResize.observe(host);
+  }
+  entry.terms = terms;
+  const { kind, strike: k, collateral: q, spot } = terms;
+  const ok = spot != null && q != null && q > 0n && k != null;
+  const key = ok ? `${kind}:${k}:${q}:${spot}:${width}` : "";
+  let svg = host.querySelector("svg");
+  if (entry.key === key && svg) return;
+  entry.key = key;
+  if (!ok) {
+    host.replaceChildren();
+    return;
+  }
+  const scene = payoffScene(terms, width);
+  if (!svg) {
+    svg = svgEl("svg", { role: "img" });
+    host.replaceChildren(svg);
+  }
+  svg.setAttribute("aria-label", scene.aria);
+  paintScene(svg, scene);
 }
 
 function svgEl(name, attrs, text) {
@@ -882,7 +1017,8 @@ function detail(position) {
   const summary = document.createElement("summary");
   summary.textContent = "Payoff chart";
   const host = document.createElement("div");
-  chart.append(summary);
+  host.className = "payoff";
+  chart.append(summary, host);
   chart.addEventListener("toggle", () => {
     if (!chart.open) return;
     drawPayoff(host, {
@@ -891,7 +1027,6 @@ function detail(position) {
       collateral: position.collateral,
       spot: state.spotCents,
     });
-    if (!host.parentElement) chart.append(host);
   });
   box.append(chart);
   if (position.status === "locking") {

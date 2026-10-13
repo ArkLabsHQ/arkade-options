@@ -6,10 +6,12 @@ export function holderPayoff(kind: number, settlement: bigint, strike: bigint, c
 export function median3(a: bigint, b: bigint, c: bigint): bigint;
 export function sliceError(times: bigint[], lo: bigint, hi: bigint): string | null;
 export function oraclePreimage(price: bigint, time: bigint): Uint8Array;
-export function settlementOutputs(ph: bigint, locked: bigint): {
+export function settlementOutputs(ph: bigint, locked: bigint, readFee?: bigint): {
   mode: "split" | "writer" | "holder";
   holder: bigint;
   writer: bigint;
 };
 export function twap(m0: bigint, m1: bigint, m2: bigint): bigint;
+export function writerKeep(kind: number, settlement: bigint, strike: bigint, collateral: bigint, readFee: bigint): bigint;
+export function keepCrossing(kind: number, level: bigint, strike: bigint, collateral: bigint, readFee: bigint): bigint | null;
 export function windows(expiry: bigint): Record<"open" | "mid" | "close", [bigint, bigint]>;

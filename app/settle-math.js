@@ -67,11 +67,6 @@ export function holderPayoff(kind, settlement, strike, collateral) {
   return ph;
 }
 
-/** What the seller keeps of the locked collateral. The premium is paid separately. */
-export function writerPayoff(kind, settlement, strike, collateral) {
-  return collateral - holderPayoff(kind, settlement, strike, collateral);
-}
-
 // Mirrors the vault's output rules. readFee leaves the vault and is added to
 // the beacon. A holder leg at or below dust pays the rest to the writer.
 export function settlementOutputs(ph, locked, readFee = 0n) {
@@ -83,6 +78,31 @@ export function settlementOutputs(ph, locked, readFee = 0n) {
   }
   if (phPay <= DUST) return { mode: "writer", holder: 0n, writer: pot };
   return { mode: "holder", holder: pot, writer: 0n };
+}
+
+/** Sats the writer gets back if the vault settles at `settlement`: after the read fee and the dust rule. */
+export function writerKeep(kind, settlement, strike, collateral, readFee) {
+  return settlementOutputs(holderPayoff(kind, settlement, strike, collateral), collateral, readFee).writer;
+}
+
+/**
+ * Settlement price where what the writer gets back falls to `level` sats or
+ * less: the lowest such price above the strike for a call, the highest below
+ * it for a put. Null when no price up to PRICE_MAX gets there. `level` must be
+ * below what the writer keeps at the strike.
+ */
+export function keepCrossing(kind, level, strike, collateral, readFee) {
+  const reached = (price) => writerKeep(kind, price, strike, collateral, readFee) <= level;
+  // Bisect between the strike, where the writer keeps it all, and the far end of the price range.
+  let kept = strike;
+  let lost = kind === 0 ? PRICE_MAX : 1n;
+  if (!reached(lost)) return null;
+  while (kept - lost > 1n || lost - kept > 1n) {
+    const mid = (kept + lost) / 2n;
+    if (reached(mid)) lost = mid;
+    else kept = mid;
+  }
+  return lost;
 }
 
 export function oraclePreimage(price, time) {
