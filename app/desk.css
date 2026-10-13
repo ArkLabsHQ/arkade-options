@@ -735,16 +735,32 @@ a { color: var(--accent); }
 
 @media (max-width: 860px) {
   .top, .tabs, .book, .ticket, .blotter, .connect, .home { padding-left: 16px; padding-right: 16px; }
+  /* On a phone the header scrolls away and spot sits beside the title, so the page keeps the screen. */
+  .chrome { position: static; }
+  .top { gap: 12px; padding-top: 16px; }
   .desk { grid-template-columns: 1fr; }
+  /* The ticket is a slim bar: the payout on the left, the button on the right. */
   .ticket {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    column-gap: 16px;
+    padding-top: 12px;
+    padding-bottom: 12px;
     border-left: 0;
     border-top: 1px solid var(--line);
     position: sticky;
     bottom: 0;
   }
+  .ticket > * { grid-column: 1 / -1; }
+  .ticket-kicker, .premium, .premium-meta { grid-column: 1; }
+  .premium { margin-top: 2px; font-size: 24px; letter-spacing: -0.03em; }
+  .premium-meta { margin-top: 2px; font-size: 13px; }
+  #confirm { grid-column: 2; grid-row: 1 / span 3; width: auto; margin: 0; padding: 12px 22px; }
+  .ticket .status:empty { display: none; }
+  /* Once a trade is under way its deposit and steps need the room, so the ticket rejoins the page. */
+  .ticket:has(> #deposit:not([hidden]), > #steps:not([hidden])) { position: static; }
   .actions { grid-template-columns: 1fr; }
   .restore-grid { grid-template-columns: 1fr; }
   .slice { grid-template-columns: 1fr; }
-  .spot { text-align: left; }
-  .top { flex-direction: column; align-items: flex-start; }
 }
