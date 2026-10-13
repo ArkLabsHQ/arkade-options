@@ -159,7 +159,7 @@ function fmtWhen(unix) {
 function fmtApy(value) {
   if (value == null || !Number.isFinite(value)) return "";
   const digits = Math.abs(value) >= 100 ? 0 : 1;
-  return `${value.toFixed(digits)}% APY`;
+  return `${value.toFixed(digits)}% APR`;
 }
 
 function annualized(premiumSats, collateralSats, days) {
