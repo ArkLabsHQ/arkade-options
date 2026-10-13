@@ -399,6 +399,29 @@ a { color: var(--accent); }
 
 .payoff .dot { fill: var(--accent); stroke: var(--bg); stroke-width: 2; }
 
+.payoff .probe-line { stroke: var(--muted); stroke-width: 1; }
+
+.payoff .probe-dot { fill: var(--bg); stroke: var(--ink); stroke-width: 2; }
+
+.payoff-readout { margin: 0 0 6px; min-height: 1.45em; font-size: 13px; color: var(--muted); }
+
+.payoff-readout b { font-weight: 500; color: var(--ink); }
+
+/* Horizontal drags read the chart; vertical drags still scroll the page. */
+.payoff svg[role="slider"] { touch-action: pan-y; cursor: crosshair; }
+
+.payoff svg:focus-visible { outline-offset: 4px; }
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 .ticket-kicker { margin: 0; color: var(--faint); font-size: 13px; }
 
 .premium {

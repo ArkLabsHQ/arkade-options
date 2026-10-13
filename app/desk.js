@@ -562,6 +562,8 @@ function payoffScene(terms, width) {
     bottom,
     lo,
     hi,
+    // The readout snaps to round prices: $100 steps across a $60k range, $1,000 across $150k.
+    snap: 10 ** Math.floor(Math.log10((hi - lo) / 100)),
     grid: [0, 1, 2, 3, 4].map((i) => top + ((bottom - top) * i) / 4),
     x: (cents) => left + ((Number(cents) - lo) / (hi - lo)) * (right - left),
     y: (sats) => top + (1 - Number(sats) / Number(q)) * (bottom - top),
@@ -655,7 +657,7 @@ function paintScene(svg, scene) {
     for (const [text, cls] of item.parts ?? []) node.append(svgEl("tspan", { class: cls }, text));
     nodes.push(node);
   }
-  svg.replaceChildren(...nodes);
+  svg.querySelector(".scene").replaceChildren(...nodes);
 }
 
 /** Scene `t` of the way from `a` to `b`. Items on one side only fade in or out where they stand. */
@@ -705,16 +707,19 @@ function drawPayoff(host, terms) {
     return;
   }
   const scene = payoffScene(terms, width);
-  if (!svg) {
-    svg = svgEl("svg", { role: "img" });
-    host.replaceChildren(svg);
-  }
-  svg.setAttribute("aria-label", scene.aria);
+  entry.target = scene;
+  entry.probe = null;
+  if (!svg) svg = buildPayoff(host, entry);
+  svg.setAttribute("aria-valuemin", String(Math.round(scene.lo / 100)));
+  svg.setAttribute("aria-valuemax", String(Math.round(scene.hi / 100)));
+  host.querySelector(".sr-only").textContent = scene.aria;
+  svg.querySelector(".probe").replaceChildren();
   const from = entry.shown;
   // Glide when the frame is the same, so you see the strike and crossings move. Otherwise snap.
   if (!from || from.width !== width || from.left !== scene.left || reducedMotion.matches) {
     paintScene(svg, scene);
     entry.shown = scene;
+    showProbe(host, entry);
     return;
   }
   const start = performance.now();
@@ -724,8 +729,83 @@ function drawPayoff(host, terms) {
     entry.shown = t < 1 ? blendScene(from, scene, 1 - (1 - t) ** 5) : scene;
     paintScene(svg, entry.shown);
     if (t < 1) entry.frame = requestAnimationFrame(step);
+    else showProbe(host, entry);
   };
   entry.frame = requestAnimationFrame(step);
+}
+
+let payoffIds = 0;
+
+/** Readout, slider and probe layer for one chart. Hover, drag or arrow keys move the probe. */
+function buildPayoff(host, entry) {
+  const readout = document.createElement("p");
+  readout.className = "payoff-readout";
+  const desc = document.createElement("p");
+  desc.className = "sr-only";
+  desc.id = `payoff-desc-${(payoffIds += 1)}`;
+  const svg = svgEl("svg", { role: "slider", tabindex: 0, "aria-label": "BTC price at expiry", "aria-describedby": desc.id });
+  svg.append(svgEl("g", { class: "scene" }), svgEl("g", { class: "probe" }));
+  const aim = (price) => {
+    const { snap, lo, hi } = entry.target;
+    const next = price == null ? null : BigInt(Math.max(1, Math.min(hi, Math.max(lo, Math.round(price / snap) * snap))));
+    if (next === entry.probe) return;
+    entry.probe = next;
+    showProbe(host, entry);
+  };
+  const follow = (event) => aim(entry.target.price(event.clientX - svg.getBoundingClientRect().left));
+  svg.addEventListener("pointerdown", follow);
+  svg.addEventListener("pointermove", follow);
+  // A mouse that leaves goes back to today. A finger that lifts leaves its reading up.
+  svg.addEventListener("pointerleave", (event) => {
+    if (event.pointerType === "mouse") aim(null);
+  });
+  svg.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      aim(null);
+      return;
+    }
+    const { snap, lo, hi } = entry.target;
+    const now = Number(entry.probe ?? entry.terms.spot);
+    const step = Math.max(snap, Math.round((hi - lo) / 50 / snap) * snap);
+    const next = {
+      ArrowLeft: now - step,
+      ArrowDown: now - step,
+      ArrowRight: now + step,
+      ArrowUp: now + step,
+      PageDown: now - step * 10,
+      PageUp: now + step * 10,
+      Home: lo,
+      End: hi,
+    }[event.key];
+    if (next == null) return;
+    event.preventDefault();
+    aim(next);
+  });
+  host.replaceChildren(readout, svg, desc);
+  return svg;
+}
+
+/** Ring on the curve at the probe price (spot until someone aims), and the readout for it. */
+function showProbe(host, entry) {
+  const scene = entry.target;
+  const { kind, strike: k, collateral: q, spot } = entry.terms;
+  const aimed = entry.probe != null;
+  const at = aimed ? entry.probe : spot;
+  const keep = writerKeep(kind, at, k, q, BEACON_READ_FEE);
+  const x = scene.x(at);
+  const marks = [svgEl("circle", { cx: x, cy: scene.y(keep), r: 5, class: "probe-dot" })];
+  if (aimed) marks.unshift(svgEl("line", { x1: x, x2: x, y1: scene.top, y2: scene.bottom, class: "probe-line" }));
+  const svg = host.querySelector("svg");
+  svg.querySelector(".probe").replaceChildren(...marks);
+  const strong = (text) => {
+    const node = document.createElement("b");
+    node.textContent = text;
+    return node;
+  };
+  const readout = host.querySelector(".payoff-readout");
+  readout.replaceChildren(aimed ? "At " : "At today’s ", strong(usd(at)), " you get back ", strong(btcUnit(keep)), ` (${(keep * 100n) / q}%)`);
+  svg.setAttribute("aria-valuenow", String(Math.round(Number(at) / 100)));
+  svg.setAttribute("aria-valuetext", readout.textContent);
 }
 
 function svgEl(name, attrs, text) {
