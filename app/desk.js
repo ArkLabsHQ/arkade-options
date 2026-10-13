@@ -703,7 +703,7 @@ function renderCheckout() {
   sentenceInto($("checkout-sentence"), kind, q, t.expiry, k, "now");
   if (clears(pay)) {
     $("pay-head").replaceChildren(state.offer ? "You get paid " : "You get paid about ", el("span", "amt", `₿${fmtBtc(pay)}`), " now.");
-    const was = state.offer && est != null && est !== pay ? ` · the estimate was ${int(est)} sats` : "";
+    const was = state.offer && est != null && Math.abs(Number(pay - est)) * 100 > Number(est) ? ` · the estimate was ${int(est)} sats` : "";
     $("pay-sub").textContent = `${int(pay)} sats · about ${usd2(worth(pay, spotUsd()))} at today’s ${usd0(spotUsd())}${was}`;
   } else {
     $("pay-head").textContent = "This doesn’t cover the price-check fee.";
