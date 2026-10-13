@@ -643,12 +643,13 @@ function paintScene(svg, scene) {
     svgEl("path", { d: line, class: "curve" }),
   );
   const items = Object.values(scene.items);
+  const fade = ({ op }) => (op != null && op < 1 ? { opacity: op.toFixed(3) } : {});
   for (const item of items) {
-    if (item.dot) nodes.push(svgEl("circle", { cx: item.x, cy: item.y, r: 4, class: "dot" }));
+    if (item.dot) nodes.push(svgEl("circle", { cx: item.x, cy: item.y, r: 4, class: "dot", ...fade(item) }));
   }
   for (const item of items) {
     if (item.dot) continue;
-    const attrs = { x: item.x, y: item.y, class: item.cls };
+    const attrs = { x: item.x, y: item.y, class: item.cls, ...fade(item) };
     if (item.anchor) attrs["text-anchor"] = item.anchor;
     const node = svgEl("text", attrs, item.parts ? null : item.text);
     for (const [text, cls] of item.parts ?? []) node.append(svgEl("tspan", { class: cls }, text));
@@ -657,13 +658,36 @@ function paintScene(svg, scene) {
   svg.replaceChildren(...nodes);
 }
 
+/** Scene `t` of the way from `a` to `b`. Items on one side only fade in or out where they stand. */
+function blendScene(a, b, t) {
+  const mix = (from, to) => from + (to - from) * t;
+  const items = {};
+  for (const key of new Set([...Object.keys(a.items), ...Object.keys(b.items)])) {
+    const from = a.items[key] ?? { ...b.items[key], op: 0 };
+    const to = b.items[key] ?? { ...a.items[key], op: 0 };
+    items[key] = { ...to, x: mix(from.x, to.x), y: mix(from.y, to.y), op: mix(from.op ?? 1, to.op ?? 1) };
+  }
+  return {
+    ...b,
+    // Samples blend in place. A corner sliding sideways would spike off them, so corners land with the last frame.
+    curve: b.curve.map(([x, y], i) => [x, mix(a.curve[i][1], y)]),
+    corners: {},
+    spotX: mix(a.spotX, b.spotX),
+    strikeX: mix(a.strikeX, b.strikeX),
+    items,
+  };
+}
+
+const GLIDE_MS = 260;
+const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)");
+
 function drawPayoff(host, terms) {
   const width = host.clientWidth;
   // Hidden or not on the page yet: whatever shows it calls this again.
   if (!width) return;
   let entry = payoffDrawn.get(host);
   if (!entry) {
-    entry = { key: "" };
+    entry = { key: "", shown: null, frame: 0 };
     payoffDrawn.set(host, entry);
     payoffResize.observe(host);
   }
@@ -674,8 +698,10 @@ function drawPayoff(host, terms) {
   let svg = host.querySelector("svg");
   if (entry.key === key && svg) return;
   entry.key = key;
+  cancelAnimationFrame(entry.frame);
   if (!ok) {
     host.replaceChildren();
+    entry.shown = null;
     return;
   }
   const scene = payoffScene(terms, width);
@@ -684,7 +710,22 @@ function drawPayoff(host, terms) {
     host.replaceChildren(svg);
   }
   svg.setAttribute("aria-label", scene.aria);
-  paintScene(svg, scene);
+  const from = entry.shown;
+  // Glide when the frame is the same, so you see the strike and crossings move. Otherwise snap.
+  if (!from || from.width !== width || from.left !== scene.left || reducedMotion.matches) {
+    paintScene(svg, scene);
+    entry.shown = scene;
+    return;
+  }
+  const start = performance.now();
+  const step = (now) => {
+    const t = Math.min(1, (now - start) / GLIDE_MS);
+    // Ease-out quint, the curve behind --ease.
+    entry.shown = t < 1 ? blendScene(from, scene, 1 - (1 - t) ** 5) : scene;
+    paintScene(svg, entry.shown);
+    if (t < 1) entry.frame = requestAnimationFrame(step);
+  };
+  entry.frame = requestAnimationFrame(step);
 }
 
 function svgEl(name, attrs, text) {
