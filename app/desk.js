@@ -700,14 +700,15 @@ function renderCheckout() {
   const pay = state.offer ? state.offer.quote.sats : est;
   const all = backSats(kind, k, k, q);
   sentenceInto($("checkout-sentence"), kind, q, t.expiry, k, "now");
-  if (clears(est)) {
-    $("pay-head").replaceChildren("You get paid about ", el("span", "amt", `₿${fmtBtc(est)}`), " now.");
-    $("pay-sub").textContent = `${int(est)} sats · about ${usd2(worth(est, spotUsd()))} at today’s ${usd0(spotUsd())}`;
+  if (clears(pay)) {
+    $("pay-head").replaceChildren(state.offer ? "You get paid " : "You get paid about ", el("span", "amt", `₿${fmtBtc(pay)}`), " now.");
+    const was = state.offer && est != null && est !== pay ? ` · the estimate was ${int(est)} sats` : "";
+    $("pay-sub").textContent = `${int(pay)} sats · about ${usd2(worth(pay, spotUsd()))} at today’s ${usd0(spotUsd())}${was}`;
   } else {
     $("pay-head").textContent = "This doesn’t cover the price-check fee.";
-    $("pay-sub").textContent = est == null
+    $("pay-sub").textContent = pay == null
       ? "We can’t price this one right now."
-      : `It pays about ${int(est)} sats, not more than the 1,000-sat price-check fee, so it can’t be locked.`;
+      : `It pays ${state.offer ? "" : "about "}${int(pay)} sats, not more than the 1,000-sat price-check fee, so it can’t be locked.`;
   }
   $("fee-label").textContent = `Price-check fee on ${day}`;
   $("rows-when").textContent = `If BTC on ${day} is`;
