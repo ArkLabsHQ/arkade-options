@@ -181,6 +181,30 @@ a { color: var(--accent); }
 
 .home .blotter { padding-left: 0; padding-right: 0; border-top: 0; }
 
+.restore { max-width: 36rem; margin-bottom: 8px; }
+
+.restore h2 { font-size: 15px; }
+
+.restore .field { margin-top: 14px; }
+
+.restore-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0 16px;
+}
+
+.mono-input {
+  width: 100%;
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  padding: 10px 12px;
+  font-family: var(--mono);
+  font-size: 13px;
+}
+
+.mono-input:focus { outline: none; border-color: var(--accent); }
+
 .more { margin-top: 22px; }
 
 .more summary {
@@ -719,6 +743,7 @@ a { color: var(--accent); }
     bottom: 0;
   }
   .actions { grid-template-columns: 1fr; }
+  .restore-grid { grid-template-columns: 1fr; }
   .slice { grid-template-columns: 1fr; }
   .spot { text-align: left; }
   .top { flex-direction: column; align-items: flex-start; }

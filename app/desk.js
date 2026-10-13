@@ -28,12 +28,16 @@ import { payablePremium } from "../protocol/pricing.ts";
 import { bestQuote } from "./quote.js";
 import { PINNED_DESKS, RELAYS } from "./rfq-config.js";
 import { DUST, Q_MAX, Q_MIN, writerPayoff } from "./settle-math.js";
+import { positionOutcome, settlementKnown } from "./src/position-status.ts";
+import { restoreVault } from "./src/restore.ts";
 import { settleFromPage } from "./src/settle.ts";
-import { readIntent, watchIntents } from "./src/watch.ts";
+import { pkScriptOf, readIntent, readKept, watchIntents } from "./src/watch.ts";
 
 const STORE = "arkade-options-desk-v1";
 const REFRESH_MS = 18_000;
 const WALLET_ASK = "arkade-options-wallet";
+
+let promotedSettled = false;
 
 const state = {
   spotCents: null,
@@ -50,10 +54,12 @@ const state = {
   quoting: false,
   confirming: false,
   positions: loadPositions(),
+  restored: [],
   selected: null,
 };
 
 let quoteGen = 0;
+let restoreKind = 0;
 const expiring = new Set();
 let walletWindow = null;
 
@@ -70,7 +76,7 @@ function loadPositions() {
 }
 
 function revive(row) {
-  return {
+  const position = {
     ...row,
     collateral: BigInt(row.collateral),
     premiumSats: BigInt(row.premiumSats),
@@ -78,6 +84,11 @@ function revive(row) {
     expiry: BigInt(row.expiry),
     marketSats: row.marketSats ? BigInt(row.marketSats) : null,
   };
+  if (position.status === "filled" && settlementKnown(position)) {
+    position.status = "settled";
+    promotedSettled = true;
+  }
+  return position;
 }
 
 function persist() {
@@ -241,12 +252,13 @@ function shortAddress(address) {
   return `${address.slice(0, 12)}…${address.slice(-6)}`;
 }
 
-const STEPS = ["Waiting for deposit", "Deposited", "Waiting for payout", "Premium paid"];
+const STEPS = ["Waiting for deposit", "Deposited", "Waiting for payout", "Premium paid", "Settled"];
 
 function progressIndex(status) {
   if (status === "locking") return 0;
   if (status === "deposited") return 2;
   if (status === "filled") return 3;
+  if (status === "settled") return 4;
   return -1;
 }
 
@@ -280,7 +292,8 @@ function progressSteps(status) {
   STEPS.forEach((label, step) => {
     const item = document.createElement("li");
     item.textContent = label;
-    if (step < index || (index === STEPS.length - 1 && step === index)) markStep(item, "done");
+    const currentDone = status === "settled" || step < index || (status === "filled" && step === index);
+    if (currentDone) markStep(item, "done");
     else if (step === index) markStep(item, "now", true);
     list.append(item);
   });
@@ -290,6 +303,7 @@ function progressSteps(status) {
 function statusLabel(position) {
   if (position.status === "locking") return "Waiting for deposit";
   if (position.status === "deposited") return "Waiting for payout";
+  if (position.status === "settled" || settlementKnown(position)) return "Settled";
   if (position.status === "filled") return "Premium paid";
   if (position.status === "expired") return "Window closed";
   if (position.status === "refunded") return "Refunded";
@@ -553,7 +567,7 @@ function renderSell() {
   const quote = liveQuote();
   const moved = Boolean(quote && deposit && !frozen && quote.sats !== deposit.premium);
   const confirm = $("confirm");
-  const again = position && (position.status === "filled" || position.status === "refunded" || position.status === "expired");
+  const again = position && (position.status === "filled" || position.status === "settled" || position.status === "refunded" || position.status === "expired");
   if (again) {
     confirm.hidden = false;
     confirm.textContent = state.confirming ? "Confirming" : "Sell again";
@@ -572,7 +586,7 @@ function renderSell() {
 
   const pay = $("pay-wallet");
   const box = $("deposit");
-  const settled = position && (position.status === "filled" || position.status === "refunded");
+  const settled = position && (position.status === "filled" || position.status === "settled" || position.status === "refunded");
   if (pay) pay.hidden = !deposit || settled || !position || position.status !== "locking";
   if (!deposit || settled) {
     box.hidden = true;
@@ -669,7 +683,7 @@ function renderBlotter() {
   const host = $("blotter");
   if (!host) return;
   host.replaceChildren();
-  const rows = visiblePositions();
+  const rows = [...state.restored, ...visiblePositions()];
   if (!rows.length) {
     const p = document.createElement("p");
     p.className = "empty";
@@ -724,6 +738,7 @@ function renderBlotter() {
 }
 
 function canSettle(position) {
+  if (position.restored) return false;
   if (position.status !== "filled") return false;
   if (!position.vaultAddress || !position.holderPkHex || !position.beaconTxid) return false;
   const expiry = Number(position.expiry) || 0;
@@ -781,24 +796,7 @@ function settleButton(position) {
 }
 
 function outcomeLine(position) {
-  const expiry = Number(position.expiry) || 0;
-  const now = Math.floor(Date.now() / 1000);
-  if (position.status === "settled") {
-    if (position.writerKeep) {
-      const you = BigInt(position.writerKeep);
-      const desk = BigInt(position.deskTake || 0);
-      const price = position.settleCents ? ` Price $${fmtUsdFromCents(BigInt(position.settleCents))}.` : "";
-      if (desk === 0n) return `You keep the collateral, ${fmtBtc(you)} BTC.${price}`;
-      return `You keep ${fmtBtc(you)} BTC. The desk receives ${fmtBtc(desk)} BTC.${price}`;
-    }
-    return "The vault was settled. That transaction splits the collateral.";
-  }
-  if (position.status === "filled" && expiry && expiry <= now) {
-    return "Expired. The collateral is still in the vault, so no one has won it yet.";
-  }
-  if (position.status === "filled") return "Premium paid. The collateral stays in the vault until expiry.";
-  if (position.status === "refunded") return "The deposit came back to you. The trade did not fill.";
-  return "";
+  return positionOutcome(position);
 }
 
 function txLink(label, txid) {
@@ -834,7 +832,22 @@ function txLinks(position) {
   return box;
 }
 
+function restoredDetail(position) {
+  const box = document.createElement("div");
+  box.className = "lab";
+  if (!position.vaultAddress) return box;
+  const where = document.createElement("p");
+  where.className = "lock-note";
+  where.textContent = "Vault";
+  const addr = document.createElement("p");
+  addr.className = "deposit-address";
+  addr.textContent = position.vaultAddress;
+  box.append(where, addr);
+  return box;
+}
+
 function detail(position) {
+  if (position.restored) return restoredDetail(position);
   const box = document.createElement("div");
   box.className = "lab";
   const leadText = statusLead(position);
@@ -861,7 +874,7 @@ function detail(position) {
   if (position.payoutAddress) {
     const where = document.createElement("p");
     where.className = "lock-note";
-    where.textContent = position.status === "filled" ? "Premium paid to" : "Your address";
+    where.textContent = position.status === "filled" || position.status === "settled" ? "Premium paid to" : "Your address";
     const addr = document.createElement("p");
     addr.className = "deposit-address";
     addr.textContent = position.payoutAddress;
@@ -1275,14 +1288,15 @@ function applyChain(position, update) {
   const fundingTxid = update.fundingTxid || position.fundingTxid || "";
   const closeTxid = update.closeTxid || position.closeTxid || "";
   const settleTxid = next === "refunded" ? "" : (update.settleTxid || position.settleTxid || "");
-  const same = position.status === next
+  const display = next === "filled" && settlementKnown({ settleTxid, closeTxid }) ? "settled" : next;
+  const same = position.status === display
     && Boolean(position.refundable) === update.refundable
     && (position.fundingTxid || "") === fundingTxid
     && (position.closeTxid || "") === closeTxid
     && (position.settleTxid || "") === settleTxid;
   if (same) return;
-  if (next === "deposited" || next === "filled" || next === "expired") freeze(position);
-  position.status = next;
+  if (display === "deposited" || display === "filled" || display === "settled" || display === "expired") freeze(position);
+  position.status = display;
   position.refundable = update.refundable;
   position.fundingTxid = fundingTxid;
   position.closeTxid = closeTxid;
@@ -1290,6 +1304,7 @@ function applyChain(position, update) {
   persist();
   renderBlotter();
   renderSell();
+  if (display === "settled") void fillKept();
 }
 
 function watchRow(position) {
@@ -1611,6 +1626,87 @@ function bind() {
     btn.addEventListener("click", () => openSell(Number(btn.dataset.kind)));
   });
   listen("payoff-details", "toggle", renderPayoff);
+  document.querySelectorAll("[data-restore-kind]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      restoreKind = Number(btn.dataset.restoreKind);
+      document.querySelectorAll("[data-restore-kind]").forEach((other) => {
+        other.setAttribute("aria-pressed", String(other === btn));
+      });
+    });
+  });
+  listen("restore-form", "submit", (event) => {
+    event.preventDefault();
+    void submitRestore();
+  });
+}
+
+function writerScriptOf(position) {
+  if (position.writerScript) return position.writerScript;
+  const address = position.writerAddress || position.payoutAddress;
+  if (!address) return "";
+  try {
+    return pkScriptOf(address);
+  } catch {
+    return "";
+  }
+}
+
+async function fillKept() {
+  const rows = [...state.positions, ...state.restored];
+  let localChanged = false;
+  let any = false;
+  await Promise.all(rows.map(async (position) => {
+    if (position.keptChecked || position.writerKeep || !settlementKnown(position)) return;
+    const script = writerScriptOf(position);
+    if (!script) return;
+    const split = await readKept(position.settleTxid, script);
+    if (!split) return;
+    position.keptChecked = true;
+    position.writerKeep = split.writer.toString();
+    position.deskTake = split.desk.toString();
+    any = true;
+    if (!position.restored) localChanged = true;
+  }));
+  if (localChanged) persist();
+  if (any && state.view === "home") renderBlotter();
+  if (any && state.view === "sell") renderSell();
+}
+
+async function submitRestore() {
+  const button = $("restore-submit");
+  const error = $("restore-error");
+  if (error) error.textContent = "";
+  if (button) {
+    button.disabled = true;
+    button.textContent = "Restoring";
+  }
+  try {
+    const position = await restoreVault({
+      outpoint: $("restore-outpoint").value,
+      kind: restoreKind,
+      strike: $("restore-strike").value,
+      expiry: $("restore-expiry").value,
+      collateral: $("restore-collateral").value,
+      writerPk: $("restore-writer").value,
+      holderPk: $("restore-holder").value,
+      beaconTxid: $("restore-beacon").value,
+      beaconGidx: $("restore-gidx").value,
+      exit: $("restore-exit").value,
+      readFee: $("restore-fee").value,
+    });
+    const index = state.restored.findIndex((item) => item.id === position.id);
+    if (index >= 0) state.restored[index] = position;
+    else state.restored.unshift(position);
+    state.selected = position.id;
+    renderBlotter();
+    await fillKept();
+  } catch (err) {
+    if (error) error.textContent = err instanceof Error ? err.message : "Could not restore that vault.";
+  }
+  if (button) {
+    button.disabled = false;
+    button.textContent = "Restore";
+  }
 }
 
 async function loadSpot() {
@@ -1694,6 +1790,8 @@ if (!consumeWalletHandoff()) {
     renderBlotter();
   });
   loadArtifact();
+  if (promotedSettled) persist();
+  void fillKept();
   startWatch();
   setInterval(tick, 1000);
   setInterval(startWatch, 15_000);
