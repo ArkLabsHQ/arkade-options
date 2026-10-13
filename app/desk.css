@@ -269,7 +269,7 @@ input { font: inherit; color: inherit; caret-color: var(--p700); }
 .chart .mark-label { fill: var(--p700); font-weight: 600; }
 .chart .today { stroke: var(--ink2); stroke-dasharray: 3 3; }
 .chart .today-label { fill: var(--ink); }
-.chart .paid { fill: var(--btc-ink); font-weight: 600; }
+.chart .paid { fill: var(--btc-ink); font-weight: 600; paint-order: stroke; stroke: var(--cream); stroke-width: 4px; stroke-linejoin: round; }
 .legend { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-top: 12px; font-size: 13px; color: var(--ink2); }
 .legend span { display: inline-flex; align-items: center; gap: 7px; }
 .legend i { display: inline-block; width: 11px; height: 11px; border-radius: 3px; }
