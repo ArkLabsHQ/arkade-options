@@ -183,7 +183,7 @@ a { color: var(--accent); }
 
 .restore { max-width: 36rem; margin-bottom: 8px; }
 
-.restore h2 { font-size: 15px; }
+.restore summary { font-size: 13px; }
 
 .restore .field { margin-top: 14px; }
 

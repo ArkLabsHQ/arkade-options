@@ -47,8 +47,12 @@
     </section>
 
     <section id="home" class="home" hidden>
-      <section class="restore" aria-labelledby="restore-title">
-        <h2 id="restore-title">Restore</h2>
+      <section class="blotter" aria-label="Positions">
+        <h2>Positions</h2>
+        <div id="blotter"></div>
+      </section>
+      <details class="restore more">
+        <summary>Restore a vault</summary>
         <p class="copy">Paste the vault outpoint and the terms the transaction does not carry. This page already has the contract and the Mutinynet keys.</p>
         <form id="restore-form">
           <div class="field">
@@ -103,11 +107,7 @@
           <p id="restore-error" class="error" role="status"></p>
           <button type="submit" class="lock" id="restore-submit">Restore</button>
         </form>
-      </section>
-      <section class="blotter" aria-label="Positions">
-        <h2>Positions</h2>
-        <div id="blotter"></div>
-      </section>
+      </details>
       <p id="artifact" class="artifact"></p>
     </section>
 
