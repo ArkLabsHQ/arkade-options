@@ -37,10 +37,11 @@ import { pkScriptOf, readIntent, readKept, watchIntents } from "./src/watch.ts";
 const STORE = "arkade-options-desk-v1";
 const REFRESH_MS = 18_000;
 const WALLET_ASK = "arkade-options-wallet";
-const SIZES = [200_000n, 500_000n, 1_000_000n, 2_000_000n];
-// `?test` adds the 10-minute date, and a line at today's price so that date pays more than the fee.
-// The line is set once, so a price refresh does not move it under an offer.
+// `?test` adds the 10-minute date, a line at today's price so that date pays more than the fee,
+// and 0.0098 BTC, which a 1,000,000-sat test wallet can lock. The line is set once, so a price
+// refresh does not move it under an offer.
 const TEST = new URLSearchParams(location.search).has("test");
+const SIZES = [200_000n, 500_000n, ...(TEST ? [980_000n] : []), 1_000_000n, 2_000_000n];
 let testLine = 0;
 const VERBS = {
   now: ["I’ll lock", "give up gains above", "take the loss below"],
