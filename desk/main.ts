@@ -124,7 +124,52 @@ const contractManager = await ContractManager.create({
   walletRepository: storage.walletRepository,
   vtxoSyncMaxAgeMs: 60_000,
 });
-const network = networkByName((await ark.getInfo()).network);
+// The first lookup often dies on a transient EAI_AGAIN. Dokploy only keeps
+// the inner "fetch failed" line, so log the whole cause chain, URL included.
+const ARK_INFO_ATTEMPTS = 4;
+const ARK_INFO_BACKOFF_MS = 200;
+
+function causeLine(error: unknown): string {
+  const parts: string[] = [];
+  const seen = new Set<unknown>();
+  let current: unknown = error;
+  while (current != null && !seen.has(current)) {
+    seen.add(current);
+    if (!(current instanceof Error)) {
+      parts.push(String(current));
+      break;
+    }
+    const detail = current as Error & { code?: unknown; syscall?: unknown; hostname?: unknown; url?: unknown };
+    const extra = ["code", "syscall", "hostname"].flatMap((key) => {
+      const value = detail[key as "code"];
+      return typeof value === "string" && value ? [`${key}=${value}`] : [];
+    });
+    if (typeof detail.url === "string" && detail.url && !detail.message.includes(detail.url)) {
+      extra.push(`url=${detail.url}`);
+    }
+    parts.push(extra.length ? `${current.name}: ${current.message} ${extra.join(" ")}` : `${current.name}: ${current.message}`);
+    current = current.cause;
+  }
+  return parts.join("; cause: ");
+}
+
+async function readArkInfo() {
+  let last: unknown;
+  for (let attempt = 1; attempt <= ARK_INFO_ATTEMPTS; attempt++) {
+    try {
+      return await ark.getInfo();
+    } catch (error) {
+      last = error;
+      console.error(`ark info attempt ${attempt}/${ARK_INFO_ATTEMPTS}: ${causeLine(error)}`);
+      if (attempt < ARK_INFO_ATTEMPTS) {
+        await new Promise((resolve) => setTimeout(resolve, ARK_INFO_BACKOFF_MS * 2 ** (attempt - 1)));
+      }
+    }
+  }
+  throw last;
+}
+
+const network = networkByName((await readArkInfo()).network);
 const client = await arkade.Arkade.connect({
   arkade: ark,
   indexer,
