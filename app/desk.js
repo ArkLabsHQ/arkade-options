@@ -38,8 +38,10 @@ const STORE = "arkade-options-desk-v1";
 const REFRESH_MS = 18_000;
 const WALLET_ASK = "arkade-options-wallet";
 const SIZES = [200_000n, 500_000n, 1_000_000n, 2_000_000n];
-// `?test` adds the 10-minute date, and the listed line nearest today's price.
+// `?test` adds the 10-minute date, and a line at today's price so that date pays more than the fee.
+// The line is set once, so a price refresh does not move it under an offer.
 const TEST = new URLSearchParams(location.search).has("test");
+let testLine = 0;
 const VERBS = {
   now: ["I’ll lock", "give up gains above", "take the loss below"],
   ing: ["You’re locking", "giving up gains above", "taking the loss below"],
@@ -211,8 +213,7 @@ function linesFor(kind, expiry) {
     .filter((point) => point.expiry === at && (call ? point.strike > spot : point.strike < spot))
     .map((point) => point.strike);
   const want = call ? [1.05, 1.075, 1.1, 1.15] : [0.95, 0.925, 0.9, 0.85];
-  if (TEST) want.unshift(1);
-  const lines = [];
+  const lines = TEST ? [(testLine ||= Math.round(spot / 100) * 100)] : [];
   for (const step of want) {
     const line = nearestTo(listed, spot * step);
     if (line != null && !lines.includes(line)) lines.push(line);
