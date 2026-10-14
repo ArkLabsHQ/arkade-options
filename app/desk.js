@@ -190,6 +190,8 @@ function expiryUnix() {
 
 const nearestTo = (list, want) => list.reduce((best, value) => (best == null || Math.abs(value - want) < Math.abs(best - want) ? value : best), null);
 const clears = (sats) => sats != null && sats > BEACON_READ_FEE;
+// The 10-minute test date locks even when the payment is the fee or less. Friday dates stay on clears().
+const takes = (sats) => clears(sats) || (TEST && state.tenorSec > 0 && sats != null);
 const spotUsd = () => Number(state.spotCents) / 100;
 const cents = (usd) => BigInt(Math.round(usd * 100));
 
@@ -257,7 +259,7 @@ function ready() {
 function fitLine(kind) {
   const expiry = Number(expiryUnix());
   const lines = linesFor(kind, expiry);
-  const pays = (line) => clears(estimate(kind, line, expiry, state.size));
+  const pays = (line) => takes(estimate(kind, line, expiry, state.size));
   if (pays(state.lines[kind])) return;
   const closer = lines.slice(0, lines.indexOf(state.lines[kind])).reverse().find(pays);
   if (closer != null) state.lines[kind] = closer;
@@ -644,10 +646,10 @@ function renderSell() {
   lineChip.setAttribute("aria-label", `Price, ${usd0(t.line)}, ${pct(t.line)} from today`);
   const pay = estimate(t.kind, t.line, Number(t.expiry), t.size);
   const note = $("estimate");
-  if (clears(pay)) note.replaceChildren("You get paid about ", el("b", "", `${int(pay)} sats`), ` now · 1,000-sat fee on ${day}`);
+  if (takes(pay)) note.replaceChildren("You get paid about ", el("b", "", `${int(pay)} sats`), ` now · 1,000-sat fee on ${day}`);
   else if (pay == null) note.textContent = "We can’t price this one right now. Pick another date or line.";
   else note.textContent = `This pays about ${int(pay)} sats, which doesn’t cover the 1,000-sat fee on ${day}. Pick a closer line, a later date or more BTC.`;
-  see.disabled = !clears(pay);
+  see.disabled = !takes(pay);
   see.textContent = `See what happens on ${day}`;
   renderPop();
   renderCheckout();
@@ -706,7 +708,11 @@ function renderPop(focus = false) {
     btn.type = "button";
     btn.dataset.pick = row.pick;
     btn.append(el("b", "", row.label), el("span", "", row.note));
-    if (clears(row.pay)) {
+    // A Friday that pays the fee or less stays blocked. The 10-minute date does not.
+    const allowed = state.open === "date" && !row.pick.startsWith("tenor:")
+      ? clears(row.pay)
+      : takes(row.pay) || (TEST && row.pick.startsWith("tenor:") && row.pay != null);
+    if (allowed) {
       btn.setAttribute("aria-pressed", String(row.on));
     } else {
       btn.className = "off";
@@ -737,7 +743,10 @@ function onPick(event) {
     state.date = Number(value);
     state.tenorSec = 0;
   }
-  if (what === "tenor") state.tenorSec = Number(value);
+  if (what === "tenor") {
+    state.tenorSec = Number(value);
+    if (testLine) state.lines[state.kind] = testLine;
+  }
   if (what === "line") state.lines[state.kind] = Number(value);
   const chip = document.querySelector(`[data-chip="${state.open}"]`);
   state.open = "";
@@ -760,7 +769,7 @@ function renderCheckout() {
   const pay = state.offer ? state.offer.quote.sats : est;
   const all = backSats(kind, k, k, q);
   sentenceInto($("checkout-sentence"), kind, q, t.expiry, k, "now");
-  if (clears(pay)) {
+  if (takes(pay)) {
     $("pay-head").replaceChildren(state.offer ? "You get paid " : "You get paid about ", el("span", "amt", `₿${fmtBtc(pay)}`), " now.");
     const was = state.offer && est != null && Math.abs(Number(pay - est)) * 100 > Number(est) ? ` · the estimate was ${int(est)} sats` : "";
     $("pay-sub").textContent = `${int(pay)} sats · about ${usd2(worth(pay, spotUsd()))} at today’s ${usd0(spotUsd())}${was}`;
@@ -796,10 +805,10 @@ function renderCheckout() {
   }));
   $("agree-text").textContent = worst;
   $("chart-title").textContent = `What you end up with on ${day}`;
-  $("chart-cap").textContent = clears(pay)
+  $("chart-cap").textContent = takes(pay)
     ? `Back from the lock, plus the ${int(pay)} sats paid now. Drag across to explore.`
     : "No payment: this doesn’t pay more than the 1,000-sat price-check fee.";
-  drawChart($("checkout-chart"), { kind, k, q, pay: clears(pay) ? pay : 0n, at: { p: spotUsd(), label: "Today" }, day });
+  drawChart($("checkout-chart"), { kind, k, q, pay: takes(pay) ? pay : 0n, at: { p: spotUsd(), label: "Today" }, day });
   renderFoot();
 }
 
@@ -822,7 +831,7 @@ function renderFoot() {
   } else if (state.quoting) {
     label = "Getting your offer…";
     off = true;
-  } else if (quote && !clears(quote.sats)) {
+  } else if (quote && !takes(quote.sats)) {
     off = true;
     firm.append(el("span", "", `${int(quote.sats)} sats`));
     note = `The desk offers ${int(quote.sats)} sats, which doesn’t cover the 1,000-sat price-check fee. Pick a closer line, a later date or more BTC.`;
@@ -1229,7 +1238,7 @@ async function askQuote() {
     if (!quote) throw new Error(live.note || "The desk did not answer.");
     let deposit = null;
     // The vault is derived now, so the Lock click can open the wallet without waiting.
-    if (clears(quote.sats)) {
+    if (takes(quote.sats)) {
       deposit = await depositAddress({
         kind: asked.kind,
         strike: asked.strike,
@@ -1265,7 +1274,7 @@ function onConfirm() {
   }
   const quote = state.offer?.quote;
   const now = Math.floor(Date.now() / 1000);
-  if (quote && state.offer.deposit && clears(quote.sats) && quote.validUntil > now && quote.deadline > now) lock();
+  if (quote && state.offer.deposit && takes(quote.sats) && quote.validUntil > now && quote.deadline > now) lock();
   else void askQuote();
 }
 
