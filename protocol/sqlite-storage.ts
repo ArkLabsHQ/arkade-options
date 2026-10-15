@@ -1,4 +1,6 @@
-import { mkdir } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { mkdir, open, rename } from "node:fs/promises";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
@@ -8,6 +10,38 @@ import {
   SQLiteWalletRepository,
   type SQLExecutor,
 } from "@arkade-os/sdk/repositories/sqlite";
+
+/** Write then fsync the tmp file before rename so a crash cannot leave a torn JSON file. */
+export async function writeJsonFile(file: string, value: unknown): Promise<void> {
+  const tmp = `${file}.${process.pid}.${Date.now().toString(36)}.${Math.random().toString(16).slice(2)}.tmp`;
+  const handle = await open(tmp, "w");
+  try {
+    await handle.writeFile(JSON.stringify(value, null, 2));
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+  await rename(tmp, file);
+}
+
+export function revision(): string {
+  const baked = process.env.GIT_COMMIT?.trim();
+  if (baked) return baked;
+  try {
+    const file = readFileSync("/etc/git-commit", "utf8").trim();
+    if (file) return file;
+  } catch {
+    // Local service run has no image revision.
+  }
+  try {
+    return execFileSync("git", ["rev-parse", "HEAD"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+  } catch {
+    return "unknown";
+  }
+}
 
 /** Open a WAL sqlite file under `dataDir` and return SDK repositories backed by it. */
 export async function openSqliteStorage(dataDir: string, name = "arkade.sqlite") {

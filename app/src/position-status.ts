@@ -38,11 +38,7 @@ export function splitPayouts(
   return { writer, desk };
 }
 
-function btc(sats: bigint): string {
-  return btcAmount(sats);
-}
-
-function usd(cents: bigint): string {
+export function usdFromCents(cents: bigint): string {
   const neg = cents < 0n;
   const v = neg ? -cents : cents;
   const whole = (v / 100n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
@@ -62,12 +58,12 @@ export function settledSummary(position: {
   if (!hasWriter && !hasDesk) return `The collateral left the vault.${fee}`;
   const you = hasWriter ? BigInt(position.writerKeep as string) : 0n;
   const desk = hasDesk ? BigInt(position.deskTake as string) : 0n;
-  const price = position.settleCents ? ` Price $${usd(BigInt(position.settleCents))}.` : "";
+  const price = position.settleCents ? ` Price $${usdFromCents(BigInt(position.settleCents))}.` : "";
   if (you > 0n && desk > 0n) {
-    return `The collateral left the vault. You kept ${btc(you)} BTC. The desk kept ${btc(desk)} BTC.${fee}${price}`;
+    return `The collateral left the vault. You kept ${btcAmount(you)} BTC. The desk kept ${btcAmount(desk)} BTC.${fee}${price}`;
   }
-  if (you > 0n) return `The collateral left the vault. You kept ${btc(you)} BTC.${fee}${price}`;
-  if (desk > 0n) return `The collateral left the vault. The desk kept ${btc(desk)} BTC.${fee}${price}`;
+  if (you > 0n) return `The collateral left the vault. You kept ${btcAmount(you)} BTC.${fee}${price}`;
+  if (desk > 0n) return `The collateral left the vault. The desk kept ${btcAmount(desk)} BTC.${fee}${price}`;
   return `The collateral left the vault.${fee}`;
 }
 

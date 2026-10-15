@@ -149,29 +149,16 @@ function isEvent(value: unknown): value is Sealed {
   return typeof event.id === "string" && typeof event.pubkey === "string" && typeof event.content === "string";
 }
 
-/**
- * One live subscription on nostr.arkade.sh. Sends only while that socket is open.
- */
-export function connectTransport(opts: {
-  relays: string[];
-  secretKey: Uint8Array;
-  onMessage: (incoming: Incoming) => void;
-}): Transport {
-  const url = quoteRelay(opts.relays);
-  const pubkey = nostrPubkey(opts.secretKey);
+function subscribeRelay(
+  url: string,
+  subId: string,
+  filter: Record<string, unknown>,
+  onEvent: (event: Sealed) => void,
+) {
   const seen = new Set<string>();
   let socket: WebSocket | undefined;
   let opening: Promise<WebSocket> | undefined;
   let stopped = false;
-
-  const handle = (data: unknown) => {
-    const frame = parseFrame(data);
-    if (!frame || frame[0] !== "EVENT" || !isEvent(frame[2])) return;
-    if (seen.has(frame[2].id)) return;
-    seen.add(frame[2].id);
-    const message = openSealed(opts.secretKey, frame[2]);
-    if (message) opts.onMessage({ from: frame[2].pubkey, message });
-  };
 
   const ensure = (): Promise<WebSocket> => {
     if (socket && socket.readyState === WebSocket.OPEN) return Promise.resolve(socket);
@@ -183,15 +170,21 @@ export function connectTransport(opts: {
         throw new Error("nostr.arkade.sh is not connected");
       }
       socket = ws;
-      ws.addEventListener("message", (ev) => handle(ev.data));
+      ws.addEventListener("message", (ev) => {
+        const frame = parseFrame(ev.data);
+        if (!frame || frame[0] !== "EVENT" || !isEvent(frame[2]) || seen.has(frame[2].id)) return;
+        seen.add(frame[2].id);
+        onEvent(frame[2]);
+      });
       ws.addEventListener("close", () => {
         if (socket === ws) socket = undefined;
-        if (stopped) return;
-        setTimeout(() => {
-          if (!stopped && !socket && !opening) void ensure().catch(() => undefined);
-        }, 2_000);
+        if (!stopped) {
+          setTimeout(() => {
+            if (!stopped && !socket && !opening) void ensure().catch(() => undefined);
+          }, 2_000);
+        }
       });
-      sendFrame(ws, ["REQ", "desk", { kinds: [RFQ_KIND], "#p": [pubkey] }]);
+      sendFrame(ws, ["REQ", subId, filter]);
       return ws;
     }).catch((err) => {
       opening = undefined;
@@ -208,14 +201,7 @@ export function connectTransport(opts: {
   void ensure().catch(() => undefined);
 
   return {
-    async publish(recipientPubkey, payload) {
-      const ws = await ensure();
-      sendFrame(ws, ["EVENT", seal(opts.secretKey, recipientPubkey, payload)]);
-    },
-    async publishPosition(position) {
-      const ws = await ensure();
-      sendFrame(ws, ["EVENT", positionEvent(opts.secretKey, position)]);
-    },
+    send: async (event: Sealed) => sendFrame(await ensure(), ["EVENT", event]),
     close() {
       stopped = true;
       if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) {
@@ -223,6 +209,31 @@ export function connectTransport(opts: {
       }
       socket = undefined;
     },
+  };
+}
+
+/**
+ * One live subscription on nostr.arkade.sh. Sends only while that socket is open.
+ */
+export function connectTransport(opts: {
+  relays: string[];
+  secretKey: Uint8Array;
+  onMessage: (incoming: Incoming) => void;
+}): Transport {
+  const pubkey = nostrPubkey(opts.secretKey);
+  const sub = subscribeRelay(
+    quoteRelay(opts.relays),
+    "desk",
+    { kinds: [RFQ_KIND], "#p": [pubkey] },
+    (event) => {
+      const message = openSealed(opts.secretKey, event);
+      if (message) opts.onMessage({ from: event.pubkey, message });
+    },
+  );
+  return {
+    publish: (recipientPubkey, payload) => sub.send(seal(opts.secretKey, recipientPubkey, payload)),
+    publishPosition: (position) => sub.send(positionEvent(opts.secretKey, position)),
+    close: () => sub.close(),
   };
 }
 
@@ -338,61 +349,14 @@ export function watchPositions(opts: {
   relays: string[];
   onPosition: (position: OptionPosition) => void;
 }): { close(): void } {
-  const url = quoteRelay(opts.relays);
-  const seen = new Set<string>();
-  let socket: WebSocket | undefined;
-  let opening: Promise<WebSocket> | undefined;
-  let stopped = false;
-
-  const handle = (data: unknown) => {
-    const frame = parseFrame(data);
-    if (!frame || frame[0] !== "EVENT" || !isEvent(frame[2])) return;
-    if (seen.has(frame[2].id)) return;
-    seen.add(frame[2].id);
-    const position = readPosition(frame[2]);
-    if (position) opts.onPosition(position);
-  };
-
-  const ensure = (): Promise<WebSocket> => {
-    if (socket && socket.readyState === WebSocket.OPEN) return Promise.resolve(socket);
-    if (opening) return opening;
-    opening = connectSocket(url).then((ws) => {
-      opening = undefined;
-      if (stopped) {
-        ws.close();
-        throw new Error("nostr.arkade.sh is not connected");
-      }
-      socket = ws;
-      ws.addEventListener("message", (ev) => handle(ev.data));
-      ws.addEventListener("close", () => {
-        if (socket === ws) socket = undefined;
-        if (stopped) return;
-        setTimeout(() => {
-          if (!stopped && !socket && !opening) void ensure().catch(() => undefined);
-        }, 2_000);
-      });
-      sendFrame(ws, ["REQ", "positions", { kinds: [POSITION_KIND], "#t": [POSITION_TAG] }]);
-      return ws;
-    }).catch((err) => {
-      opening = undefined;
-      if (!stopped) {
-        setTimeout(() => {
-          if (!stopped && !opening) void ensure().catch(() => undefined);
-        }, 2_000);
-      }
-      throw err;
-    });
-    return opening;
-  };
-
-  void ensure().catch(() => undefined);
-  return {
-    close() {
-      stopped = true;
-      if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) {
-        socket.close();
-      }
-      socket = undefined;
+  const sub = subscribeRelay(
+    quoteRelay(opts.relays),
+    "positions",
+    { kinds: [POSITION_KIND], "#t": [POSITION_TAG] },
+    (event) => {
+      const position = readPosition(event);
+      if (position) opts.onPosition(position);
     },
-  };
+  );
+  return { close: () => sub.close() };
 }

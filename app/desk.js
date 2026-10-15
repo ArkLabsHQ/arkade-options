@@ -21,15 +21,15 @@ import {
   walletAppUrl,
   walletMessageTarget,
 } from "./src/wallet-link.ts";
-import { artifactLine } from "./src/program.ts";
+import { artifactLine } from "../protocol/programs.ts";
 import { requestQuotes } from "./src/rfq.ts";
-import { deribitPremium, fetchSurface } from "../protocol/deribit.ts";
+import { btcUsdCents, deribitPremium, fetchSurface } from "../protocol/deribit.ts";
 import { BEACON_READ_FEE, QUOTE_TTL_S } from "../protocol/constants.ts";
 import { payablePremium } from "../protocol/pricing.ts";
 import { bestQuote } from "./quote.js";
 import { PINNED_DESKS, RELAYS } from "./rfq-config.js";
 import { holderPayoff, settlementOutputs } from "./settle-math.js";
-import { settlementKnown } from "./src/position-status.ts";
+import { settlementKnown, usdFromCents } from "./src/position-status.ts";
 import { restoreVault } from "./src/restore.ts";
 import { settleFromPage } from "./src/settle.ts";
 import { pkScriptOf, readIntent, readKept, watchIntents } from "./src/watch.ts";
@@ -99,7 +99,6 @@ function revive(row) {
     premiumSats: BigInt(row.premiumSats),
     strike: BigInt(row.strike),
     expiry: BigInt(row.expiry),
-    marketSats: row.marketSats ? BigInt(row.marketSats) : null,
   };
   if (position.status === "filled" && settlementKnown(position)) {
     position.status = "settled";
@@ -111,14 +110,11 @@ function revive(row) {
 function persist() {
   const rows = state.positions.map((p) => ({
     id: p.id,
-    side: p.side,
     kind: p.kind,
     strike: p.strike.toString(),
     expiry: p.expiry.toString(),
     collateral: p.collateral.toString(),
     premiumSats: p.premiumSats.toString(),
-    premiumUsd: p.premiumUsd,
-    solver: p.solver,
     status: p.status,
     address: p.address,
     deadline: p.deadline,
@@ -130,14 +126,9 @@ function persist() {
     writerHex: p.writerHex,
     writerAddress: p.writerAddress,
     payoutAddress: p.payoutAddress,
-    days: p.days,
     tenorSec: p.tenorSec || 0,
     createdAt: p.createdAt,
-    apy: p.apy,
-    apyFrozen: p.apyFrozen,
     refundable: Boolean(p.refundable),
-    marketSats: p.marketSats ? p.marketSats.toString() : "",
-    marketApy: p.marketApy,
     fundingTxid: p.fundingTxid || "",
     walletTxid: p.walletTxid || "",
     closeTxid: p.closeTxid || "",
@@ -149,32 +140,10 @@ function persist() {
   localStorage.setItem(STORE, JSON.stringify(rows));
 }
 
-function fmtUsdFromCents(cents) {
-  const neg = cents < 0n;
-  const v = neg ? -cents : cents;
-  const whole = (v / 100n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
-  const frac = (v % 100n).toString().padStart(2, "0");
-  return `${neg ? "-" : ""}${whole}.${frac}`;
-}
-
 function fmtBtc(sats) {
   const neg = sats < 0n;
   const body = btcAmount(neg ? -sats : sats);
   return neg ? `-${body}` : body;
-}
-
-function annualized(premiumSats, collateralSats, days) {
-  if (collateralSats <= 0n || !(days > 0)) return null;
-  return (Number(premiumSats) / Number(collateralSats)) * (365 / days) * 100;
-}
-
-function tenorDays(position) {
-  if (position.tenorSec > 0) return position.tenorSec / 86400;
-  if (position.days > 0) return position.days;
-  const start = position.createdAt || Math.floor(Date.now() / 1000);
-  const span = Number(position.expiry) - start;
-  if (span > 0) return span / 86400;
-  return 30;
 }
 
 let pinnedExpiry = 0;
@@ -365,23 +334,20 @@ function progressIndex(status) {
 function markStep(item, kind, busy = false) {
   item.className = kind;
   if (!busy) return;
-  const spin = document.createElement("span");
-  spin.className = "spin";
+  const spin = el("span", "spin");
   spin.setAttribute("aria-hidden", "true");
   item.append(spin);
 }
 
 function progressSteps(status, received) {
-  const list = document.createElement("ol");
-  list.className = "steps";
+  const list = el("ol", "steps");
   list.setAttribute("aria-label", "Progress");
   if (status === "expired" || status === "refunded") {
     const labels = status === "refunded"
       ? ["Waiting for your BTC", "BTC received", "Sent back"]
       : received ? ["Waiting for your BTC", "BTC received", "Time ran out"] : ["Waiting for your BTC", "Time ran out"];
     labels.forEach((label, step) => {
-      const item = document.createElement("li");
-      item.textContent = label;
+      const item = el("li", "", label);
       markStep(item, step === labels.length - 1 ? "now" : "done", false);
       list.append(item);
     });
@@ -390,8 +356,7 @@ function progressSteps(status, received) {
   const index = progressIndex(status);
   if (index < 0) return null;
   STEPS.forEach((label, step) => {
-    const item = document.createElement("li");
-    item.textContent = label;
+    const item = el("li", "", label);
     const currentDone = status === "settled" || step < index || (status === "filled" && step === index);
     if (currentDone) markStep(item, "done");
     else if (step === index) markStep(item, "now", true);
@@ -1006,7 +971,7 @@ function renderPosition(p) {
     } else {
       head.textContent = `Done. You ended with ₿${fmtBtc(keep + pay)}.`;
       const where = p.settleCents
-        ? `BTC was $${fmtUsdFromCents(BigInt(p.settleCents))} at ${atTime(p.expiry)}, ${side(at.p)}`
+        ? `BTC was $${usdFromCents(BigInt(p.settleCents))} at ${atTime(p.expiry)}, ${side(at.p)}`
         : `BTC ended ${desk > 0n ? (p.kind === 0 ? "above" : "below") : (p.kind === 0 ? "under" : "above")}`;
       const then = desk === 0n ? ", so all of it came back." : keep === 0n ? ", so the desk kept what you locked." : ".";
       body.push(el("p", "sub", `${where} your ${usd0(k)} line${then}`));
@@ -1129,34 +1094,24 @@ async function settlePosition(position, button) {
 
 function settleButton(position) {
   if (!canSettle(position)) return null;
-  const button = document.createElement("button");
-  button.type = "button";
-  button.className = "btn sm";
-  button.textContent = "Pay out now";
-  button.addEventListener("click", () => {
-    void settlePosition(position, button);
+  return action("btn sm", "Pay out now", (event) => {
+    void settlePosition(position, event.currentTarget);
   });
-  return button;
 }
 
 function txLink(label, txid) {
   if (!/^[0-9a-f]{64}$/.test(txid || "")) return null;
-  const row = document.createElement("p");
-  row.className = "tx-link";
-  const name = document.createElement("span");
-  name.textContent = label;
-  const link = document.createElement("a");
+  const row = el("p", "tx-link");
+  const link = el("a", "", `${txid.slice(0, 8)}…${txid.slice(-4)}`);
   link.href = `https://explorer.mutinynet.arkade.sh/tx/${txid}`;
   link.target = "_blank";
   link.rel = "noopener";
-  link.textContent = `${txid.slice(0, 8)}…${txid.slice(-4)}`;
-  row.append(name, link);
+  row.append(el("span", "", label), link);
   return row;
 }
 
 function txLinks(position) {
-  const box = document.createElement("div");
-  box.className = "txs";
+  const box = el("div", "txs");
   const funding = txLink("Lock", position.fundingTxid);
   const refunded = position.status === "refunded";
   const refund = refunded ? txLink("Sent back", position.closeTxid) : null;
@@ -1286,14 +1241,11 @@ function lock() {
   if (!position) {
     position = {
       id: crypto.randomUUID(),
-      side: 0,
       kind: locked.kind,
       strike: locked.strike,
       expiry: locked.expiry,
       collateral: locked.size,
       premiumSats: quote.sats,
-      premiumUsd: quote.usd,
-      solver: quote.name,
       status: "locking",
       deadline: quote.deadline,
       address: deposit.address,
@@ -1304,14 +1256,9 @@ function lock() {
       vaultAddress: deposit.vaultAddress,
       writerAddress: state.address,
       payoutAddress: state.address,
-      days: 0,
       tenorSec: locked.tenorSec,
       createdAt: now,
-      apy: annualized(quote.sats, locked.size, (Number(locked.expiry) - now) / 86400),
       uri: deposit.uri,
-      apyFrozen: false,
-      marketSats: null,
-      marketApy: null,
     };
     state.positions.unshift(position);
   }
@@ -1453,13 +1400,6 @@ async function refund(position, button) {
   }
 }
 
-function freeze(position) {
-  position.apyFrozen = true;
-  position.apy = annualized(position.premiumSats, position.collateral, tenorDays(position));
-  position.marketSats = null;
-  position.marketApy = null;
-}
-
 const CHAIN_STATUS = {
   open: "locking",
   funded: "deposited",
@@ -1482,7 +1422,6 @@ function applyChain(position, update) {
     && (position.closeTxid || "") === closeTxid
     && (position.settleTxid || "") === settleTxid;
   if (same) return;
-  if (display === "deposited" || display === "filled" || display === "settled" || display === "expired") freeze(position);
   position.status = display;
   position.refundable = update.refundable;
   position.fundingTxid = fundingTxid;
@@ -1531,39 +1470,6 @@ function startWatch() {
   }, ctrl.signal).catch(() => {
     if (!ctrl.signal.aborted) watchKey = "";
   });
-}
-
-async function refreshPositionMarkets() {
-  if (state.spotCents == null) return;
-  const open = state.positions.filter((position) => position.status === "locking" && !position.apyFrozen);
-  if (!open.length) return;
-  let points;
-  try {
-    points = await fetchSurface();
-  } catch {
-    return;
-  }
-  const now = Math.floor(Date.now() / 1000);
-  let changed = false;
-  for (const position of open) {
-    const priced = deribitPremium({
-      kind: position.kind,
-      strikeUsd: Number(position.strike) / 100,
-      expiry: Number(position.expiry),
-      now,
-      collateralSats: position.collateral,
-      spotUsd: Number(state.spotCents) / 100,
-      points,
-    });
-    if (!priced) continue;
-    const paid = payablePremium(priced.sats);
-    position.marketSats = paid;
-    position.marketApy = annualized(paid, position.collateral, tenorDays(position));
-    changed = true;
-  }
-  if (!changed) return;
-  persist();
-  if (state.view === "home") renderBlotter();
 }
 
 function tick() {
@@ -1878,11 +1784,8 @@ async function submitRestore() {
 
 async function loadSpot() {
   try {
-    const res = await fetch("https://www.deribit.com/api/v2/public/get_index_price?index_name=btc_usd");
-    if (!res.ok) throw new Error("spot");
-    const price = Number((await res.json())?.result?.index_price);
-    if (!(price > 1000 && price < 10_000_000)) throw new Error("spot");
-    state.spotCents = BigInt(Math.round(price * 100));
+    const cents = await btcUsdCents();
+    if (cents != null && cents > 100_000n && cents < 1_000_000_000n) state.spotCents = cents;
   } catch {
     // A failed refresh keeps the last index price.
   }
@@ -1895,7 +1798,7 @@ async function loadPrices() {
   state.loaded = true;
   $("spot-line").textContent = state.spotCents == null
     ? "Today’s BTC price isn’t loading."
-    : `BTC is $${fmtUsdFromCents(state.spotCents)} on the Deribit index.`;
+    : `BTC is $${usdFromCents(state.spotCents)} on the Deribit index.`;
   renderSell();
   if (state.view === "home") renderBlotter();
 }
@@ -1937,7 +1840,6 @@ if (!consumeWalletHandoff()) {
   setInterval(tick, 1000);
   setInterval(startWatch, 15_000);
   setInterval(() => {
-    void refreshPositionMarkets();
     void loadPrices();
   }, REFRESH_MS);
   void hydrateMissing();

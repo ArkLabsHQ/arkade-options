@@ -1,5 +1,3 @@
-import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
 import http from "node:http";
 
 import {
@@ -40,7 +38,7 @@ import {
 import { connectTransport, nostrPubkey, type Incoming } from "../protocol/nostr.ts";
 import { deribitPremium, fetchSurface, surfaceStatus } from "../protocol/deribit.ts";
 import { payablePremium, premiumSats } from "../protocol/pricing.ts";
-import { openSqliteStorage } from "../protocol/sqlite-storage.ts";
+import { openSqliteStorage, revision } from "../protocol/sqlite-storage.ts";
 import { Book, hasBeacon, openPremium, pageQuotes, quoteCounts, type QuoteFilter, type QuoteRow } from "./book.ts";
 import { countFill, countQuote, emptyHour, hourLine, msUntilNextHour } from "./digest.ts";
 import { finalizeDeskSpends } from "./finalize.ts";
@@ -642,25 +640,6 @@ contractManager.onContractEvent((event) => {
 });
 await refreshFloat();
 await contractManager.watchScript(deskScriptHex, { label: "desk" });
-
-function revision(): string {
-  const baked = process.env.GIT_COMMIT?.trim();
-  if (baked) return baked;
-  try {
-    const file = readFileSync("/etc/git-commit", "utf8").trim();
-    if (file) return file;
-  } catch {
-    // Local `pnpm desk` has no image revision.
-  }
-  try {
-    return execFileSync("git", ["rev-parse", "HEAD"], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    }).trim();
-  } catch {
-    return "unknown";
-  }
-}
 
 function quoteView(row: QuoteRow) {
   return {

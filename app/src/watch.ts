@@ -5,6 +5,7 @@ import { bytesToHex } from "../../protocol/hex.ts";
 import { classifyIntent, psbtView, type CoinView, type IntentPhase, type TxOutput } from "../../protocol/intent-state.ts";
 import { intentCoins, onContractEvent } from "./fund.ts";
 import { splitPayouts } from "./position-status.ts";
+import { settlementTxid } from "./restore.ts";
 
 export type WatchRow = {
   address: string;
@@ -30,12 +31,8 @@ export type PhaseUpdate = {
 const indexer = new RestIndexerProvider(ARK_URL);
 const vtxoReads = new Map<string, Promise<{ txid: string; value: number; spentBy: string; createdAt: Date }[]>>();
 
-function scriptOf(address: string): string {
-  return bytesToHex(ArkAddress.decode(address).pkScript);
-}
-
 export function pkScriptOf(address: string): string {
-  return scriptOf(address);
+  return bytesToHex(ArkAddress.decode(address).pkScript);
 }
 
 /** Writer and desk sats on a settlement transaction. Output 0 is the beacon. */
@@ -100,8 +97,8 @@ async function payoutEvidence(writerScript: string, intentScript: string, since:
 }
 
 export async function readIntent(row: WatchRow, now = Math.floor(Date.now() / 1000)): Promise<Omit<PhaseUpdate, "address">> {
-  const intentScript = scriptOf(row.address).toLowerCase();
-  const writerScript = row.writerAddress ? scriptOf(row.writerAddress) : "";
+  const intentScript = pkScriptOf(row.address).toLowerCase();
+  const writerScript = row.writerAddress ? pkScriptOf(row.writerAddress) : "";
   const coins = (await intentCoins(intentScript)) ?? [];
   const ids = [...new Set(coins.flatMap((coin) => coin.spent && coin.spentBy ? [coin.spentBy] : []))];
   const spends: Record<string, TxOutput[]> = {};
@@ -174,10 +171,10 @@ async function payoutLanded(writerScript: string, txid: string): Promise<boolean
 
 async function vaultSpend(address: string | undefined): Promise<string> {
   if (!address) return "";
-  const spent = await indexer.getVtxos({ scripts: [scriptOf(address)], spentOnly: true });
+  const spent = await indexer.getVtxos({ scripts: [pkScriptOf(address)], spentOnly: true });
   for (const coin of spent.vtxos ?? []) {
-    const id = (coin.arkTxId || coin.spentBy || "").toLowerCase();
-    if (/^[0-9a-f]{64}$/.test(id)) return id;
+    const id = settlementTxid(coin);
+    if (id) return id;
   }
   return "";
 }
@@ -228,7 +225,7 @@ export async function watchIntents(
   const gen = ++generation;
   listener = onUpdate;
   owners = new Map();
-  for (const row of rows) addRow(owners, scriptOf(row.address), row);
+  for (const row of rows) addRow(owners, pkScriptOf(row.address), row);
   await hook();
   if (gen !== generation || signal.aborted) return;
   let failed = false;

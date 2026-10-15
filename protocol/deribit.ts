@@ -8,6 +8,7 @@ import { bsCall, bsPut } from "./pricing.ts";
  */
 
 const BOOK_URL = "https://www.deribit.com/api/v2/public/get_book_summary_by_currency?currency=BTC&kind=option";
+const INDEX_URL = "https://www.deribit.com/api/v2/public/get_index_price?index_name=btc_usd";
 const YEAR = 365 * 24 * 60 * 60;
 const MONTHS: Record<string, number> = {
   JAN: 0, FEB: 1, MAR: 2, APR: 3, MAY: 4, JUN: 5,
@@ -197,4 +198,14 @@ export async function fetchSurface(now = Date.now()): Promise<SurfacePoint[]> {
 
 export function surfaceStatus(): { points: number; at: number | null; error: string | null } {
   return { points: cache?.points.length ?? 0, at: cache?.at ?? null, error: lastError };
+}
+
+/** Deribit BTCUSD index, in cents. Null when the feed does not answer. */
+export async function btcUsdCents(signal?: AbortSignal): Promise<bigint | null> {
+  const res = await fetch(INDEX_URL, { signal });
+  if (!res.ok) return null;
+  const body = (await res.json()) as { result?: { index_price?: unknown } };
+  const usd = Number(body.result?.index_price);
+  if (!Number.isFinite(usd) || usd <= 0) return null;
+  return BigInt(Math.round(usd * 100));
 }

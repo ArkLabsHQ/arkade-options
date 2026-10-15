@@ -1,7 +1,8 @@
-import { mkdir, open, readFile, rename } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
 
 import { parsePosition, type OptionPosition } from "../protocol/messages.ts";
+import { writeJsonFile } from "../protocol/sqlite-storage.ts";
 
 type FileShape = {
   settled: { id: string; txid: string }[];
@@ -72,22 +73,11 @@ export class Progress {
   }
 
   async save(): Promise<void> {
-    const run = this.writing.then(() => this.write());
+    const run = this.writing.then(() => writeJsonFile(this.file, {
+      settled: [...this.done.entries()].map(([id, txid]) => ({ id, txid })),
+      positions: [...this.seen.values()],
+    }));
     this.writing = run.then(() => undefined, () => undefined);
     return run;
-  }
-
-  private async write(): Promise<void> {
-    const tmp = `${this.file}.${process.pid}.${Date.now().toString(36)}.tmp`;
-    const handle = await open(tmp, "w");
-    try {
-      const settled = [...this.done.entries()].map(([id, txid]) => ({ id, txid }));
-      const positions = [...this.seen.values()];
-      await handle.writeFile(JSON.stringify({ settled, positions }, null, 2));
-      await handle.sync();
-    } finally {
-      await handle.close();
-    }
-    await rename(tmp, this.file);
   }
 }

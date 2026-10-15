@@ -19,7 +19,7 @@ import { ARK_URL, BEACON_READ_FEE, EMULATOR_URL, EXIT } from "../../protocol/con
 import { assertServerExit, bindContracts, payoutVtxo, type Terms } from "../../protocol/contracts.ts";
 import { bytesToHex, hexToBytes, xOnly } from "../../protocol/hex.ts";
 import { networkByName } from "../../protocol/network.ts";
-import { intentProgram, vaultProgram } from "./program.ts";
+import { intentProgram, vaultProgram } from "../../protocol/programs.ts";
 
 export const NETWORK_NAME = "Mutinynet";
 export const WALLET_URL = "https://mutinynet.arkade.money";
