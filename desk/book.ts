@@ -1,5 +1,7 @@
-import { mkdir, open, readFile, rename } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
+
+import { writeJsonFile } from "../protocol/sqlite-storage.ts";
 
 export type QuoteStatus = "open" | "filled" | "expired";
 
@@ -180,20 +182,8 @@ export class Book {
   }
 
   async save(): Promise<void> {
-    const run = this.writing.then(() => this.write());
+    const run = this.writing.then(() => writeJsonFile(this.file, { quotes: this.rows }));
     this.writing = run.then(() => undefined, () => undefined);
     return run;
-  }
-
-  private async write(): Promise<void> {
-    const tmp = `${this.file}.${process.pid}.${Date.now().toString(36)}.${Math.random().toString(16).slice(2)}.tmp`;
-    const handle = await open(tmp, "w");
-    try {
-      await handle.writeFile(JSON.stringify({ quotes: this.rows }, null, 2));
-      await handle.sync();
-    } finally {
-      await handle.close();
-    }
-    await rename(tmp, this.file);
   }
 }

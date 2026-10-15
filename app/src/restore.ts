@@ -4,7 +4,7 @@ import { beaconIdOf } from "../../protocol/beacon-id.ts";
 import { bindContracts, type Terms } from "../../protocol/contracts.ts";
 import { bytesToHex, hexToBytes, xOnly } from "../../protocol/hex.ts";
 import { operatorSession, readOutpoint } from "./fund.ts";
-import { vaultProgram } from "./program.ts";
+import { vaultProgram } from "../../protocol/programs.ts";
 
 /** Creating tx of the sample vault. The collateral coin is vout 1. */
 export const SAMPLE_VAULT_TXID = "4b46f8dafd536990a134a60e909293d0cc164dfd64e377ae0f361526c9536768";
@@ -67,15 +67,6 @@ export type RestoredVault = {
   exit: number;
   writerScript: string;
   restored: true;
-  days: number;
-  tenorSec: number;
-  premiumUsd: number;
-  solver: string;
-  address: string;
-  deadline: number;
-  createdAt: number;
-  apy: null;
-  apyFrozen: true;
 };
 
 function hexId(value: string | undefined): string {
@@ -193,15 +184,6 @@ export function restoreFromCoin(input: RestoreInput, coin: VaultCoin): RestoredV
     exit: Number(input.exit),
     writerScript: bytesToHex(bound.writerPkScript),
     restored: true,
-    days: 0,
-    tenorSec: 0,
-    premiumUsd: 0,
-    solver: "",
-    address: "",
-    deadline: 0,
-    createdAt: 0,
-    apy: null,
-    apyFrozen: true,
   };
 }
 

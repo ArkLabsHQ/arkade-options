@@ -12,7 +12,7 @@ import {
   rawVaultProgram,
   swapProgram,
   vaultProgram,
-} from "./program.ts";
+} from "../../protocol/programs.ts";
 
 function onlySecondsDiffers(raw: ReturnType<typeof rawVaultProgram>, spent: ReturnType<typeof vaultProgram>) {
   const csv = raw.functions.unilateral?.tapscript?.csv;

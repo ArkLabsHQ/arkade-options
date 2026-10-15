@@ -96,6 +96,26 @@ async function cosignedCheckpoints(identity: Identity, deskScript: Uint8Array, r
   return Promise.all(raws.map((raw) => cosignCheckpoint(identity, deskScript, raw)));
 }
 
+async function finalizeOrSubmit(
+  opts: { ark: PendingArk; identity: Identity; deskScript: Script },
+  txid: string,
+  rawArkTx: string,
+  checkpoints: string[],
+  logLabel: string,
+): Promise<void> {
+  const script = opts.deskScript.pkScript;
+  const signed = await cosignedCheckpoints(opts.identity, script, checkpoints);
+  try {
+    await opts.ark.finalizeTx(txid, signed);
+  } catch (err) {
+    if (!notFound(err) || !opts.ark.submitTx) throw err;
+    console.error(logLabel, txid);
+    const submitted = await opts.ark.submitTx(rawArkTx, checkpoints);
+    const cosigned = await cosignedCheckpoints(opts.identity, script, submitted.signedCheckpointTxs);
+    await opts.ark.finalizeTx(submitted.arkTxid, cosigned);
+  }
+}
+
 /** Arkd lists a pending spend only when the vtxo row carries ArkTxid. The indexer already has it. */
 async function finalizeFromIndexer(opts: {
   ark: PendingArk;
@@ -126,20 +146,7 @@ async function finalizeFromIndexer(opts: {
         if (!checkpoint) throw new Error(`checkpoint ${id} missing`);
         return checkpoint;
       });
-      const signed = await cosignedCheckpoints(opts.identity, opts.deskScript.pkScript, ordered);
-      try {
-        await opts.ark.finalizeTx(arkTxid, signed);
-      } catch (err) {
-        if (!notFound(err) || !opts.ark.submitTx) throw err;
-        console.error("finalize resubmit", arkTxid);
-        const submitted = await opts.ark.submitTx(raw, ordered);
-        const cosigned = await cosignedCheckpoints(
-          opts.identity,
-          opts.deskScript.pkScript,
-          submitted.signedCheckpointTxs,
-        );
-        await opts.ark.finalizeTx(submitted.arkTxid, cosigned);
-      }
+      await finalizeOrSubmit(opts, arkTxid, raw, ordered, "finalize resubmit");
       finalized.push(arkTxid);
     } catch (err) {
       if (alreadySpent(err)) {
@@ -172,20 +179,9 @@ export async function settleEmulatorTx(opts: {
   signedCheckpointTxs: string[];
 }): Promise<boolean> {
   if (!opts.signedArkTx || !opts.signedCheckpointTxs.length) return false;
-  const script = opts.deskScript.pkScript;
   try {
-    const cosigned = await cosignedCheckpoints(opts.identity, script, opts.signedCheckpointTxs);
-    try {
-      await opts.ark.finalizeTx(opts.txid, cosigned);
-      return true;
-    } catch (err) {
-      if (!notFound(err) || !opts.ark.submitTx) throw err;
-      console.error("finalize submit", opts.txid);
-      const submitted = await opts.ark.submitTx(opts.signedArkTx, opts.signedCheckpointTxs);
-      const signed = await cosignedCheckpoints(opts.identity, script, submitted.signedCheckpointTxs);
-      await opts.ark.finalizeTx(submitted.arkTxid, signed);
-      return true;
-    }
+    await finalizeOrSubmit(opts, opts.txid, opts.signedArkTx, opts.signedCheckpointTxs, "finalize submit");
+    return true;
   } catch (err) {
     if (alreadySpent(err)) {
       stuckArkTxs.add(opts.txid);

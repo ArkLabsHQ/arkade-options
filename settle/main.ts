@@ -1,5 +1,3 @@
-import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import http from "node:http";
 
@@ -15,6 +13,7 @@ import { networkByName } from "../protocol/network.ts";
 import { bindContracts } from "../protocol/contracts.ts";
 import type { OptionPosition } from "../protocol/messages.ts";
 import { quoteRelay, watchPositions } from "../protocol/nostr.ts";
+import { revision } from "../protocol/sqlite-storage.ts";
 import { fetchOracleStatus, parseOracleBeacon, serviceOrigin } from "./oracle.ts";
 import { duePositions, manualPositions, positionFromAnnouncement, termsFor, type WatchPosition } from "./positions.ts";
 import { Progress } from "./progress.ts";
@@ -73,25 +72,6 @@ function once(key: string, line: string, error = false) {
   noted.add(key);
   if (error) console.error(line);
   else console.log(line);
-}
-
-function revision(): string {
-  const baked = process.env.GIT_COMMIT?.trim();
-  if (baked) return baked;
-  try {
-    const file = readFileSync("/etc/git-commit", "utf8").trim();
-    if (file) return file;
-  } catch {
-    // Local `pnpm settle` has no image revision.
-  }
-  try {
-    return execFileSync("git", ["rev-parse", "HEAD"], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    }).trim();
-  } catch {
-    return "unknown";
-  }
 }
 
 async function askPublish(expiry: number) {

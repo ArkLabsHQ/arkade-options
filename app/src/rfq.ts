@@ -78,7 +78,7 @@ export async function requestQuotes(input: {
     recipients: input.desks.map((desk) => desk.pubkey),
     payload: request,
     timeoutMs: 8_000,
-    accept: (incoming) => messageId(incoming.message) === acceptId,
+    accept: (incoming) => incoming.message.rfq_id === acceptId,
     done: (incoming) => isQuote(incoming.message),
   });
   let replies = await ask();
@@ -144,8 +144,4 @@ export async function requestQuotes(input: {
     return { quotes, note: reasons[0] ? `The desk refused: ${reasons[0]}.` : "The desk did not answer." };
   }
   return { quotes, note: "" };
-}
-
-function messageId(message: { rfq_id?: string }): string | undefined {
-  return message.rfq_id;
 }
