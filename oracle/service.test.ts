@@ -13,7 +13,7 @@ import { beaconIdOf, bindBeacon, genesisState, nextState, priceValue, sampleDige
 import { EXIT } from "../protocol/constants.ts";
 import { statePacket } from "../protocol/cospend.ts";
 import { bytesToHex } from "../protocol/hex.ts";
-import { createOracle, type HeldCoin, type OracleDeps, type OracleWallet } from "./service.ts";
+import { createOracle, dueExpiries, type HeldCoin, type OracleDeps, type OracleWallet } from "./service.ts";
 import { pruneSamples, SAMPLE_HISTORY_S } from "./store.ts";
 
 const CHECKPOINT_HEX = "03080040b27520dfcaec558c7e78cf3e38b898ba8a43cfb5727266bae32c5c5b3aeb32c558aa0bac";
@@ -377,5 +377,38 @@ test("the sampler stores a price without the admin route", async () => {
   } finally {
     await oracle.close();
     await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("only a closed announced expiry is published, and a missing sample is skipped", () => {
+  const expiry = 1_700_000_000;
+  const done = new Set<number>([expiry - 10]);
+  assert.deepEqual(dueExpiries([expiry + 86_400, expiry, expiry, expiry - 10], expiry + 60, done), [expiry]);
+  assert.deepEqual(dueExpiries([expiry], expiry + 59, done), []);
+});
+
+test("the minute pass publishes an announced expiry once a sample exists", async () => {
+  const expiry = 1_700_000_000;
+  const later = expiry + 86_400;
+  const missed = expiry - 120;
+  const announced = new Set<number>([later, expiry, missed]);
+  const ctx = await boot({ now: () => expiry + 60, announcedExpiries: () => announced });
+  try {
+    assert.equal((await call(ctx.oracle.url, "/api/issue", {}, "test-token")).status, 200);
+    assert.equal((await call(ctx.oracle.url, "/api/deploy", {}, "test-token")).status, 200);
+    await ctx.oracle.publishAnnounced();
+    assert.deepEqual((await call(ctx.oracle.url, "/api/status")).json.fixings, []);
+    assert.equal((await call(ctx.oracle.url, "/api/samples", { price: "10000000" }, "test-token")).status, 200);
+    await ctx.oracle.publishAnnounced();
+    const fixings = (await call(ctx.oracle.url, "/api/status")).json.fixings as { expiry: number; price: string }[];
+    assert.equal(fixings.length, 1);
+    assert.equal(fixings[0]?.expiry, expiry);
+    assert.equal(fixings[0]?.price, "10000000");
+    assert.equal(ctx.submitted.length, 1);
+    await ctx.oracle.publishAnnounced();
+    assert.equal(ctx.submitted.length, 1);
+    assert.equal(((await call(ctx.oracle.url, "/api/status")).json.fixings as unknown[]).length, 1);
+  } finally {
+    await ctx.close();
   }
 });

@@ -8,9 +8,10 @@ import {
   Wallet,
 } from "@arkade-os/sdk";
 
-import { ARK_URL, EMULATOR_URL } from "../protocol/constants.ts";
+import { ARK_URL, DEFAULT_RELAYS, EMULATOR_URL } from "../protocol/constants.ts";
 import { bytesToHex, hexToBytes } from "../protocol/hex.ts";
 import { networkByName } from "../protocol/network.ts";
+import { watchPositions } from "../protocol/nostr.ts";
 import { openSqliteStorage } from "../protocol/sqlite-storage.ts";
 import { btcUsdCents } from "./price.ts";
 import { createOracle, type OracleWallet } from "./service.ts";
@@ -23,6 +24,8 @@ import { createOracle, type OracleWallet } from "./service.ts";
  *   ORACLE_ADMIN    optional bearer. Unset disables /api/samples, /api/issue, /api/deploy, /api/recover, and /api/publish.
  *   SAMPLE_MS       how often to store a BTCUSD sample. Default 60000.
  *                   0 uses that same minute. Samples older than 24 hours are dropped.
+ *                   That minute also publishes each nostr filled-vault expiry once
+ *                   expiry + 60 has passed and a sample exists. It does not settle.
  *   ARK_URL        default https://mutinynet.arkade.sh
  *   EMULATOR_URL   default Mutinynet emulator
  *   DATA_DIR       oracle.json + arkade.sqlite. Default ./data
@@ -93,6 +96,14 @@ if (wallet) {
   }
 }
 
+const announced = new Set<number>();
+watchPositions({
+  relays: DEFAULT_RELAYS,
+  onPosition(position) {
+    announced.add(position.expiry);
+  },
+});
+
 const oracle = await createOracle({
   dataDir,
   port,
@@ -107,6 +118,7 @@ const oracle = await createOracle({
   emulator: new RestEmulatorProvider(emulatorUrl),
   quote: () => btcUsdCents(AbortSignal.timeout(10_000)),
   sampleEveryMs: sampleInterval,
+  announcedExpiries: () => announced,
 });
 
 console.log(`oracle http://127.0.0.1:${oracle.port}/`);
