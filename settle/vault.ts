@@ -2,7 +2,7 @@ import { arkade, asset, Transaction, type CSVMultisigTapscript, type EmulatorPro
 import { base64 } from "@scure/base";
 
 import { holderPayoff, settlementOutputs } from "../app/settle-math.js";
-import { beaconIdOf, bin2num, bindBeacon, decodeState, statePacketOf } from "../protocol/beacon.ts";
+import { beaconIdOf, bin2num, bindBeacon, decodeState, statePacketOf, type BeaconState } from "../protocol/beacon.ts";
 import { PRICE_MAX } from "../protocol/constants.ts";
 import { bindContracts, type Terms } from "../protocol/contracts.ts";
 import { buildSettle, submit } from "../protocol/cospend.ts";
@@ -118,6 +118,25 @@ function txById(raws: readonly string[], id: string): Transaction | undefined {
   return undefined;
 }
 
+/** The live beacon is the spendable unit with the highest round. An older coin is not the price. */
+function liveBeacon(coins: readonly ChainCoin[], txs: readonly string[]): { coin: ChainCoin; prev: Transaction; state: Uint8Array } | null {
+  let best: { coin: ChainCoin; prev: Transaction; state: Uint8Array; round: bigint } | null = null;
+  for (const coin of coins) {
+    const prev = txById(txs, coin.txid);
+    if (!prev) continue;
+    let state: Uint8Array;
+    let decoded: BeaconState;
+    try {
+      state = statePacketOf(prev);
+      decoded = decodeState(state);
+    } catch {
+      continue;
+    }
+    if (!best || decoded.round > best.round) best = { coin, prev, state, round: decoded.round };
+  }
+  return best ? { coin: best.coin, prev: best.prev, state: best.state } : null;
+}
+
 /**
  * Settle one vault. The price is the fixing in the beacon coin's state packet,
  * which is what `OptionVault.settle` reads. One beacon coin means one settle
@@ -173,23 +192,18 @@ export async function settleQuote(env: {
   if (beaconBound.address !== env.beacon.address) return { result: "mismatch" };
 
   const found = await env.chain.getVtxos({ scripts: [bytesToHex(beaconBound.pkScript)], spendableOnly: true });
-  const beaconCoin = (found.vtxos ?? []).find((coin) => !spent(coin) && holdsUnit(coin, env.beacon.assetId));
-  if (!beaconCoin) return { result: "waiting", reason: "beacon" };
+  const holders = (found.vtxos ?? []).filter((coin) => !spent(coin) && holdsUnit(coin, env.beacon.assetId));
+  if (!holders.length) return { result: "waiting", reason: "beacon" };
 
-  const ids = [vaultCoin.txid, beaconCoin.txid];
+  const ids = [...new Set([vaultCoin.txid, ...holders.map((coin) => coin.txid)])];
   const raws = await env.chain.getVirtualTxs(ids);
   const txs = raws.txs ?? [];
   // The indexer does not promise the request order.
   const vaultPrev = txById(txs, vaultCoin.txid);
-  const beaconPrev = txById(txs, beaconCoin.txid);
   if (!vaultPrev) return { result: "waiting", reason: "vault" };
-  if (!beaconPrev) return { result: "waiting", reason: "beacon" };
-  let state: Uint8Array;
-  try {
-    state = statePacketOf(beaconPrev);
-  } catch {
-    return { result: "waiting", reason: "beacon" };
-  }
+  const chosen = liveBeacon(holders, txs);
+  if (!chosen) return { result: "waiting", reason: "beacon" };
+  const { coin: beaconCoin, prev: beaconPrev, state } = chosen;
   const price = slotPrice(state, env.terms.expiry);
   if (price == null) return { result: "unfixed" };
 
