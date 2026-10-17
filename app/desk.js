@@ -36,9 +36,9 @@ import { pkScriptOf, readIntent, readKept, watchIntents } from "./src/watch.ts";
 const STORE = "arkade-options-desk-v1";
 const REFRESH_MS = 18_000;
 const WALLET_ASK = "arkade-options-wallet";
-// `?test` adds the 10-minute date, a line at today's price, and 0.0098 BTC, which a
-// 1,000,000-sat test wallet can lock. The line is set once, so a price refresh does
-// not move it. The 10-minute premium is scaled in quotedPremium. Friday lists stay.
+// `?test` adds 0.0098 BTC, which a 1,000,000-sat test wallet can lock. The 10-minute
+// date and the line at today's price are on the normal quote. The line is set once,
+// so a price refresh does not move it. Only that date is scaled in quotedPremium.
 const TEST = new URLSearchParams(location.search).has("test");
 const SIZES = [200_000n, 500_000n, ...(TEST ? [980_000n] : []), 1_000_000n, 2_000_000n];
 let testLine = 0;
@@ -183,7 +183,7 @@ function linesFor(kind, expiry) {
     .filter((point) => point.expiry === at && (call ? point.strike > spot : point.strike < spot))
     .map((point) => point.strike);
   const want = call ? [1.05, 1.075, 1.1, 1.15] : [0.95, 0.925, 0.9, 0.85];
-  const lines = TEST ? [(testLine ||= Math.round(spot / 100) * 100)] : [];
+  const lines = [(testLine ||= Math.round(spot / 100) * 100)];
   for (const step of want) {
     const line = nearestTo(listed, spot * step);
     if (line != null && !lines.includes(line)) lines.push(line);
@@ -670,12 +670,13 @@ function renderPop(focus = false) {
       return { pick, on, label, note, at, pay: estimate(kind, at, unix, t.size) };
     };
     rows = dates().map((unix) => row(`date:${unix}`, !state.tenorSec && unix === state.date, whenShort(unix), away(unix), unix));
-    if (TEST) rows.push(row("tenor:600", state.tenorSec === 600, "In 10 minutes", "Test date", Math.floor(Date.now() / 1000) + 600));
+    const soon = Math.floor(Date.now() / 1000) + 600;
+    rows.push(row("tenor:600", state.tenorSec === 600, "In 10 minutes", whenShort(soon), soon));
   } else {
     title = kind === 0 ? "Give up gains above" : "Take the loss below";
     hint = `Today’s price is ${usd0(spotUsd())}.`;
     rows = linesFor(kind, expiry).map((k) => {
-      const atm = TEST && k === testLine;
+      const atm = k === testLine;
       return {
         pick: `line:${k}`,
         on: k === t.line,
