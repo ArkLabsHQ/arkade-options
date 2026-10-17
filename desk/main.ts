@@ -37,7 +37,7 @@ import {
 } from "../protocol/messages.ts";
 import { connectTransport, nostrPubkey, type Incoming } from "../protocol/nostr.ts";
 import { deribitPremium, fetchSurface, surfaceStatus } from "../protocol/deribit.ts";
-import { payablePremium, premiumSats } from "../protocol/pricing.ts";
+import { premiumSats, quotedPremium } from "../protocol/pricing.ts";
 import { openSqliteStorage, revision } from "../protocol/sqlite-storage.ts";
 import { Book, hasBeacon, openPremium, pageQuotes, quoteCounts, type QuoteFilter, type QuoteRow } from "./book.ts";
 import { countFill, countQuote, emptyHour, hourLine, msUntilNextHour } from "./digest.ts";
@@ -301,7 +301,7 @@ async function onRequest(message: RfqRequest, from: string) {
     }
     sats = priced.sats;
   }
-  sats = payablePremium(sats);
+  sats = quotedPremium(sats, message.profile.expiry, now);
   const dust = premiumRefusal(sats, BigInt(message.amount));
   if (dust) {
     await refuse(from, message.rfq_id, dust);

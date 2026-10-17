@@ -21,11 +21,10 @@ import {
   walletAppUrl,
   walletMessageTarget,
 } from "./src/wallet-link.ts";
-import { artifactLine } from "../protocol/programs.ts";
 import { requestQuotes } from "./src/rfq.ts";
 import { btcUsdCents, deribitPremium, fetchSurface } from "../protocol/deribit.ts";
 import { BEACON_READ_FEE, QUOTE_TTL_S } from "../protocol/constants.ts";
-import { payablePremium } from "../protocol/pricing.ts";
+import { quotedPremium } from "../protocol/pricing.ts";
 import { bestQuote } from "./quote.js";
 import { PINNED_DESKS, RELAYS } from "./rfq-config.js";
 import { holderPayoff, settlementOutputs } from "./settle-math.js";
@@ -37,9 +36,9 @@ import { pkScriptOf, readIntent, readKept, watchIntents } from "./src/watch.ts";
 const STORE = "arkade-options-desk-v1";
 const REFRESH_MS = 18_000;
 const WALLET_ASK = "arkade-options-wallet";
-// `?test` adds the 10-minute date, a line at today's price so that date pays more than the fee,
-// and 0.0098 BTC, which a 1,000,000-sat test wallet can lock. The line is set once, so a price
-// refresh does not move it under an offer.
+// `?test` adds the 10-minute date, a line at today's price, and 0.0098 BTC, which a
+// 1,000,000-sat test wallet can lock. The line is set once, so a price refresh does
+// not move it. The 10-minute premium is scaled in quotedPremium. Friday lists stay.
 const TEST = new URLSearchParams(location.search).has("test");
 const SIZES = [200_000n, 500_000n, ...(TEST ? [980_000n] : []), 1_000_000n, 2_000_000n];
 let testLine = 0;
@@ -69,7 +68,7 @@ const state = {
   offer: null,
   quoteNote: "",
   quoting: false,
-  walletNote: "",
+  walletFault: null,
   positions: loadPositions(),
   restored: [],
   selected: null,
@@ -159,8 +158,7 @@ function expiryUnix() {
 
 const nearestTo = (list, want) => list.reduce((best, value) => (best == null || Math.abs(value - want) < Math.abs(best - want) ? value : best), null);
 const clears = (sats) => sats != null && sats > BEACON_READ_FEE;
-// The 10-minute test date locks even when the payment is the fee or less. Friday dates stay on clears().
-const takes = (sats) => clears(sats) || (TEST && state.tenorSec > 0 && sats != null);
+const takes = clears;
 const spotUsd = () => Number(state.spotCents) / 100;
 const cents = (usd) => BigInt(Math.round(usd * 100));
 
@@ -203,7 +201,7 @@ function estimate(kind, line, expiry, size) {
     spotUsd: spotUsd(),
     points: state.points,
   });
-  return priced ? payablePremium(priced.sats) : null;
+  return priced ? quotedPremium(priced.sats, expiry, Math.floor(Date.now() / 1000)) : null;
 }
 
 /** Picks the date and both lines from the book. False until prices load. */
@@ -375,24 +373,41 @@ function statusLabel(position) {
   return "Open";
 }
 
-function humanNote(note) {
-  if (!note) return "";
+function clipDetail(text) {
+  const line = String(text ?? "").split("\n").map((row) => row.trim()).find(Boolean) ?? "";
+  return line.replace(/(bearer|token|authorization|secret|password)\s*[:=]?\s*\S+/gi, "$1 …").slice(0, 240);
+}
+
+/** One place for a failure: a sentence, then the backend text a tester can copy. */
+function renderStatus(node, sentence, detail) {
+  if (!node) return;
+  node.replaceChildren();
+  if (sentence) node.append(document.createTextNode(sentence));
+  const shown = detail && detail !== sentence ? clipDetail(detail) : "";
+  if (shown) node.append(el("code", "fault", shown));
+}
+
+function quoteFault(note) {
+  const detail = clipDetail(note);
   const asked = terms();
-  if (note.includes("exposure")) {
-    return `The desk has taken all it can at ${usd0(asked.line)} for ${whenDay(asked.expiry)}. Try another line or date.`;
+  if (note.includes("float short")) {
+    return ["The desk can’t pay this much right now. Try a smaller amount, or try again later.", detail];
   }
-  if (note.includes("float short")) return "The desk can’t pay this much right now. Try a smaller amount, or try again later.";
   if (/refused: (spot|deribit) unavailable/.test(note)) {
-    return "We can’t get a fair price right now, so we won’t make an offer. Try again in a minute.";
+    return ["We can’t get a fair price right now. Try again in a moment.", detail];
   }
-  if (note.includes("refused: expiry")) return "That date is too close. Pick a later one.";
-  if (note.includes("refused: collateral")) return "The desk can’t take this amount right now. Pick another one.";
+  if (note.includes("refused: expiry")) return ["That date is too close. Pick a later one.", detail];
   if (note.includes("below dust")) {
-    return "This doesn’t pay more than the 1,000-sat price-check fee. Pick a closer line, a later date or more BTC.";
+    return ["This doesn’t pay more than the 1,000-sat price-check fee. Pick a closer line, a later date or more BTC.", detail];
   }
-  if (note.includes("did not answer")) return "The desk didn’t answer. Nothing was locked. Try again.";
-  if (note.startsWith("The desk refused")) return "We couldn’t set this up. Nothing was locked. Try again.";
-  return note;
+  if (note.includes("refused: collateral") || note.includes("refused: premium")) {
+    return ["Try a smaller amount.", detail];
+  }
+  if (note.includes("exposure")) {
+    return [`The desk has taken all it can at ${usd0(asked.line)} for ${whenDay(asked.expiry)}. Try another line or date.`, detail];
+  }
+  if (note.includes("did not answer")) return ["The desk didn’t answer. Try again in a moment.", detail];
+  return ["Try again in a moment.", detail];
 }
 
 function mine(position) {
@@ -659,13 +674,16 @@ function renderPop(focus = false) {
   } else {
     title = kind === 0 ? "Give up gains above" : "Take the loss below";
     hint = `Today’s price is ${usd0(spotUsd())}.`;
-    rows = linesFor(kind, expiry).map((k) => ({
-      pick: `line:${k}`,
-      on: k === t.line,
-      label: usd0(k),
-      note: `${Math.abs((k / spotUsd() - 1) * 100).toFixed(1)}% ${k > spotUsd() ? "above" : "below"} today`,
-      pay: estimate(kind, k, expiry, t.size),
-    }));
+    rows = linesFor(kind, expiry).map((k) => {
+      const atm = TEST && k === testLine;
+      return {
+        pick: `line:${k}`,
+        on: k === t.line,
+        label: atm ? "At today’s price" : usd0(k),
+        note: atm ? usd0(k) : `${Math.abs((k / spotUsd() - 1) * 100).toFixed(1)}% ${k > spotUsd() ? "above" : "below"} today`,
+        pay: estimate(kind, k, expiry, t.size),
+      };
+    });
   }
   const list = el("div", "opts");
   for (const row of rows) {
@@ -673,10 +691,7 @@ function renderPop(focus = false) {
     btn.type = "button";
     btn.dataset.pick = row.pick;
     btn.append(el("b", "", row.label), el("span", "", row.note));
-    // A Friday that pays the fee or less stays blocked. The 10-minute date does not.
-    const allowed = state.open === "date" && !row.pick.startsWith("tenor:")
-      ? clears(row.pay)
-      : takes(row.pay) || (TEST && row.pick.startsWith("tenor:") && row.pay != null);
+    const allowed = clears(row.pay);
     if (allowed) {
       btn.setAttribute("aria-pressed", String(row.on));
     } else {
@@ -786,7 +801,8 @@ function renderFoot() {
   const firm = $("firm");
   let label = "Lock and get paid";
   let off = false;
-  let note = state.walletNote;
+  let sentence = state.walletFault?.sentence || "";
+  let detail = state.walletFault?.detail || "";
   firm.replaceChildren();
   $("agree").checked = state.agree;
   if (!state.address) {
@@ -796,24 +812,31 @@ function renderFoot() {
   } else if (state.quoting) {
     label = "Getting your offer…";
     off = true;
+    sentence = "";
+    detail = "";
   } else if (quote && !takes(quote.sats)) {
     off = true;
     firm.append(el("span", "", `${int(quote.sats)} sats`));
-    note = `The desk offers ${int(quote.sats)} sats, which doesn’t cover the 1,000-sat price-check fee. Pick a closer line, a later date or more BTC.`;
+    sentence = "This doesn’t pay more than the 1,000-sat price-check fee. Pick a closer line, a later date or more BTC.";
+    detail = `${quote.sats} sats`;
   } else if (quote && left > 0) {
     const ring = el("span", "ring", `Offer holds ${mmss(left)}`);
     ring.style.setProperty("--left", String(Math.min(100, (left / QUOTE_TTL_S) * 100)));
     firm.append(el("span", "", `₿${fmtBtc(quote.sats)}`), ring);
+    sentence = "";
+    detail = "";
   } else if (quote) {
     label = "Refresh offer";
     firm.append(el("span", "ring", "Offer expired"));
+    sentence = "Refresh the offer.";
+    detail = "offer expired";
   } else if (state.quoteNote) {
     label = "Try again";
-    note = humanNote(state.quoteNote);
+    [sentence, detail] = quoteFault(state.quoteNote);
   }
   $("confirm").textContent = label;
   $("confirm").disabled = off;
-  $("checkout-status").textContent = note;
+  renderStatus($("checkout-status"), sentence, detail);
 }
 
 function pageHash(view) {
@@ -1056,18 +1079,17 @@ function canSettle(position) {
   return true;
 }
 
-function settleNote(outcome) {
-  if (outcome.result === "unfixed") return "The price check isn’t published yet. Try again in a minute.";
-  if (outcome.result === "mismatch") return "This position reads a different price feed.";
-  if (outcome.result === "waiting" && outcome.reason === "early") return "Wait until the date.";
-  if (outcome.result === "waiting" && outcome.reason === "beacon") return "The price feed isn’t ready yet.";
-  if (outcome.result === "waiting") return "Your vault isn’t ready yet.";
-  return "Couldn’t pay out. Try again.";
+function settleFault(outcome) {
+  const detail = outcome.reason ? `${outcome.result} ${outcome.reason}` : outcome.result;
+  if (outcome.result === "unfixed") return ["The price check isn’t published yet. Try again in a moment.", detail];
+  if (outcome.result === "mismatch") return ["This position reads a different price feed. Try again in a moment.", detail];
+  if (outcome.result === "waiting" && outcome.reason === "early") return ["Wait until the date.", detail];
+  if (outcome.result === "waiting") return ["Try again in a moment.", detail];
+  return ["Couldn’t pay out. Try again in a moment.", detail];
 }
 
 async function settlePosition(position, button) {
   button.disabled = true;
-  const previous = button.textContent;
   button.textContent = "Paying out";
   try {
     const outcome = await settleFromPage({
@@ -1076,7 +1098,9 @@ async function settlePosition(position, button) {
     });
     if (outcome.result !== "settled") {
       button.disabled = false;
-      button.textContent = settleNote(outcome);
+      button.textContent = "Try again";
+      const [sentence, detail] = settleFault(outcome);
+      renderStatus($("status"), sentence, detail);
       return;
     }
     position.status = "settled";
@@ -1088,7 +1112,8 @@ async function settlePosition(position, button) {
     renderBlotter();
   } catch (err) {
     button.disabled = false;
-    button.textContent = err instanceof Error ? err.message : previous;
+    button.textContent = "Try again";
+    renderStatus($("status"), "Couldn’t pay out. Try again in a moment.", err instanceof Error ? err.message : "settle failed");
   }
 }
 
@@ -1285,7 +1310,7 @@ function openCheckout() {
   state.open = "";
   state.checkout = true;
   state.agree = false;
-  state.walletNote = "";
+  state.walletFault = null;
   dropQuote();
   renderSell();
   $("checkout-change").focus();
@@ -1295,7 +1320,7 @@ function closeCheckout() {
   if (!state.checkout) return;
   state.checkout = false;
   state.agree = false;
-  state.walletNote = "";
+  state.walletFault = null;
   dropQuote();
   renderCheckout();
   if (state.view === "sell") $("see").focus();
@@ -1531,16 +1556,38 @@ function openWalletPopup(url) {
   return true;
 }
 
-/** A connect error shows in the drawer while it is open. */
-function walletError(position, text) {
-  if (position) {
-    $("status").textContent = text;
-  } else if (state.checkout) {
-    state.walletNote = text;
-    renderFoot();
-  } else {
-    $("account-error").textContent = text;
+function walletDetail(handoff) {
+  const parts = [];
+  if (handoff.status) parts.push(`status ${handoff.status}`);
+  if (handoff.error) parts.push(handoff.error);
+  return parts.join(" · ");
+}
+
+function walletSentence(kind, detail) {
+  if (/popup|block/i.test(detail)) return "Allow the popup, then try again.";
+  if (kind === "send-error") return "Your wallet didn’t send the BTC. Try again in a moment.";
+  return "Your wallet didn’t connect. Try again in a moment.";
+}
+
+/** A connect or send error shows in the drawer, on the position, or on the connect card. */
+function walletError(position, sentence, detail = "") {
+  if (!sentence) {
+    state.walletFault = null;
+    renderStatus(position ? $("status") : state.checkout ? $("checkout-status") : $("account-error"), "", "");
+    if (!position && state.checkout) renderFoot();
+    return;
   }
+  const fault = { sentence, detail: clipDetail(detail) };
+  if (position) {
+    renderStatus($("status"), fault.sentence, fault.detail);
+    return;
+  }
+  if (state.checkout) {
+    state.walletFault = fault;
+    renderFoot();
+    return;
+  }
+  renderStatus($("account-error"), fault.sentence, fault.detail);
 }
 
 function openWallet(position) {
@@ -1549,20 +1596,21 @@ function openWallet(position) {
   const params = position ? { flow: "send", position: position.id } : { flow: "connect" };
   const back = pageCallback(location.href, params);
   if (!callbackAllowed(back)) {
-    walletError(position, "The wallet only returns to https, or to localhost.");
+    walletError(position, "The wallet only returns to https, or to localhost.", "callback");
     return;
   }
   const action = position ? "send" : "connect";
   const payment = request || undefined;
   const popupUrl = walletAppUrl(WALLET_URL, action, pageCallback(location.href, { ...params, popup: "1" }), payment);
-  const pageUrl = walletAppUrl(WALLET_URL, action, back, payment);
   if (!askWallet(position ? position.id : "connect")) {
-    walletError(position, "This browser is not keeping the wallet return.");
+    walletError(position, "This browser is not keeping the wallet return. Try again in a moment.", "sessionStorage");
     return;
   }
   // The wallet redirects the window it was opened in. Keep this page, and let
-  // that window post the return. A blocked popup still does the round trip.
-  if (!openWalletPopup(popupUrl)) location.assign(pageUrl);
+  // that window post the return. A blocked popup stays here so the tester can allow it.
+  if (!openWalletPopup(popupUrl)) {
+    walletError(position, "Allow the popup, then try again.", "popup blocked");
+  }
 }
 
 function applyWalletHandoff(handoff, pending) {
@@ -1576,7 +1624,14 @@ function applyWalletHandoff(handoff, pending) {
     return;
   }
   if (handoff.kind === "connect-error" && pending === "connect") {
-    walletError(null, "Your wallet didn’t connect. Try again, or open Arkade Wallet yourself.");
+    const detail = walletDetail(handoff);
+    walletError(null, walletSentence("connect-error", detail), detail || "connect error");
+    return;
+  }
+  if (handoff.kind === "send-error" && handoff.positionId === pending) {
+    const detail = walletDetail(handoff);
+    const position = state.positions.find((item) => item.id === pending) ?? null;
+    walletError(position, walletSentence("send-error", detail), detail || "send error");
     return;
   }
   if (handoff.kind !== "sent" || handoff.positionId !== pending || !handoff.txid) return;
@@ -1803,15 +1858,6 @@ async function loadPrices() {
   if (state.view === "home") renderBlotter();
 }
 
-function loadArtifact() {
-  const node = $("artifact");
-  try {
-    node.textContent = artifactLine();
-  } catch (err) {
-    node.textContent = err instanceof Error ? err.message : "The option programs did not load.";
-  }
-}
-
 function showFromHash(mode = "quiet") {
   const route = routeFromHash();
   if (route.view === "connect" && state.address) {
@@ -1833,7 +1879,6 @@ if (!consumeWalletHandoff()) {
   showFromHash("replace");
   window.addEventListener("hashchange", () => showFromHash());
   void loadPrices();
-  loadArtifact();
   if (promotedSettled) persist();
   void fillKept();
   startWatch();

@@ -53,3 +53,17 @@ export function payablePremium(sats: bigint): bigint {
   if (sats <= DUST_SATS) return DUST_SATS + 1n;
   return sats;
 }
+
+/** A quote this close is the 10-minute test tenor. A listed Friday is more than an hour out. */
+const TEST_QUOTE_S = 15 * 60;
+
+/**
+ * Premium the page and the desk both quote. A 10-minute test expiry is scaled
+ * by 10,000 so it clears the 1,000-sat read fee. Friday quotes are unchanged.
+ */
+export function quotedPremium(sats: bigint, expiry: number, now: number): bigint {
+  const pay = payablePremium(sats);
+  const life = expiry - now;
+  if (life > 0 && life <= TEST_QUOTE_S) return pay * 10_000n;
+  return pay;
+}

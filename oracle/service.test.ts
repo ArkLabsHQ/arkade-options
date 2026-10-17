@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -338,5 +338,44 @@ test("recover finalizes pending and can adopt an issued unit", async () => {
     assert.equal(status.json.assetId, issuedId);
   } finally {
     await ctx.close();
+  }
+});
+
+test("the sampler stores a price without the admin route", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "oracle-sample-"));
+  const issueTxid = "ee".repeat(32);
+  const assetId = asset.AssetId.create(issueTxid, 0).toString();
+  await writeFile(path.join(dir, "oracle.json"), JSON.stringify({
+    assetId,
+    issueTxid,
+    deployTxid: null,
+    samples: [],
+    fixings: [],
+  }));
+  const emulatorKey = await SingleKey.fromHex(hex.encode(secret(2))).compressedPublicKey();
+  const oracle = await createOracle({
+    dataDir: dir,
+    oracleKey: secret(9),
+    emulatorKey,
+    quote: async () => 8_275_570n,
+    sampleEveryMs: 60_000,
+    now: () => 1_791_822_000,
+  });
+  try {
+    assert.equal((await call(oracle.url, "/api/samples", { price: "1" })).status, 404);
+    let samples = 0;
+    let latest: { price?: string; time?: number } | null = null;
+    for (let i = 0; i < 40 && samples < 1; i++) {
+      const status = await call(oracle.url, "/api/status");
+      samples = Number(status.json.samples);
+      latest = status.json.latest as { price?: string; time?: number } | null;
+      if (samples < 1) await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    assert.equal(samples, 1);
+    assert.equal(latest?.price, "8275570");
+    assert.equal(latest?.time, 1_791_822_000);
+  } finally {
+    await oracle.close();
+    await rm(dir, { recursive: true, force: true });
   }
 });

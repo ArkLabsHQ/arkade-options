@@ -12,7 +12,8 @@ export const WALLET_HANDOFF_TYPE = "arkade-wallet-handoff";
 export type WalletHandoff =
   | { kind: "none" }
   | { kind: "connect"; address: string; pubkey: string }
-  | { kind: "connect-error" }
+  | { kind: "connect-error"; error?: string; status?: string }
+  | { kind: "send-error"; positionId: string; error?: string; status?: string }
   | { kind: "sent"; positionId: string; txid?: string };
 
 /** https, or http on localhost. No username or password. */
@@ -82,11 +83,21 @@ function hasWalletOutcome(search: string): boolean {
   });
 }
 
+function walletDetail(error?: string, status?: string): { error?: string; status?: string } {
+  return {
+    ...(error ? { error } : {}),
+    ...(status ? { status } : {}),
+  };
+}
+
 function messageHandoff(handoff: WalletHandoff): WalletHandoff {
   if (handoff.kind === "connect") {
     return { kind: "connect", address: handoff.address, pubkey: handoff.pubkey };
   }
-  if (handoff.kind === "connect-error") return { kind: "connect-error" };
+  if (handoff.kind === "connect-error") return { kind: "connect-error", ...walletDetail(handoff.error, handoff.status) };
+  if (handoff.kind === "send-error") {
+    return { kind: "send-error", positionId: handoff.positionId, ...walletDetail(handoff.error, handoff.status) };
+  }
   if (handoff.kind === "sent") {
     return handoff.txid
       ? { kind: "sent", positionId: handoff.positionId, txid: handoff.txid }
@@ -118,7 +129,16 @@ export function readWalletHandoffMessage(data: unknown): WalletHandoff | null {
   if (record.type !== WALLET_HANDOFF_TYPE || !record.handoff || typeof record.handoff !== "object") return null;
   const handoff = record.handoff as Record<string, unknown>;
   if (handoff.kind === "none") return { kind: "none" };
-  if (handoff.kind === "connect-error") return { kind: "connect-error" };
+  if (handoff.kind === "connect-error" || handoff.kind === "send-error") {
+    const error = typeof handoff.error === "string" ? clipLine(handoff.error) : "";
+    const status = typeof handoff.status === "string" ? clipLine(handoff.status) : "";
+    const detail = walletDetail(error, status);
+    if (handoff.kind === "send-error") {
+      if (typeof handoff.positionId !== "string" || !handoff.positionId.trim()) return null;
+      return { kind: "send-error", positionId: handoff.positionId.trim(), ...detail };
+    }
+    return { kind: "connect-error", ...detail };
+  }
   if (handoff.kind === "connect") {
     const address = typeof handoff.address === "string" ? handoff.address.trim() : "";
     const pubkey = hex64(typeof handoff.pubkey === "string" ? handoff.pubkey : null);
@@ -136,13 +156,28 @@ export function readWalletHandoffMessage(data: unknown): WalletHandoff | null {
   return null;
 }
 
+function clipLine(value: string): string {
+  return value.split("\n").map((line) => line.trim()).find(Boolean)?.slice(0, 180) ?? "";
+}
+
 /** An error wins, so a denial does not keep a prefilled address. */
 export function readWalletHandoff(search: string): WalletHandoff {
   const params = new URLSearchParams(search);
   const flow = params.get("flow");
   const positionId = params.get("position")?.trim() ?? "";
-  if (params.get("error")) return flow === "connect" ? { kind: "connect-error" } : { kind: "none" };
-  if (flow === "send" && params.get("status") === "sent") {
+  const error = clipLine(params.get("error") ?? "");
+  const status = clipLine(params.get("status") ?? "");
+  if (error) {
+    const detail = walletDetail(error, status && status !== "sent" ? status : "");
+    if (flow === "connect") return { kind: "connect-error", ...detail };
+    if (flow === "send") return { kind: "send-error", positionId, ...detail };
+    return { kind: "none" };
+  }
+  if (status && status !== "sent") {
+    if (flow === "connect") return { kind: "connect-error", status };
+    if (flow === "send") return { kind: "send-error", positionId, status };
+  }
+  if (flow === "send" && status === "sent") {
     return { kind: "sent", positionId, txid: hex64(params.get("txid")) };
   }
   if (flow === "connect") {
