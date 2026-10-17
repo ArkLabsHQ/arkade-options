@@ -83,8 +83,15 @@ export type OracleDeps = {
   quote?: () => Promise<bigint | null>;
   /** How often to sample. Unset means the process only records prices it is given. */
   sampleEveryMs?: number;
+  /** Expiries announced on nostr. The minute pass publishes these, not clock keys. */
+  announcedExpiries?: () => Iterable<number>;
   now?: () => number;
 };
+
+/** Announced expiries whose close minute has passed and that are not published yet. */
+export function dueExpiries(expiries: Iterable<number>, now: number, done: ReadonlySet<number>, lag = 60): number[] {
+  return [...new Set(expiries)].filter((expiry) => !done.has(expiry) && now >= expiry + lag).sort((a, b) => a - b);
+}
 
 function authorized(header: string | undefined, token: string): boolean {
   const presented = header?.startsWith("Bearer ") ? header.slice("Bearer ".length) : "";
@@ -486,6 +493,29 @@ export async function createOracle(deps: OracleDeps) {
   });
   const address = server.address();
   const port = typeof address === "object" && address ? address.port : 0;
+  const publishedExpiries = new Set<number>();
+
+  /** Publish each announced expiry once. No sample skips it. Already a fixing is done. */
+  async function publishAnnounced() {
+    if (!deps.announcedExpiries || !store.assetId || !store.deployTxid) return;
+    const clock = now();
+    for (const expiry of dueExpiries(deps.announcedExpiries(), clock, publishedExpiries, Number(KEY_LAG))) {
+      if (!chooseSample(expiry)) continue;
+      try {
+        await publish({ expiry });
+        publishedExpiries.add(expiry);
+      } catch (err) {
+        const message = err instanceof HttpError ? err.message : "";
+        if (err instanceof HttpError && err.status === 409 && message === "already a fixing") {
+          publishedExpiries.add(expiry);
+          continue;
+        }
+        if (message === "no sample") continue;
+        console.error(`oracle publish ${expiry} ${message || "publish failed"}`);
+      }
+    }
+  }
+
   async function takeSample() {
     if (!deps.quote || !store.assetId) return;
     const price = await deps.quote();
@@ -493,16 +523,20 @@ export async function createOracle(deps: OracleDeps) {
     await recordSample(price, now());
   }
 
-  const sample = () => {
+  const minute = () => {
     void takeSample().catch((err) => {
       console.error("oracle sample", err instanceof Error ? err.message : "sample failed");
     });
+    void publishAnnounced().catch((err) => {
+      console.error("oracle publish", err instanceof Error ? err.message : "publish failed");
+    });
   };
-  const timer = deps.sampleEveryMs && deps.sampleEveryMs > 0 ? setInterval(sample, deps.sampleEveryMs) : undefined;
-  if (timer) sample();
+  const timer = deps.sampleEveryMs && deps.sampleEveryMs > 0 ? setInterval(minute, deps.sampleEveryMs) : undefined;
+  if (timer) minute();
   return {
     port,
     url: `http://127.0.0.1:${port}`,
+    publishAnnounced,
     close: () => new Promise<void>((resolve, reject) => {
       if (timer) clearInterval(timer);
       server.close((err) => (err ? reject(err) : resolve()));
