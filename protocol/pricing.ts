@@ -1,4 +1,4 @@
-import { DUST_SATS } from "./constants.ts";
+import { BEACON_READ_FEE, DUST_SATS } from "./constants.ts";
 
 /** Black-Scholes, r = 0. A covered call is a vanilla call. A limited put is the put spread K against K/2. */
 
@@ -58,12 +58,13 @@ export function payablePremium(sats: bigint): bigint {
 const TEST_QUOTE_S = 15 * 60;
 
 /**
- * Premium the page and the desk both quote. A 10-minute test expiry is scaled
- * by 10,000 so it clears the 1,000-sat read fee. Friday quotes are unchanged.
+ * Premium the page and the desk both quote. A 10-minute quote at or below the
+ * 1,000-sat read fee is lifted to 1,001, which is still less than a 0.002 BTC
+ * lock. Friday quotes are unchanged.
  */
 export function quotedPremium(sats: bigint, expiry: number, now: number): bigint {
   const pay = payablePremium(sats);
   const life = expiry - now;
-  if (life > 0 && life <= TEST_QUOTE_S) return pay * 10_000n;
+  if (life > 0 && life <= TEST_QUOTE_S && pay <= BEACON_READ_FEE) return BEACON_READ_FEE + 1n;
   return pay;
 }

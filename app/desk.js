@@ -38,7 +38,7 @@ const REFRESH_MS = 18_000;
 const WALLET_ASK = "arkade-options-wallet";
 // `?test` adds 0.0098 BTC, which a 1,000,000-sat test wallet can lock. The 10-minute
 // date and the line at today's price are on the normal quote. The line is set once,
-// so a price refresh does not move it. Only that date is scaled in quotedPremium.
+// so a price refresh does not move it. Only that date is lifted above the read fee.
 const TEST = new URLSearchParams(location.search).has("test");
 const SIZES = [200_000n, 500_000n, ...(TEST ? [980_000n] : []), 1_000_000n, 2_000_000n];
 let testLine = 0;
@@ -400,9 +400,10 @@ function quoteFault(note) {
   if (note.includes("below dust")) {
     return ["This doesn’t pay more than the 1,000-sat price-check fee. Pick a closer line, a later date or more BTC.", detail];
   }
-  if (note.includes("refused: collateral") || note.includes("refused: premium")) {
-    return ["Try a smaller amount.", detail];
+  if (note.includes("refused: premium")) {
+    return ["The payment is at least as large as the BTC you lock, so the desk will not take it.", detail];
   }
+  if (note.includes("refused: collateral")) return ["Try a smaller amount.", detail];
   if (note.includes("exposure")) {
     return [`The desk has taken all it can at ${usd0(asked.line)} for ${whenDay(asked.expiry)}. Try another line or date.`, detail];
   }
