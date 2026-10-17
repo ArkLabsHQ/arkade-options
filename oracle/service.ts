@@ -486,18 +486,20 @@ export async function createOracle(deps: OracleDeps) {
   });
   const address = server.address();
   const port = typeof address === "object" && address ? address.port : 0;
-  const timer = deps.sampleEveryMs && deps.sampleEveryMs > 0
-    ? setInterval(() => {
-        void (async () => {
-          if (!deps.quote || !store.assetId) return;
-          const price = await deps.quote();
-          if (price == null) return;
-          await recordSample(price, now());
-        })().catch((err) => {
-          console.error("oracle sample", err instanceof Error ? err.message : err);
-        });
-      }, deps.sampleEveryMs)
-    : undefined;
+  async function takeSample() {
+    if (!deps.quote || !store.assetId) return;
+    const price = await deps.quote();
+    if (price == null) return;
+    await recordSample(price, now());
+  }
+
+  const sample = () => {
+    void takeSample().catch((err) => {
+      console.error("oracle sample", err instanceof Error ? err.message : "sample failed");
+    });
+  };
+  const timer = deps.sampleEveryMs && deps.sampleEveryMs > 0 ? setInterval(sample, deps.sampleEveryMs) : undefined;
+  if (timer) sample();
   return {
     port,
     url: `http://127.0.0.1:${port}`,

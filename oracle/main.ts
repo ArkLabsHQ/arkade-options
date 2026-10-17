@@ -21,8 +21,8 @@ import { createOracle, type OracleWallet } from "./service.ts";
  *                   Defaults to ORACLE_KEY, so a test deploy can use one key.
  *   ORACLE_THRESHOLD how many of those keys must sign. Default 1.
  *   ORACLE_ADMIN    optional bearer. Unset disables /api/samples, /api/issue, /api/deploy, /api/recover, and /api/publish.
- *   SAMPLE_MS       how often to store a BTCUSD sample. Default 60000. 0 disables the sampler.
- *                   Samples older than 24 hours are dropped.
+ *   SAMPLE_MS       how often to store a BTCUSD sample. Default 60000.
+ *                   0 uses that same minute. Samples older than 24 hours are dropped.
  *   ARK_URL        default https://mutinynet.arkade.sh
  *   EMULATOR_URL   default Mutinynet emulator
  *   DATA_DIR       oracle.json + arkade.sqlite. Default ./data
@@ -56,6 +56,7 @@ const arkUrl = process.env.ARK_URL?.trim() || ARK_URL;
 const emulatorUrl = process.env.EMULATOR_URL?.trim() || EMULATOR_URL;
 if (!Number.isInteger(port) || port < 0) throw new Error("PORT");
 if (!Number.isInteger(sampleEveryMs) || sampleEveryMs < 0) throw new Error("SAMPLE_MS");
+const sampleInterval = sampleEveryMs > 0 ? sampleEveryMs : 60_000;
 if (typeof EventSource === "undefined") {
   throw new Error("Contract events need Node's EventSource. Start the oracle with --experimental-eventsource.");
 }
@@ -105,7 +106,7 @@ const oracle = await createOracle({
   indexer: wallet?.indexerProvider,
   emulator: new RestEmulatorProvider(emulatorUrl),
   quote: () => btcUsdCents(AbortSignal.timeout(10_000)),
-  sampleEveryMs: sampleEveryMs || undefined,
+  sampleEveryMs: sampleInterval,
 });
 
 console.log(`oracle http://127.0.0.1:${oracle.port}/`);

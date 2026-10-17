@@ -18,7 +18,7 @@ openssl rand -hex 16   # ORACLE_ADMIN
 - Do not write a second settler. The process is [settle/main.ts](../settle/main.ts), image [settle/Dockerfile](../settle/Dockerfile).
 - Do not change `EXIT`, `DUST_SATS`, or `BEACON_READ_FEE` in [protocol/constants.ts](../protocol/constants.ts). There is no env var for them. Dust stays `330` sats. The read fee stays `1000` sats so the number is easy to account. Do not zero either one. The zeros in [.env.regtest](../.env.regtest) are arkade-regtest intent fees for the smoke stack only. They are not service settings, and this deploy does not copy them onto Mutinynet.
 - Mutinynet only. Do not point `ARK_URL` at the regtest ports from the smoke test, or at any other network.
-- No Deribit feed. Set `SAMPLE_MS=0` on the new Oracle service. The default `60000` would store a Deribit sample every minute ([oracle/price.ts](../oracle/price.ts)).
+- Leave `SAMPLE_MS` unset. The oracle stores a Deribit BTC index sample about once a minute ([oracle/price.ts](../oracle/price.ts)), which is what publish needs inside an expiry window. `0` uses that same minute.
 - Do not change the wallet target. The page already uses `https://mutinynet.arkade.money` ([app/src/fund.ts](../app/src/fund.ts), [app/index.html](../app/index.html)).
 
 ## Exit delay
@@ -47,7 +47,7 @@ From [oracle/main.ts](../oracle/main.ts) and [oracle/Dockerfile](../oracle/Docke
 | `ORACLE_ADMIN` | New bearer for `/api/issue`, `/api/deploy`, `/api/recover`, `/api/samples`, and `/api/publish`. Unset disables those routes. |
 | `ARK_URL` | `https://mutinynet.arkade.sh` (the code default). |
 | `EMULATOR_URL` | `https://emulator.mutinynet.arkade.sh` (the code default). |
-| `SAMPLE_MS` | `0`. Required. Turns the Deribit sampler off. |
+| `SAMPLE_MS` | Leave unset. Stores a Deribit index sample about once a minute. `0` uses that same minute. |
 | `DATA_DIR` | Leave the image value `/data`. |
 | `PORT` | Leave `8789`. |
 | `ORACLE_SIGNERS`, `ORACLE_THRESHOLD` | Leave unset. One `ORACLE_KEY` is the signer, threshold 1. |
@@ -148,13 +148,13 @@ Start the Settler after the Oracle origin and `ORACLE_ADMIN` are set. It can boo
 
 ## Fund the desk
 
-`GET /` returns `address` and `balance`. Send Mutinynet sats to `address`. That float pays premiums. Collateral does not come from it. `balance` stays `0` until the coins are indexed. The desk refuses a quote it cannot pay and logs `float short`. A formula premium at or below 330 sats is quoted at 331 (`payablePremium` in [protocol/pricing.ts](../protocol/pricing.ts)). Chain dust stays 330, and `premiumRefusal` in [protocol/messages.ts](../protocol/messages.ts) still rejects a premium that was not lifted. There is no other desk funding amount in the repo.
+`GET /` returns `address` and `balance`. Send Mutinynet sats to `address`. That float pays premiums. Collateral does not come from it. `balance` stays `0` until the coins are indexed. The desk refuses a quote it cannot pay and logs `float short`. A formula premium at or below 330 sats is quoted at 331 (`payablePremium` in [protocol/pricing.ts](../protocol/pricing.ts)). A 10-minute test expiry is then multiplied by 10,000 (`quotedPremium`). Friday quotes are not. Chain dust stays 330, and `premiumRefusal` in [protocol/messages.ts](../protocol/messages.ts) still rejects a premium that was not lifted. There is no other desk funding amount in the repo.
 
 `GET /` also returns `pubkey`. Put that pubkey in the Mutinynet entry of [app/rfq-config.js](../app/rfq-config.js) and push `master` so the public page asks this desk. Leave the wallet URL alone. Automatic settlement does not read [app/src/beacon-status.ts](../app/src/beacon-status.ts). Leave that file unless you also want the page's own Settle button to spend this beacon.
 
 ## Price screen
 
-The Oracle dashboard (`GET /`) previews a settlement and, separately, publishes the price. No Deribit sample is involved while `SAMPLE_MS=0`.
+The Oracle dashboard (`GET /`) previews a settlement and, separately, publishes the price. The process also stores a Deribit index sample about once a minute, on its own clock, without the admin route.
 
 Type the kind (covered call or limited put), the price in USD cents, the strike in USD cents, and the collateral in sats. The line under the fields is the holder and writer amounts. The math is the vault's: `holderPayoff`, then the 1000-sat read fee, then the dust fold ([oracle/preview.ts](../oracle/preview.ts), [app/settle-math.js](../app/settle-math.js), [contracts/option_vault.ark](../contracts/option_vault.ark)). A filled vault locks the collateral, so the preview treats the locked coin as that collateral. Typing does not call `/api/samples` or `/api/publish`.
 

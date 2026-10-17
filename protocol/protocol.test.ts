@@ -10,7 +10,7 @@ import { bytesToHex, hexToBytes, xOnly } from "./hex.ts";
 import { PAIR, POSITION_KIND } from "./constants.ts";
 import { parsePosition, parseWire, premiumRefusal, requestRefusal, type OptionPosition, type RfqRequest } from "./messages.ts";
 import { nostrPubkey, openSealed, positionEvent, quoteRelay, readPosition, seal } from "./nostr.ts";
-import { payablePremium, premiumSats } from "./pricing.ts";
+import { payablePremium, premiumSats, quotedPremium } from "./pricing.ts";
 
 const key = (n: number) => SingleKey.fromHex(n.toString(16).padStart(64, "0"));
 
@@ -106,6 +106,11 @@ test("a premium at or below 330 sats is a refusal", () => {
   assert.equal(payablePremium(330n), 331n);
   assert.equal(payablePremium(331n), 331n);
   assert.equal(payablePremium(1_158n), 1_158n);
+  const now = 1_700_000_000;
+  assert.equal(quotedPremium(0n, now + 600, now), 3_310_000n);
+  assert.equal(quotedPremium(2_000n, now + 600, now), 20_000_000n);
+  assert.equal(quotedPremium(2_000n, now + 7 * 86_400, now), 2_000n);
+  assert.equal(quotedPremium(100n, now + 7 * 86_400, now), 331n);
   assert.equal(premiumRefusal(10_000n, 10_000n), "premium");
   assert.equal(premiumRefusal(9_999n, 10_000n), "");
   const priced = premiumSats({

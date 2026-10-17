@@ -42,6 +42,16 @@ test("a wallet link encodes the callback, and a denial drops the address", () =>
   });
   assert.deepEqual(readWalletHandoff(`?flow=connect&error=denied&address=${ADDRESS}&pubkey=${PUBKEY}`), {
     kind: "connect-error",
+    error: "denied",
+  });
+  assert.deepEqual(readWalletHandoff("?flow=connect&error=denied%0Aat%20Object.secret"), {
+    kind: "connect-error",
+    error: "denied",
+  });
+  assert.deepEqual(readWalletHandoff("?flow=send&position=pos-1&status=failed"), {
+    kind: "send-error",
+    positionId: "pos-1",
+    status: "failed",
   });
   assert.deepEqual(readWalletHandoff(`?flow=send&position=pos-1&status=sent&txid=${TXID}`), {
     kind: "sent",
@@ -75,12 +85,16 @@ test("a popup posts the handoff, and a full-page return does not", () => {
     handoff: { ...connect.handoff, request: `bitcoin:?ark=${ADDRESS}` },
   }), connect.handoff);
 
-  const denied = `?flow=connect&popup=1&error=denied&address=${ADDRESS}&pubkey=${PUBKEY}`;
+  const denied = `?flow=connect&popup=1&error=denied&status=cancelled&address=${ADDRESS}&pubkey=${PUBKEY}`;
   assert.deepEqual(popupHandoffMessage(denied, true), {
     type: "arkade-wallet-handoff",
-    handoff: { kind: "connect-error" },
+    handoff: { kind: "connect-error", error: "denied", status: "cancelled" },
   });
-  assert.deepEqual(readWalletHandoffMessage(popupHandoffMessage(denied, true)), { kind: "connect-error" });
+  assert.deepEqual(readWalletHandoffMessage(popupHandoffMessage(denied, true)), {
+    kind: "connect-error",
+    error: "denied",
+    status: "cancelled",
+  });
 
   const sent = `?flow=send&popup=1&position=pos-1&status=sent&txid=${TXID}`;
   assert.deepEqual(walletHandoffMessage(sent), {
@@ -97,9 +111,9 @@ test("a popup posts the handoff, and a full-page return does not", () => {
     handoff: { kind: "sent", positionId: "pos-1", txid: "nope" },
   }), null);
 
-  assert.deepEqual(popupHandoffMessage(`?flow=send&popup=1&position=pos-1&error=denied`, true), {
+  assert.deepEqual(popupHandoffMessage(`?flow=send&popup=1&position=pos-1&error=denied&status=blocked`, true), {
     type: "arkade-wallet-handoff",
-    handoff: { kind: "none" },
+    handoff: { kind: "send-error", positionId: "pos-1", error: "denied", status: "blocked" },
   });
   assert.equal(walletHandoffMessage("?dev=1"), null);
   assert.equal(popupHandoffMessage("?popup=1&dev=1", true), null);

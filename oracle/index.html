@@ -39,7 +39,7 @@
     <p id="publish-error" class="err"></p>
   </section>
   <section>
-    <p class="muted">This records one price and does not publish it. Blank sample time uses the server clock. Leave the sampler off (<code>SAMPLE_MS=0</code>) so nothing else writes a price.</p>
+    <p class="muted">This records one price and does not publish it. Blank sample time uses the server clock. The service also stores a Deribit index sample about once a minute.</p>
     <form id="sample">
       <label>Price, USD cents <input id="price" inputmode="numeric"></label>
       <button type="submit">Record price</button>
