@@ -26,7 +26,7 @@ import { statePacket } from "../protocol/cospend.ts";
 import { bytesToHex, hexToBytes } from "../protocol/hex.ts";
 import { parsePosition } from "../protocol/messages.ts";
 import { serviceOrigin, parseOracleBeacon } from "./oracle.ts";
-import { duePositions, manualPositions, positionFromAnnouncement, termsFor } from "./positions.ts";
+import { duePositions, manualPositions, positionFromAnnouncement, publishOutcome, publishReady, termsFor } from "./positions.ts";
 import { settleQuote, slotPrice, settlePayouts, type ChainCoin } from "./vault.ts";
 
 const CHECKPOINT = "03080040b27520dfcaec558c7e78cf3e38b898ba8a43cfb5727266bae32c5c5b3aeb32c558aa0bac";
@@ -138,6 +138,22 @@ test("due positions are expired vaults this bot has not progressed", () => {
     row("done", EXPIRY - 1),
   ], EXPIRY, new Set(["done"]));
   assert.deepEqual(due.map((item) => item.id), ["older", "later"]);
+  const closed = duePositions([
+    row("open", EXPIRY),
+    row("ready", EXPIRY - 60),
+  ], EXPIRY, new Set(), 60);
+  assert.deepEqual(closed.map((item) => item.id), ["ready"]);
+});
+
+test("a failed publish is not a fixing, and a minute must pass before the same expiry is asked again", () => {
+  assert.equal(publishOutcome(200), "published");
+  assert.equal(publishOutcome(409, "already a fixing"), "fixed");
+  assert.equal(publishOutcome(400, "no sample"), "failed");
+  assert.equal(publishOutcome(400, "before key time"), "failed");
+  assert.equal(publishOutcome(500, "error"), "failed");
+  assert.equal(publishReady(0, 60_000), true);
+  assert.equal(publishReady(1_000, 1_000 + 59_999), false);
+  assert.equal(publishReady(1_000, 1_000 + 60_000), true);
 });
 
 test("a positions file accepts one vault, a list, or a positions object", () => {
@@ -363,6 +379,19 @@ test("a filled vault settles from the beacon state the oracle published", async 
   assert.equal(folded.outputsLength, 4);
   assert.equal(folded.getOutput(1)?.amount, COLLATERAL);
   assert.equal(bytesToHex(folded.getOutput(1)!.script!), bytesToHex(bound.writerPkScript));
+
+  const older = coinTx([{ script: beacon.pkScript, amount: 330n }], [statePacket(genesisState())]);
+  coins.splice(1, 0, {
+    txid: older.id,
+    vout: 0,
+    value: 330,
+    script: bytesToHex(beacon.pkScript),
+    assets: [{ assetId: assetId.toString(), amount: 1n }],
+  });
+  prev.set(older.id, base64.encode(older.toPSBT()));
+  const fromLive = await settleQuote({ ...env, now: EXPIRY });
+  assert.equal(fromLive.result, "settled");
+  coins.splice(1, 1);
 
   const bare = coinTx([{ script: beacon.pkScript, amount: 330n }], [statePacket(genesisState())]);
   coins[1] = { ...coins[1]!, txid: bare.id };

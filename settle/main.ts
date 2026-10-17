@@ -15,7 +15,7 @@ import type { OptionPosition } from "../protocol/messages.ts";
 import { quoteRelay, watchPositions } from "../protocol/nostr.ts";
 import { revision } from "../protocol/sqlite-storage.ts";
 import { fetchOracleStatus, parseOracleBeacon, serviceOrigin } from "./oracle.ts";
-import { duePositions, manualPositions, positionFromAnnouncement, termsFor, type WatchPosition } from "./positions.ts";
+import { duePositions, manualPositions, positionFromAnnouncement, publishOutcome, publishReady, termsFor, type WatchPosition } from "./positions.ts";
 import { Progress } from "./progress.ts";
 import { settleQuote } from "./vault.ts";
 
@@ -74,23 +74,33 @@ function once(key: string, line: string, error = false) {
   else console.log(line);
 }
 
-async function askPublish(expiry: number) {
+const asked = new Map<number, { at: number; result: "published" | "fixed" | "failed" }>();
+
+/** Ask once a minute. "already a fixing" is published. "no sample" and other failures are logged. */
+async function askPublish(expiry: number, nowMs: number): Promise<"published" | "fixed" | "failed"> {
+  const prev = asked.get(expiry);
+  if (prev && !publishReady(prev.at, nowMs)) return prev.result;
   if (!oracleAdmin) {
     once("oracle-admin", "ORACLE_ADMIN unset, so a missing fixing is not published", true);
-    return;
+    asked.set(expiry, { at: nowMs, result: "failed" });
+    return "failed";
   }
-  const res = await fetch(`${oracleUrl}/api/publish`, {
-    method: "POST",
-    headers: { authorization: `Bearer ${oracleAdmin}`, "content-type": "application/json" },
-    body: JSON.stringify({ expiry }),
-    signal: AbortSignal.timeout(20_000),
-  });
-  if (res.ok) {
-    noted.delete(`unfixed:${expiry}`);
-    return;
+  let result: "published" | "fixed" | "failed" = "failed";
+  try {
+    const res = await fetch(`${oracleUrl}/api/publish`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${oracleAdmin}`, "content-type": "application/json" },
+      body: JSON.stringify({ expiry }),
+      signal: AbortSignal.timeout(20_000),
+    });
+    const body = res.ok ? {} : (await res.json().catch(() => ({}))) as { error?: string };
+    result = publishOutcome(res.status, body.error);
+    if (result === "failed") console.error(`publish ${expiry} ${body.error ?? res.status}`);
+  } catch (err) {
+    console.error(`publish ${expiry} ${err instanceof Error ? err.message : err}`);
   }
-  const body = (await res.json().catch(() => ({}))) as { error?: string };
-  once(`publish:${expiry}:${body.error ?? res.status}`, `publish ${expiry} ${body.error ?? res.status}`, true);
+  asked.set(expiry, { at: nowMs, result });
+  return result;
 }
 
 async function loadManual() {
@@ -159,12 +169,17 @@ async function progressDue() {
   }
   noted.delete("oracle-fetch");
 
+  const lag = Number(parsed.beacon.keyLag);
+  const nowMs = Date.now();
   for (const position of due) {
+    if (position.expiry + lag > now) continue;
     const terms = termsFor(position, client.serverKey, client.emulatorKey!, parsed.beacon.readFee);
     if (bindContracts(terms).vaultAddress !== position.vaultAddress) {
       once(`addr:${position.id}`, `skip ${position.rfqId} vault address`, true);
       continue;
     }
+    const published = await askPublish(position.expiry, nowMs);
+    if (published === "failed") continue;
     try {
       const outcome = await settleQuote({
         chain: client.indexer!,
@@ -192,9 +207,8 @@ async function progressDue() {
         continue;
       }
       if (outcome.result === "unfixed") {
-        once(`unfixed:${position.id}`, `waiting ${position.rfqId} no fixing`);
-        await askPublish(position.expiry);
-        return;
+        console.error(`publish ${position.expiry} unfixed`);
+        continue;
       }
       if (outcome.reason === "beacon") {
         once("beacon-coin", "waiting beacon coin");
@@ -203,8 +217,7 @@ async function progressDue() {
       once(`wait:${position.id}:${outcome.reason}`, `waiting ${position.rfqId} ${outcome.reason}`);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      once(`err:${position.id}:${message}`, `settle ${position.rfqId} ${message}`, true);
-      return;
+      console.error(`settle ${position.rfqId} ${position.expiry} ${message}`);
     }
   }
 }

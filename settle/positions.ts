@@ -68,15 +68,34 @@ export function positionFromAnnouncement(body: unknown): WatchPosition | null {
   };
 }
 
-/** Filled vaults at expiry that this bot has not already progressed. Oldest first. */
+/** Filled vaults whose expiry is at least `lag` seconds ago. Oldest first. */
 export function duePositions<T extends { id: string; expiry: number }>(
   rows: readonly T[],
   now: number,
   done: ReadonlySet<string>,
+  lag = 0,
 ): T[] {
   return rows
-    .filter((row) => row.expiry <= now && !done.has(row.id))
+    .filter((row) => row.expiry + lag <= now && !done.has(row.id))
     .sort((a, b) => a.expiry - b.expiry || a.id.localeCompare(b.id));
+}
+
+/** How often a due vault asks the oracle to publish its own expiry. */
+export const PUBLISH_EVERY_MS = 60_000;
+
+/** Publish that expiry again only after a minute. `0` means it has not been asked. */
+export function publishReady(lastAt: number, nowMs: number, every = PUBLISH_EVERY_MS): boolean {
+  return nowMs - lastAt >= every;
+}
+
+/**
+ * `published` is a new fixing. `fixed` is 409 "already a fixing": the expiry
+ * is on the beacon, so settle it. Anything else, including "no sample", failed.
+ */
+export function publishOutcome(status: number, error?: string): "published" | "fixed" | "failed" {
+  if (status >= 200 && status < 300) return "published";
+  if (status === 409 && error === "already a fixing") return "fixed";
+  return "failed";
 }
 
 export function termsFor(position: WatchPosition, serverKey: Uint8Array, emulatorKey: Uint8Array, readFee = 0n): Terms {
