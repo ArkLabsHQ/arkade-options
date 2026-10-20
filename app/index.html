@@ -18,6 +18,7 @@
     <nav class="nav" aria-label="Main">
       <button type="button" data-tab="sell">New</button>
       <button type="button" data-tab="home">Positions<span class="count" id="count" hidden></span></button>
+      <button type="button" data-tab="how">How it works</button>
     </nav>
     <button type="button" class="wallet" id="who" hidden><span class="dot" aria-hidden="true"></span><span class="addr-l" id="who-address"></span><span class="addr-s" id="who-tail"></span></button>
     <button type="button" class="connect" id="top-connect">Connect</button>
@@ -100,6 +101,58 @@
           </section>
         </div>
       </div>
+    </section>
+
+    <section id="how" hidden aria-labelledby="how-title">
+      <div class="opener"><span class="av"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M0 6L6 0H18L24 6V12H18V6H6V12H0ZM6 18V12H18V18ZM6 24H0V18H6ZM24 18V24H18V18Z"/></svg></span><p>Spending the coin is the call.</p></div>
+      <article class="card how-card">
+        <h1 id="how-title">There is no contract account and no storage mapping.</h1>
+        <p>Each option is its own coin. The script on that coin is the rule. Spending the coin is the call.</p>
+
+        <h2>The vault is the position</h2>
+        <p>The vault coin locks the BTC. Anyone can settle it after the expiry, together with the price coin. You and the desk can close it when you both sign. Later, you can exit on your own. The first confirmed spend wins. There is no second call on a dead coin.</p>
+
+        <h2>The beacon is the price</h2>
+        <p>The price is another coin, the beacon. Settlement is one transaction with two inputs: the vault and the beacon. The beacon continues as a new coin. The 1,000-sat read fee goes back onto it, and the rest is split by the script. The price was written onto the beacon earlier. The vault does not check oracle signatures. It reads the beacon coin.</p>
+
+        <figure class="how-tx">
+          <div class="how-col how-in">
+            <p class="how-dir">In</p>
+            <div class="how-coin vault covenant">
+              <div class="who"><svg class="lock" viewBox="0 0 16 16" aria-hidden="true"><path d="M5 7V5a3 3 0 0 1 6 0v2M3 7h10v7H3z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>Vault</div>
+              <strong>Position</strong>
+              <p>Locks the BTC</p>
+            </div>
+            <div class="how-coin beacon covenant">
+              <div class="who"><svg class="lock" viewBox="0 0 16 16" aria-hidden="true"><path d="M5 7V5a3 3 0 0 1 6 0v2M3 7h10v7H3z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>Beacon</div>
+              <strong>Price</strong>
+              <p>Written earlier</p>
+            </div>
+          </div>
+          <div class="how-spine">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 8h12M10 4l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <b>Settle</b>
+            <span>One transaction</span>
+          </div>
+          <div class="how-col how-out">
+            <p class="how-dir">Out</p>
+            <div class="how-coin beacon covenant">
+              <div class="who"><svg class="lock" viewBox="0 0 16 16" aria-hidden="true"><path d="M5 7V5a3 3 0 0 1 6 0v2M3 7h10v7H3z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>Beacon</div>
+              <strong>Continues</strong>
+              <p>Plus the 1,000-sat read fee</p>
+            </div>
+            <div class="how-coin payout">
+              <div class="who">Payout</div>
+              <strong>The rest</strong>
+              <p>Split by the script</p>
+            </div>
+          </div>
+          <figcaption>Vault in, beacon in, beacon out, payout out.</figcaption>
+        </figure>
+
+        <h2>Compared with an EVM call</h2>
+        <p>There is no <code>msg.sender</code> authorization for settle. There is no <code>position[id]</code> in contract storage, and no token balance is updated inside the contract. The next outputs are the new state.</p>
+      </article>
     </section>
   </main>
   <p class="note" id="note"><b>Arkade Options is an educational demo</b> showing that selling BTC options works on Arkade. <span id="spot-line"></span></p>
