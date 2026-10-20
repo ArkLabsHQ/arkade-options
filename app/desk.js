@@ -844,6 +844,7 @@ function renderFoot() {
 function pageHash(view) {
   if (view === "connect") return "#/connect";
   if (view === "home") return state.selected ? `#/positions/${state.selected}` : "#/positions";
+  if (view === "how") return "#/how";
   return state.kind === 1 ? "#/quote/put" : "#/quote/call";
 }
 
@@ -853,6 +854,7 @@ function routeFromHash() {
   if (path.startsWith("/sell/call") || path.startsWith("/quote/call")) return { view: "sell", kind: 0 };
   if (path.startsWith("/positions")) return { view: "home", kind: state.kind, id: path.slice("/positions/".length) || null };
   if (path.startsWith("/connect")) return { view: "connect", kind: state.kind };
+  if (path === "/how" || path.startsWith("/how/")) return { view: "how", kind: state.kind };
   return { view: "sell", kind: state.kind };
 }
 
@@ -861,6 +863,7 @@ function show(view, mode = "push") {
   $("connect").hidden = view !== "connect";
   $("home").hidden = view !== "home";
   $("sell").hidden = view !== "sell";
+  $("how").hidden = view !== "how";
   if (view !== "sell") {
     state.open = "";
     closeCheckout();

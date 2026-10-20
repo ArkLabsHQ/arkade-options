@@ -18,6 +18,7 @@
     <nav class="nav" aria-label="Main">
       <button type="button" data-tab="sell">New</button>
       <button type="button" data-tab="home">Positions<span class="count" id="count" hidden></span></button>
+      <button type="button" data-tab="how">How it works</button>
     </nav>
     <button type="button" class="wallet" id="who" hidden><span class="dot" aria-hidden="true"></span><span class="addr-l" id="who-address"></span><span class="addr-s" id="who-tail"></span></button>
     <button type="button" class="connect" id="top-connect">Connect</button>
@@ -100,6 +101,66 @@
           </section>
         </div>
       </div>
+    </section>
+
+    <section id="how" hidden aria-labelledby="how-title">
+      <div class="opener"><span class="av"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M0 6L6 0H18L24 6V12H18V6H6V12H0ZM6 18V12H18V18ZM6 24H0V18H6ZM24 18V24H18V18Z"/></svg></span><p>You get paid now for agreeing to a limit on the price.</p></div>
+      <article class="card how-card">
+        <h1 id="how-title">Locking BTC against a price move</h1>
+        <p>Bitcoin’s price moves. Locking some of it until a date is useful: you get paid now for agreeing to a limit on that move.</p>
+
+        <div class="how-pair">
+          <section class="how-choice" aria-labelledby="how-call">
+            <h2 id="how-call"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M2.5 16.5l4.5-4.5 3 2.5 6-7"/><path d="M2.5 4.5h15" stroke-dasharray="2.2 2.4"/></svg>Cap gains</h2>
+            <p>You lock BTC until a date. You are paid now. If BTC stays under your line, you get the BTC back. If it goes above, you give up the gains above that line.</p>
+          </section>
+          <section class="how-choice" aria-labelledby="how-put">
+            <h2 id="how-put"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M2.5 3.5l4.5 4.5 3-2.5 6 7"/><path d="M2.5 15.5h15" stroke-dasharray="2.2 2.4"/></svg>Take the loss</h2>
+            <p>You lock BTC until a date. You are paid now. If BTC stays above your line, you get the BTC back. If it falls below, that loss comes out of what you locked.</p>
+          </section>
+        </div>
+
+        <p class="how-names">Cap gains is selling a call. Take the loss is selling a put.</p>
+
+        <h2>Why the put is different here</h2>
+        <p>Settlement pays Bitcoin, not dollars. A cash-secured put sets dollars aside to pay the dollar drop. This only locks BTC, and that BTC is worth fewer dollars as the price falls, so it cannot promise an unlimited dollar loss. The instrument is a limited put: you cover the fall down to half your line. At half the line or lower, the desk keeps what you locked, and you keep only the payment you already received.</p>
+
+        <h2>Three steps</h2>
+        <figure class="how-flow">
+          <div class="how-step">
+            <div class="how-pic" aria-hidden="true">
+              <span class="how-tag you">Your BTC</span>
+              <span class="how-arrow"></span>
+              <span class="how-tag vault">Locked</span>
+            </div>
+            <strong>Collateral in</strong>
+            <p>You send in the BTC you are locking.</p>
+          </div>
+          <div class="how-join" aria-hidden="true"></div>
+          <div class="how-step">
+            <div class="how-pic" aria-hidden="true">
+              <span class="how-tag you">Paid to you</span>
+              <span class="how-plus">+</span>
+              <span class="how-tag vault">Vault</span>
+            </div>
+            <strong>Payout and vault funding</strong>
+            <p>You are paid now, and the locked BTC is funded into the vault until the date.</p>
+          </div>
+          <div class="how-join" aria-hidden="true"></div>
+          <div class="how-step">
+            <div class="how-pic" aria-hidden="true">
+              <span class="how-tag vault">Vault</span>
+              <span class="how-arrow"></span>
+              <span class="how-outs">
+                <span class="how-tag you">You</span>
+                <span class="how-tag desk">The desk</span>
+              </span>
+            </div>
+            <strong>Settlement</strong>
+            <p>On the date, the vault is split by where the price finished.</p>
+          </div>
+        </figure>
+      </article>
     </section>
   </main>
   <p class="note" id="note"><b>Arkade Options is an educational demo</b> showing that selling BTC options works on Arkade. <span id="spot-line"></span></p>
