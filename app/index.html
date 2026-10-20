@@ -104,54 +104,62 @@
     </section>
 
     <section id="how" hidden aria-labelledby="how-title">
-      <div class="opener"><span class="av"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M0 6L6 0H18L24 6V12H18V6H6V12H0ZM6 18V12H18V18ZM6 24H0V18H6ZM24 18V24H18V18Z"/></svg></span><p>Spending the coin is the call.</p></div>
+      <div class="opener"><span class="av"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M0 6L6 0H18L24 6V12H18V6H6V12H0ZM6 18V12H18V18ZM6 24H0V18H6ZM24 18V24H18V18Z"/></svg></span><p>You get paid now for agreeing to a limit on the price.</p></div>
       <article class="card how-card">
-        <h1 id="how-title">There is no contract account and no storage mapping.</h1>
-        <p>Each option is its own coin. The script on that coin is the rule. Spending the coin is the call.</p>
+        <h1 id="how-title">Locking BTC against a price move</h1>
+        <p>Bitcoin’s price moves. Locking some of it until a date is useful: you get paid now for agreeing to a limit on that move.</p>
 
-        <h2>The vault is the position</h2>
-        <p>The vault coin locks the BTC. Anyone can settle it after the expiry, together with the price coin. You and the desk can close it when you both sign. Later, you can exit on your own. The first confirmed spend wins. There is no second call on a dead coin.</p>
+        <div class="how-pair">
+          <section class="how-choice" aria-labelledby="how-call">
+            <h2 id="how-call"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M2.5 16.5l4.5-4.5 3 2.5 6-7"/><path d="M2.5 4.5h15" stroke-dasharray="2.2 2.4"/></svg>Cap gains</h2>
+            <p>You lock BTC until a date. You are paid now. If BTC stays under your line, you get the BTC back. If it goes above, you give up the gains above that line.</p>
+          </section>
+          <section class="how-choice" aria-labelledby="how-put">
+            <h2 id="how-put"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M2.5 3.5l4.5 4.5 3-2.5 6 7"/><path d="M2.5 15.5h15" stroke-dasharray="2.2 2.4"/></svg>Take the loss</h2>
+            <p>You lock BTC until a date. You are paid now. If BTC stays above your line, you get the BTC back. If it falls below, that loss comes out of what you locked.</p>
+          </section>
+        </div>
 
-        <h2>The beacon is the price</h2>
-        <p>The price is another coin, the beacon. Settlement is one transaction with two inputs: the vault and the beacon. The beacon continues as a new coin. The 1,000-sat read fee goes back onto it, and the rest is split by the script. The price was written onto the beacon earlier. The vault does not check oracle signatures. It reads the beacon coin.</p>
+        <p class="how-names">Cap gains is selling a call. Take the loss is selling a put.</p>
 
-        <figure class="how-tx">
-          <div class="how-col how-in">
-            <p class="how-dir">In</p>
-            <div class="how-coin vault covenant">
-              <div class="who"><svg class="lock" viewBox="0 0 16 16" aria-hidden="true"><path d="M5 7V5a3 3 0 0 1 6 0v2M3 7h10v7H3z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>Vault</div>
-              <strong>Position</strong>
-              <p>Locks the BTC</p>
+        <h2>Why the put is different here</h2>
+        <p>Settlement pays Bitcoin, not dollars. A cash-secured put sets dollars aside to pay the dollar drop. This only locks BTC, and that BTC is worth fewer dollars as the price falls, so it cannot promise an unlimited dollar loss. The instrument is a limited put: you cover the fall down to half your line. At half the line or lower, the desk keeps what you locked, and you keep only the payment you already received.</p>
+
+        <h2>Three steps</h2>
+        <figure class="how-flow">
+          <div class="how-step">
+            <div class="how-pic" aria-hidden="true">
+              <span class="how-tag you">Your BTC</span>
+              <span class="how-arrow"></span>
+              <span class="how-tag vault">Locked</span>
             </div>
-            <div class="how-coin beacon covenant">
-              <div class="who"><svg class="lock" viewBox="0 0 16 16" aria-hidden="true"><path d="M5 7V5a3 3 0 0 1 6 0v2M3 7h10v7H3z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>Beacon</div>
-              <strong>Price</strong>
-              <p>Written earlier</p>
-            </div>
+            <strong>Collateral in</strong>
+            <p>You send in the BTC you are locking.</p>
           </div>
-          <div class="how-spine">
-            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 8h12M10 4l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
-            <b>Settle</b>
-            <span>One transaction</span>
-          </div>
-          <div class="how-col how-out">
-            <p class="how-dir">Out</p>
-            <div class="how-coin beacon covenant">
-              <div class="who"><svg class="lock" viewBox="0 0 16 16" aria-hidden="true"><path d="M5 7V5a3 3 0 0 1 6 0v2M3 7h10v7H3z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>Beacon</div>
-              <strong>Continues</strong>
-              <p>Plus the 1,000-sat read fee</p>
+          <div class="how-join" aria-hidden="true"></div>
+          <div class="how-step">
+            <div class="how-pic" aria-hidden="true">
+              <span class="how-tag you">Paid to you</span>
+              <span class="how-plus">+</span>
+              <span class="how-tag vault">Vault</span>
             </div>
-            <div class="how-coin payout">
-              <div class="who">Payout</div>
-              <strong>The rest</strong>
-              <p>Split by the script</p>
-            </div>
+            <strong>Payout and vault funding</strong>
+            <p>You are paid now, and the locked BTC is funded into the vault until the date.</p>
           </div>
-          <figcaption>Vault in, beacon in, beacon out, payout out.</figcaption>
+          <div class="how-join" aria-hidden="true"></div>
+          <div class="how-step">
+            <div class="how-pic" aria-hidden="true">
+              <span class="how-tag vault">Vault</span>
+              <span class="how-arrow"></span>
+              <span class="how-outs">
+                <span class="how-tag you">You</span>
+                <span class="how-tag desk">The desk</span>
+              </span>
+            </div>
+            <strong>Settlement</strong>
+            <p>On the date, the vault is split by where the price finished.</p>
+          </div>
         </figure>
-
-        <h2>Compared with an EVM call</h2>
-        <p>There is no <code>msg.sender</code> authorization for settle. There is no <code>position[id]</code> in contract storage, and no token balance is updated inside the contract. The next outputs are the new state.</p>
       </article>
     </section>
   </main>
