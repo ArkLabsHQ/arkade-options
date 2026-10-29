@@ -122,7 +122,7 @@ export function publishDigest(ctrlTxid: Uint8Array, next: Uint8Array): Uint8Arra
 
 const TICKER = new Uint8Array([0x42, 0x54, 0x43, 0x55, 0x53, 0x44]);
 
-/** Sample the beacon checks: `sha256(ctrlTxid || BTCUSD || key_le64 || price_le64 || time_le64)`. */
+/** Sample the beacon checks: `sha256(ctrlTxid || BTCUSD || expiry_le64 || price_le64 || time_le64)`. The script parameter is `key`. */
 export function sampleDigest(ctrlTxid: Uint8Array, key: bigint, price: bigint, time: bigint): Uint8Array {
   if (ctrlTxid.length !== 32) throw new Error("ctrlTxid must be 32 bytes");
   return sha256(ctrlTxid, TICKER, num2bin(key, 8), num2bin(price, 8), num2bin(time, 8));

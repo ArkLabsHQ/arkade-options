@@ -19,7 +19,7 @@ export function pruneSamples(samples: readonly StoredSample[], now: number): Sto
 export type StoredFixing = {
   expiry: number;
   price: string;
-  /** Sample time signed for this key. The same pair is what a later rewrite may use. */
+  /** Sample time signed for this expiry. The same pair is what a later rewrite may use. */
   time?: number;
   txid: string;
 };

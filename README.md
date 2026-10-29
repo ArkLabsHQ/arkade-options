@@ -48,7 +48,7 @@ Oracle `balance` is spendable sats on the admin wallet. The beacon coin itself i
 
 Fund the desk at its deposit address. Send enough for premiums. The seller's collateral does not come from this float. `balance` stays `0` until the coins arrive. The desk refuses a quote it cannot pay and logs `float short`.
 
-The aggregator holds one to five oracle keys (`ORACLE_SIGNERS`, or just `ORACLE_KEY` when testing with one). Every minute it records a BTCUSD sample and keeps that history for 24 hours. `GET /api/prices?from=<unix>&to=<unix>` returns the samples. A fixing is the sample inside `[expiry, expiry + 60]`. If that minute was missed, the newest sample in the 60 seconds before expiry is only a fallback: `attest` accepts a sample time inside `[key, key + 60]`, so an older print is not published. The oracle signs one fixing per key, `sha256(ctrlTxid || BTCUSD || key || price || time)`, and writes it after `expiry + 60`. Reading the beacon costs 1,000 sats, above the dust line, paid by the vault:
+The aggregator holds one to five oracle keys (`ORACLE_SIGNERS`, or just `ORACLE_KEY` when testing with one). Every minute it records a BTCUSD sample and keeps that history for 24 hours. `GET /api/prices?from=<unix>&to=<unix>` returns the samples. A fixing is the sample inside `[expiry, expiry + 60]`. If that minute was missed, the newest sample in the 60 seconds before expiry is only a fallback: `attest` accepts a sample time inside `[expiry, expiry + 60]`, so an older print is not published. The oracle signs one fixing per expiry, `sha256(ctrlTxid || BTCUSD || expiry || price || time)`, and writes it after `expiry + 60`. Reading the beacon costs 1,000 sats, above the dust line, paid by the vault:
 
 ```bash
 curl -k -X POST -H "Authorization: Bearer $ORACLE_ADMIN" -H "content-type: application/json" \
@@ -91,7 +91,7 @@ Desk logs: one line per UTC hour, `hour N quotes, N filled, N premium paid, N co
 | `domain` | Hex of the ASCII string `BTCUSD-FIX`. It is mixed into the migrate signature. |
 | `keyLag` | Seconds after the expiry before `attest` is allowed. `60` means a fixing waits until the close minute has ended. |
 | `readFee` | Sats added to the beacon on every `read`. The service uses `1000`, above the 330-sat dust line. The vault pays it out of its collateral. |
-| `adminPk` | X-only pubkey of `ORACLE_KEY`. It signs `migrate` and the unilateral exit. It does not sign prices. The oracle signers sign `sha256(ctrlTxid \|\| BTCUSD \|\| key \|\| price \|\| time)`. |
+| `adminPk` | X-only pubkey of `ORACLE_KEY`. It signs `migrate` and the unilateral exit. It does not sign prices. The oracle signers sign `sha256(ctrlTxid \|\| BTCUSD \|\| expiry \|\| price \|\| time)`. |
 | `exit` | Seconds the admin must wait before a unilateral exit of the beacon coin to Bitcoin. `2048` is Mutinynet's `unilateralExitDelay`. |
 
 The status object omits `ctrlGidx` (it is `0`, the `0000` suffix on `assetId`).

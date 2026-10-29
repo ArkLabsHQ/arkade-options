@@ -15,8 +15,8 @@ import { chooseSample as pickSample, loadStore, pruneSamples, saveStore, type St
 
 /**
  * Testnet aggregator. It holds one to five oracle keys and keeps a day of
- * BTCUSD samples. Publish signs one fixing per expiry key and spends the
- * beacon once. The signature names that key, so it cannot fill another slot.
+ * BTCUSD samples. Publish signs one fixing per expiry and spends the
+ * beacon once. The signature names that expiry, so it cannot fill another slot.
  */
 
 const DOMAIN = new TextEncoder().encode("BTCUSD-FIX");
@@ -83,7 +83,7 @@ export type OracleDeps = {
   quote?: () => Promise<bigint | null>;
   /** How often to sample. Unset means the process only records prices it is given. */
   sampleEveryMs?: number;
-  /** Expiries announced on nostr. The minute pass publishes these, not clock keys. */
+  /** Expiries announced on nostr. The minute pass publishes these, not every clock minute. */
   announcedExpiries?: () => Iterable<number>;
   now?: () => number;
 };
@@ -153,8 +153,8 @@ function exact(body: Record<string, unknown>, keys: readonly string[]) {
 
 /**
  * Admin samples take `price` and an optional `time`. Publish signs one only
- * when `key <= time <= key + keyLag`. A missing `time` stays the service clock.
- * A stamp from before the key is stored and is not a fixing for that key.
+ * when `key <= time <= key + keyLag`, where `key` is the expiry. A missing `time` stays the service clock.
+ * A stamp from before the expiry is stored and is not a fixing for that expiry.
  */
 function sampleRequest(body: Record<string, unknown>, clock: number): { price: bigint; time: number } {
   const got = Object.keys(body);
@@ -367,7 +367,7 @@ export async function createOracle(deps: OracleDeps) {
     if (stamp > now()) throw new HttpError(400, "future timestamp");
     keepRecent();
     if (store.samples.some((sample) => sample.time === stamp)) return { ok: true, time: stamp, price: price.toString(), duplicate: true };
-    // The signature needs the slot key, so a sample is not signed until publish.
+    // The signature needs the expiry, so a sample is not signed until publish.
     store.samples.push({ price: price.toString(), time: stamp });
     await save();
     return { ok: true, time: stamp, price: price.toString() };
@@ -378,7 +378,7 @@ export async function createOracle(deps: OracleDeps) {
     return pickSample(store.samples, expiry, Number(KEY_LAG));
   }
 
-  /** The first fixing signed for this key. A later write has to reuse it. */
+  /** The first fixing signed for this expiry. A later write has to reuse it. */
   function signedFixing(expiry: number): { price: bigint; time: bigint } | null {
     const row = store.fixings.find((fixing) => fixing.expiry === expiry && typeof fixing.time === "number");
     if (!row || typeof row.time !== "number") return null;
