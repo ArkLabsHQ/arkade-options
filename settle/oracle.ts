@@ -14,7 +14,7 @@ export type BeaconSpec = {
   signers: Uint8Array[];
   threshold: bigint;
   domain: Uint8Array;
-  keyLag: bigint;
+  expiryLag: bigint;
   readFee: bigint;
   adminPk: Uint8Array;
   exit: bigint;
@@ -112,7 +112,7 @@ export function parseOracleBeacon(body: unknown, beaconTxid?: string, gidx = 0):
   if (!args) return { ok: false, error: "oracle args" };
   const ctrl = typeof args.ctrlTxid === "string" ? args.ctrlTxid.toLowerCase() : "";
   if (ctrl !== bytesToHex(beaconIdOf(parsed).txid)) return { ok: false, error: "ctrl txid" };
-  const keyLag = whole(args.keyLag);
+  const expiryLag = whole(args.expiryLag);
   const readFee = whole(args.readFee);
   const exit = whole(args.exit);
   const declared = whole(args.signersN);
@@ -122,7 +122,7 @@ export function parseOracleBeacon(body: unknown, beaconTxid?: string, gidx = 0):
     ? hexBytes(args.domain, args.domain.length / 2)
     : null;
   const adminPk = hexBytes(args.adminPk, 32);
-  if (keyLag == null || readFee == null || exit == null || !domain || !adminPk) return { ok: false, error: "oracle args" };
+  if (expiryLag == null || readFee == null || exit == null || !domain || !adminPk) return { ok: false, error: "oracle args" };
   if (threshold == null || threshold < 1n || threshold > BigInt(signers.length)) return { ok: false, error: "threshold" };
   return {
     ok: true,
@@ -132,7 +132,7 @@ export function parseOracleBeacon(body: unknown, beaconTxid?: string, gidx = 0):
       signers,
       threshold,
       domain,
-      keyLag,
+      expiryLag,
       readFee,
       adminPk,
       exit,

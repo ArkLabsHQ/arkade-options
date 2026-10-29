@@ -20,7 +20,7 @@ import { chooseSample as pickSample, loadStore, pruneSamples, saveStore, type St
  */
 
 const DOMAIN = new TextEncoder().encode("BTCUSD-FIX");
-const KEY_LAG = 60n;
+const EXPIRY_LAG = 60n;
 const READ_FEE = BEACON_READ_FEE;
 const CSP = "default-src 'none'; script-src 'self'; connect-src 'self'; style-src 'self'; frame-ancestors 'none'";
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -95,7 +95,7 @@ export function dueExpiries(expiries: Iterable<number>, now: number, done: Reado
 
 /** A missing or out-of-window print. The minute pass skips it quietly and tries that expiry again later. */
 export function skippedPublish(message: string): boolean {
-  return message === "no sample" || message === "sample before key" || message === "sample after close";
+  return message === "no sample" || message === "sample before expiry" || message === "sample after close";
 }
 
 function authorized(header: string | undefined, token: string): boolean {
@@ -153,7 +153,7 @@ function exact(body: Record<string, unknown>, keys: readonly string[]) {
 
 /**
  * Admin samples take `price` and an optional `time`. Publish signs one only
- * when `key <= time <= key + keyLag`, where `key` is the expiry. A missing `time` stays the service clock.
+ * when `expiry <= time <= expiry + expiryLag`. A missing `time` stays the service clock.
  * A stamp from before the expiry is stored and is not a fixing for that expiry.
  */
 function sampleRequest(body: Record<string, unknown>, clock: number): { price: bigint; time: number } {
@@ -205,7 +205,7 @@ export async function createOracle(deps: OracleDeps) {
       signers: signerPubkeys,
       threshold: BigInt(threshold),
       domain: DOMAIN,
-      keyLag: KEY_LAG,
+      expiryLag: EXPIRY_LAG,
       readFee: READ_FEE,
       adminPk,
       exit: EXIT,
@@ -239,7 +239,7 @@ export async function createOracle(deps: OracleDeps) {
         signersN: signerPubkeys.length,
         threshold,
         domain: bytesToHex(DOMAIN),
-        keyLag: Number(KEY_LAG),
+        expiryLag: Number(EXPIRY_LAG),
         readFee: Number(READ_FEE),
         adminPk: adminPk ? bytesToHex(adminPk) : null,
         exit: Number(EXIT),
@@ -375,7 +375,7 @@ export async function createOracle(deps: OracleDeps) {
 
   function chooseSample(expiry: number): StoredSample | null {
     keepRecent();
-    return pickSample(store.samples, expiry, Number(KEY_LAG));
+    return pickSample(store.samples, expiry, Number(EXPIRY_LAG));
   }
 
   /** The first fixing signed for this expiry. A later write has to reuse it. */
@@ -385,9 +385,9 @@ export async function createOracle(deps: OracleDeps) {
     return { price: BigInt(row.price), time: BigInt(row.time) };
   }
 
-  async function signFixing(key: bigint, price: bigint, time: bigint): Promise<Uint8Array[]> {
+  async function signFixing(expiry: bigint, price: bigint, time: bigint): Promise<Uint8Array[]> {
     if (!store.assetId) throw new HttpError(409, "not issued");
-    const digest = sampleDigest(beaconIdOf(asset.AssetId.fromString(store.assetId)).txid, key, price, time);
+    const digest = sampleDigest(beaconIdOf(asset.AssetId.fromString(store.assetId)).txid, expiry, price, time);
     const signed: Uint8Array[] = [];
     for (const secret of signerSecrets) {
       signed.push(await SingleKey.fromHex(bytesToHex(secret)).signSchnorrDeterministic(digest));
@@ -420,10 +420,10 @@ export async function createOracle(deps: OracleDeps) {
     publishing = true;
     try {
       const expiry = whole(body.expiry, "expiry");
-      if (expiry <= 1800n) throw new HttpError(400, "key");
+      if (expiry <= 1800n) throw new HttpError(400, "expiry");
       if (!Number.isSafeInteger(Number(expiry))) throw new HttpError(400, "expiry");
       const expiryN = Number(expiry);
-      if (BigInt(now()) < expiry + KEY_LAG) throw new HttpError(400, "before key time");
+      if (BigInt(now()) < expiry + EXPIRY_LAG) throw new HttpError(400, "before expiry time");
       const sample = chooseSample(expiryN);
       const prior = signedFixing(expiryN);
       let price: bigint;
@@ -434,8 +434,8 @@ export async function createOracle(deps: OracleDeps) {
       } else if (!sample) {
         throw new HttpError(400, "no sample");
       } else if (sample.time < expiryN) {
-        throw new HttpError(400, "sample before key");
-      } else if (sample.time > expiryN + Number(KEY_LAG)) {
+        throw new HttpError(400, "sample before expiry");
+      } else if (sample.time > expiryN + Number(EXPIRY_LAG)) {
         throw new HttpError(400, "sample after close");
       } else {
         price = BigInt(sample.price);
@@ -451,7 +451,7 @@ export async function createOracle(deps: OracleDeps) {
       const prev = fetched.txs.map((raw) => Transaction.fromPSBT(base64.decode(raw))).find((tx) => tx.id === coin.txid);
       if (!prev) throw new HttpError(400, "creating tx missing");
       const state = statePacketOf(prev);
-      if (decodeState(state).slots.some((slot) => slot.key === expiry)) throw new HttpError(409, "already a fixing");
+      if (decodeState(state).slots.some((slot) => slot.expiry === expiry)) throw new HttpError(409, "already a fixing");
       const sigs = await signFixing(expiry, price, time);
       const next = nextState(state, expiry, priceValue(price, time));
       const built = buildAttest({
@@ -461,7 +461,7 @@ export async function createOracle(deps: OracleDeps) {
           state,
           id: asset.AssetId.fromString(store.assetId),
         },
-        key: expiry,
+        expiry,
         price,
         time,
         sigs,
@@ -526,7 +526,7 @@ export async function createOracle(deps: OracleDeps) {
   async function publishAnnounced() {
     if (!deps.announcedExpiries || !store.assetId || !store.deployTxid) return;
     const clock = now();
-    for (const expiry of dueExpiries(deps.announcedExpiries(), clock, publishedExpiries, Number(KEY_LAG))) {
+    for (const expiry of dueExpiries(deps.announcedExpiries(), clock, publishedExpiries, Number(EXPIRY_LAG))) {
       if (!chooseSample(expiry)) continue;
       try {
         await publish({ expiry });

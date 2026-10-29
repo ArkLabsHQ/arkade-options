@@ -65,7 +65,7 @@ From [desk/main.ts](../desk/main.ts) and the root [Dockerfile](../Dockerfile).
 | `DESK_KEY` | New 32-byte hex. Nostr pubkey and the option holder key. |
 | `BEACON_TXID` | The new oracle `issueTxid`, 64 hex characters. The process exits if this is missing or not 64 hex. Set it after deploy, then restart. |
 | `BEACON_GIDX` | Leave unset (`0`) unless status shows the identity asset at another vout. |
-| `ORACLE_URL` | Origin of the Oracle service. At startup the desk reads `args.keyLag` once and refuses a quote unless it is `60`, the window `OptionVault` hardcodes. |
+| `ORACLE_URL` | Origin of the Oracle service. At startup the desk reads `args.expiryLag` once and refuses a quote unless it is `60`, the window `OptionVault` hardcodes. |
 | `ARK_URL` | `https://mutinynet.arkade.sh`. |
 | `EMULATOR_URL` | `https://emulator.mutinynet.arkade.sh`. |
 | `RELAYS` | Leave unset. Default is `wss://nostr.arkade.sh`. |
@@ -110,7 +110,7 @@ Fixed in [protocol/constants.ts](../protocol/constants.ts) and copied into the b
 | Dust on the beacon coin | `330` sats (`DUST_SATS`) | Deploy pays this onto the beacon ([protocol/beacon.ts](../protocol/beacon.ts)). A payoff leg at or below 330 sats is folded into the other output ([contracts/option_vault.ark](../contracts/option_vault.ark)). |
 | Read fee | `1000` sats (`BEACON_READ_FEE`) | `args.readFee`. Kept at 1000 so settlement is easy to account. The vault pays it out of collateral. The regtest smoke test asserts both numbers. |
 
-`GET /api/status` then shows `args.exit` `2048`, `args.readFee` `1000`, `args.keyLag` `60`, and `args.domain` hex of `BTCUSD-FIX`.
+`GET /api/status` then shows `args.exit` `2048`, `args.readFee` `1000`, `args.expiryLag` `60`, and `args.domain` hex of `BTCUSD-FIX`.
 
 ## Fund, issue, deploy
 

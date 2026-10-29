@@ -25,16 +25,16 @@ export type StoredFixing = {
 };
 
 /**
- * The sample for an expiry. Prefer one taken inside `[expiry, expiry + keyLag]`.
- * If that minute was missed, the newest sample in the keyLag before expiry.
+ * The sample for an expiry. Prefer one taken inside `[expiry, expiry + expiryLag]`.
+ * If that minute was missed, the newest sample in the expiryLag before expiry.
  * Anything older is not a fixing.
  */
-export function chooseSample<T extends { time: number }>(samples: readonly T[], expiry: number, keyLag: number): T | null {
-  const hi = expiry + keyLag;
+export function chooseSample<T extends { time: number }>(samples: readonly T[], expiry: number, expiryLag: number): T | null {
+  const hi = expiry + expiryLag;
   const close = samples.filter((sample) => sample.time >= expiry && sample.time <= hi);
   const pool = close.length > 0
     ? close
-    : samples.filter((sample) => sample.time >= expiry - keyLag && sample.time < expiry);
+    : samples.filter((sample) => sample.time >= expiry - expiryLag && sample.time < expiry);
   if (!pool.length) return null;
   return pool.reduce((best, sample) => (sample.time >= best.time ? sample : best));
 }

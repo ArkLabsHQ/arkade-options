@@ -225,8 +225,8 @@ test("a wire message with the wrong pair is dropped", () => {
   assert.equal(parseWire({ ...request, pair: "arkade:BTC->arkade:BTC" }), null);
   assert.equal(parseWire({ ...request, amount: "0001" }), null);
   assert.equal(beaconWindowRefusal(60n), "");
-  assert.equal(beaconWindowRefusal(120n), "key lag");
-  assert.equal(beaconWindowRefusal(0n), "key lag");
+  assert.equal(beaconWindowRefusal(120n), "expiry lag");
+  assert.equal(beaconWindowRefusal(0n), "expiry lag");
   assert.equal(beaconWindowRefusal(null), "oracle");
   assert.equal(requestRefusal(request, 1_790_000_000), "expiry");
   assert.equal(requestRefusal({ ...request, profile: { ...request.profile, expiry: 1_790_000_600 } }, 1_790_000_000), "");

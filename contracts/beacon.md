@@ -23,7 +23,7 @@ Identity is an asset unit, state is a packet, and the covenant holding the unit 
 
 ### Identity
 
-`AttestationBeacon(ctrlTxid, ctrlGidx, signers, signersN, threshold, domain, keyLag, readFee, adminPk, exit)`. The beacon coin carries one unit of the asset `(ctrlTxid, ctrlGidx)`. The vault commits to `(beaconTxid, beaconGidx)` and to `readFee`. The service deploys 330 sats and sets `readFee` to 1000, above the dust line. One to five oracle keys sign each sample, and `threshold` of them must agree. `adminPk` does not sign prices. It migrates the coin and takes the unilateral exit.
+`AttestationBeacon(ctrlTxid, ctrlGidx, signers, signersN, threshold, domain, expiryLag, readFee, adminPk, exit)`. The beacon coin carries one unit of the asset `(ctrlTxid, ctrlGidx)`. The vault commits to `(beaconTxid, beaconGidx)` and to `readFee`. The service deploys 330 sats and sets `readFee` to 1000, above the dust line. One to five oracle keys sign each sample, and `threshold` of them must agree. `adminPk` does not sign prices. It migrates the coin and takes the unilateral exit.
 
 The script cannot see the issuance. The desk trusts the asset id it is given (see §4, a second identity unit).
 
@@ -35,15 +35,15 @@ Packet type 32 in the creating transaction. 329 bytes:
 | --- | --- | --- |
 | 0 | 1 | version, `0x01` |
 | 1 | 8 | round, `num2bin(round, 8)` |
-| 9 + 40·n | 40 | slot n, n = 0..7, newest first: expiry `num2bin(key, 8)`, value 32 bytes |
+| 9 + 40·n | 40 | slot n, n = 0..7, newest first: expiry `num2bin(expiry, 8)`, value 32 bytes |
 
-Genesis is round 0 with eight zero slots. For the option vault that field is the expiry, the time the price belongs to. The script parameter is still `key`. The 32-byte value keeps the price in the first 8 bytes and the sample time in the next 8. The remaining 16 bytes are zero. The vault reads the price from the first 8 bytes and rejects a sample time outside `[expiry, expiry + 60]`.
+Genesis is round 0 with eight zero slots. For the option vault that field is the expiry, the time the price belongs to. The 32-byte value keeps the price in the first 8 bytes and the sample time in the next 8. The remaining 16 bytes are zero. The vault reads the price from the first 8 bytes and rejects a sample time outside `[expiry, expiry + 60]`.
 
 The packet is one stack element. `OP_INSPECTINPUTPACKET` rejects more than 520 bytes, so 9 + 40·n ≤ 520 gives at most 12 slots. Past that the state must become a Merkle root.
 
 ### Leaves
 
-`attest(key, price, time, sigs)`. Beacon at input 0. The parameter `key` is the expiry, the time the price belongs to. The oracle message is `sha256(ctrlTxid || 0x425443555344 || num2bin(key, 8) || num2bin(price, 8) || num2bin(time, 8))`. The first `signersN` keys are checked and `threshold` of them must verify. A signature names one expiry, so a print cannot be written into a later slot, and a one-cent change of the price does not verify. `key > 1800` and that expiry is not already in a slot. The sample time must satisfy `key <= time <= key + keyLag`. When `keyLag ≥ 0`, the emulator clock must have reached `key + keyLag`. A price beacon sets 60, so a fixing cannot be published before its minute closes, and a print from before that minute cannot fill the slot. The stored value is `num2bin(price, 8) || num2bin(time, 8) || num2bin(0, 16)`. The new packet has round + 1, slot 0 = (expiry, price || time), slots 1..7 = old slots 0..6. Output 0 keeps the script, at least the value, and the asset unit.
+`attest(expiry, price, time, sigs)`. Beacon at input 0. `expiry` is the time the price belongs to. The oracle message is `sha256(ctrlTxid || 0x425443555344 || num2bin(expiry, 8) || num2bin(price, 8) || num2bin(time, 8))`. The first `signersN` keys are checked and `threshold` of them must verify. A signature names one expiry, so a print cannot be written into a later slot, and a one-cent change of the price does not verify. `expiry > 1800` and that expiry is not already in a slot. The sample time must satisfy `expiry <= time <= expiry + expiryLag`. When `expiryLag ≥ 0`, the emulator clock must have reached `expiry + expiryLag`. A price beacon sets 60, so a fixing cannot be published before its minute closes, and a print from before that minute cannot fill the slot. The stored value is `num2bin(price, 8) || num2bin(time, 8) || num2bin(0, 16)`. The new packet has round + 1, slot 0 = (expiry, price || time), slots 1..7 = old slots 0..6. Output 0 keeps the script, at least the value, and the asset unit.
 
 An expiry that falls off the eight slots may be written again only with the same price and time. The message names the expiry, so a different price or time does not verify. The oracle service signs one fixing per expiry and reuses that pair. `adminPk` does not sign the sample. It is the key for `migrate` and the unilateral exit.
 
@@ -57,7 +57,7 @@ An expiry that falls off the eight slots may be written again only with the same
 
 ### Consumer: `OptionVault`
 
-`oracles[5]` is not a parameter. The vault commits to `(beaconTxid, beaconGidx)`. `settle()` takes no witness. It requires the emulator clock at or past `expiry`, itself at input 0, at least two inputs, one unit of the identity asset on input 1, and reads `tx.inputs[1].packet(32)`. The newest slot for that expiry gives the price in the first 8 bytes of the value and the sample time in the next 8. The time must sit in `[expiry, expiry + 60]`, the same window `attest` enforces when `keyLag` is 60. The desk refuses a quote when the live beacon's `keyLag` is not 60, so a vault is never built against a different window. Payoff and dust folding pay outputs 1 and 2; output 0 belongs to the beacon. An expiry of 0 matches only empty slots, whose price 0 then fails `st > 0`.
+`oracles[5]` is not a parameter. The vault commits to `(beaconTxid, beaconGidx)`. `settle()` takes no witness. It requires the emulator clock at or past `expiry`, itself at input 0, at least two inputs, one unit of the identity asset on input 1, and reads `tx.inputs[1].packet(32)`. The newest slot for that expiry gives the price in the first 8 bytes of the value and the sample time in the next 8. The time must sit in `[expiry, expiry + 60]`, the same window `attest` enforces when `expiryLag` is 60. The desk refuses a quote when the live beacon's `expiryLag` is not 60, so a vault is never built against a different window. Payoff and dust folding pay outputs 1 and 2; output 0 belongs to the beacon. An expiry of 0 matches only empty slots, whose price 0 then fails `st > 0`.
 
 `close` and `unilateral` are unchanged.
 
@@ -100,7 +100,7 @@ The marker design was not taken here because a marker unit can be re-homed by wh
 
 Script, `attestation_beacon.ark`:
 
-- `threshold` oracle signatures over `sha256(ctrlTxid || BTCUSD || expiry || price || time)`. Sample time in `[expiry, expiry + keyLag]`. Round + 1. Expiry above 1800 and absent from the current slots. Clock past `expiry + keyLag` when `keyLag ≥ 0`. Slot value is the price in the first 8 bytes, the sample time in the next 8, then zeros. History shift of 280 bytes. Continuation of script, value, and asset unit on output 0. Attest and migrate at input 0. A read carries the packet unchanged and adds `readFee` (1000). `migrate` needs `adminPk`. An evicted expiry verifies again only for that same price and time.
+- `threshold` oracle signatures over `sha256(ctrlTxid || BTCUSD || expiry || price || time)`. Sample time in `[expiry, expiry + expiryLag]`. Round + 1. Expiry above 1800 and absent from the current slots. Clock past `expiry + expiryLag` when `expiryLag ≥ 0`. Slot value is the price in the first 8 bytes, the sample time in the next 8, then zeros. History shift of 280 bytes. Continuation of script, value, and asset unit on output 0. Attest and migrate at input 0. A read carries the packet unchanged and adds `readFee` (1000). `migrate` needs `adminPk`. An evicted expiry verifies again only for that same price and time.
 
 Script, `option_vault.ark`:
 
@@ -123,8 +123,8 @@ Emulator:
 | A second identity unit | blocked by arkd only if the issuance was uncontrolled with supply 1. The oracle service issues with `assetManager.issue({ amount: 1n })` and no control asset. The script cannot see the issuance, and the desk trusts `BEACON_TXID` as given. |
 | Committee attests the same expiry twice while it is in a slot | blocked: `absent`. |
 | A fixing is evicted before a vault settles | recoverable with the same price and time. A different price or time does not verify. |
-| Fixing published before the settlement minute closes | blocked when `keyLag ≥ 0`: `checkTime(key + keyLag)`. |
-| A print from before its expiry written into that slot | blocked: `time >= key`, and the signature names the expiry. |
+| Fixing published before the settlement minute closes | blocked when `expiryLag ≥ 0`: `checkTime(expiry + expiryLag)`. |
+| A print from before its expiry written into that slot | blocked: `time >= expiry`, and the signature names the expiry. |
 | A published signature reused for a later expiry | blocked: the message names the expiry. |
 | Consumer attaches a forged previous transaction for input 1 | not blocked by any script. The VM's `OP_INSPECTINPUTPACKET` takes the previous transaction from its fetcher without comparing a hash; the compiler's test harness maps it by outpoint with no check, and a probe against that harness accepted a forged previous transaction. Whether the emulator service binds the attached transaction to the input, through the checkpoint hop, is unverified here. Everything that reads a previous packet, this design and the LayerZero example alike, rests on it. |
 | Two settlements race for the beacon | one is rejected and rebuilt on the new outpoint. Bounded, not impossible. |

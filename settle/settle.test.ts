@@ -41,7 +41,7 @@ function key(n: number) {
 }
 
 function blankSlots(count: number) {
-  return Array.from({ length: count }, () => ({ key: 0n, value: new Uint8Array(32) }));
+  return Array.from({ length: count }, () => ({ expiry: 0n, value: new Uint8Array(32) }));
 }
 
 function coinTx(outputs: { script: Uint8Array; amount: bigint }[], packets: Parameters<typeof Extension.create>[0] = []) {
@@ -66,13 +66,13 @@ test("the newest slot's price is its first 8 bytes only when the sample time is 
     version: 1,
     round: 2n,
     slots: [
-      { key: expiry, value: priceValue(11n, expiry) },
-      { key: expiry, value },
+      { expiry, value: priceValue(11n, expiry) },
+      { expiry, value },
       ...blankSlots(6),
     ],
   });
   assert.equal(slotPrice(tagged, expiry), 11n);
-  assert.equal(slotPrice(encodeState({ version: 1, round: 1n, slots: [{ key: expiry, value: priceValue(0n, expiry) }, ...blankSlots(7)] }), expiry), null);
+  assert.equal(slotPrice(encodeState({ version: 1, round: 1n, slots: [{ expiry, value: priceValue(0n, expiry) }, ...blankSlots(7)] }), expiry), null);
 });
 
 test("dust folding pays one leg the whole coin", () => {
@@ -152,7 +152,7 @@ test("a failed publish is not a fixing, and a minute must pass before the same e
   assert.equal(publishOutcome(200), "published");
   assert.equal(publishOutcome(409, "already a fixing"), "fixed");
   assert.equal(publishOutcome(400, "no sample"), "failed");
-  assert.equal(publishOutcome(400, "before key time"), "failed");
+  assert.equal(publishOutcome(400, "before expiry time"), "failed");
   assert.equal(publishOutcome(500, "error"), "failed");
   assert.equal(publishReady(0, 60_000), true);
   assert.equal(publishReady(1_000, 1_000 + 59_999), false);
@@ -204,7 +204,7 @@ test("a filled vault settles from the beacon state the oracle published", async 
     signers,
     threshold: 3n,
     domain,
-    keyLag: 60n,
+    expiryLag: 60n,
     readFee: 0n,
     adminPk,
     exit: EXIT,
@@ -289,7 +289,7 @@ test("a filled vault settles from the beacon state the oracle published", async 
       ctrlTxid: bytesToHex(id.txid),
       threshold: 3,
       domain: bytesToHex(domain),
-      keyLag: 60,
+      expiryLag: 60,
       readFee: 0,
       adminPk: bytesToHex(adminPk),
       exit: Number(EXIT),
@@ -415,7 +415,7 @@ test("a filled vault settles from the beacon state the oracle published", async 
     signers,
     threshold: 3n,
     domain,
-    keyLag: 60n,
+    expiryLag: 60n,
     readFee: 1_000n,
     adminPk,
     exit: EXIT,

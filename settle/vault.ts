@@ -51,7 +51,7 @@ export function slotFixing(state: Uint8Array, expiry: bigint): { price: bigint; 
     return null;
   }
   if (decoded.version !== 1) return null;
-  const slot = decoded.slots.find((item) => item.key === expiry);
+  const slot = decoded.slots.find((item) => item.expiry === expiry);
   if (!slot || slot.value.length < 16) return null;
   const price = bin2num(slot.value.subarray(0, 8));
   const time = bin2num(slot.value.subarray(8, 16));
@@ -195,7 +195,7 @@ export async function settleQuote(env: {
     signers: env.beacon.signers,
     threshold: env.beacon.threshold,
     domain: env.beacon.domain,
-    keyLag: env.beacon.keyLag,
+    expiryLag: env.beacon.expiryLag,
     readFee: env.beacon.readFee,
     adminPk: env.beacon.adminPk,
     exit: env.beacon.exit,

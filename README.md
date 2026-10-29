@@ -78,7 +78,7 @@ Desk logs: one line per UTC hour, `hour N quotes, N filled, N premium paid, N co
 {
   "ctrlTxid": "<issue txid reversed>",
   "domain": "4254435553442d464958",
-  "keyLag": 60,
+  "expiryLag": 60,
   "readFee": 1000,
   "adminPk": "<ORACLE_KEY x-only pubkey>",
   "exit": 2048
@@ -89,7 +89,7 @@ Desk logs: one line per UTC hour, `hour N quotes, N filled, N premium paid, N co
 | --- | --- |
 | `ctrlTxid` | Identity of the beacon asset, as the script compares it: the display `issueTxid` reversed. The vault checks that input 1 holds one unit of this asset. |
 | `domain` | Hex of the ASCII string `BTCUSD-FIX`. It is mixed into the migrate signature. |
-| `keyLag` | Seconds after the expiry before `attest` is allowed. `60` means a fixing waits until the close minute has ended. |
+| `expiryLag` | Seconds after the expiry before `attest` is allowed. `60` means a fixing waits until the close minute has ended. |
 | `readFee` | Sats added to the beacon on every `read`. The service uses `1000`, above the 330-sat dust line. The vault pays it out of its collateral. |
 | `adminPk` | X-only pubkey of `ORACLE_KEY`. It signs `migrate` and the unilateral exit. It does not sign prices. The oracle signers sign `sha256(ctrlTxid \|\| BTCUSD \|\| expiry \|\| price \|\| time)`. |
 | `exit` | Seconds the admin must wait before a unilateral exit of the beacon coin to Bitcoin. `2048` is Mutinynet's `unilateralExitDelay`. |

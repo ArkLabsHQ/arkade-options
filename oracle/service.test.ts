@@ -115,7 +115,7 @@ async function call(url: string, pathName: string, body?: unknown, token?: strin
   return { status: res.status, headers: res.headers, json: text ? JSON.parse(text) as Record<string, unknown> : {}, text };
 }
 
-test("chooseSample stays inside the key lag", () => {
+test("chooseSample stays inside the expiry lag", () => {
   const expiry = 1_000_000;
   const lag = 60;
   const old = { time: expiry - lag - 1, price: "1" };
@@ -182,7 +182,7 @@ test("status, admin order, deploy change, and a print that becomes a fixing", as
     assert.equal(open.status, 200);
     assert.equal(JSON.stringify(open.json).includes(hex.encode(secret(9))), false);
     assert.equal((open.json.args as { domain: string }).domain, hex.encode(new TextEncoder().encode("BTCUSD-FIX")));
-    assert.equal((open.json.args as { keyLag: number }).keyLag, 60);
+    assert.equal((open.json.args as { expiryLag: number }).expiryLag, 60);
     assert.equal((open.json.args as { readFee: number }).readFee, 1_000);
     assert.equal(open.json.samples, 0);
     assert.equal("minValue" in (open.json.args as object), false);
@@ -218,7 +218,7 @@ test("status, admin order, deploy change, and a print that becomes a fixing", as
       signers: [schnorr.getPublicKey(secret(9))],
       threshold: 1n,
       domain: new TextEncoder().encode("BTCUSD-FIX"),
-      keyLag: 60n,
+      expiryLag: 60n,
       readFee: 1_000n,
       adminPk: schnorr.getPublicKey(secret(9)),
       exit: EXIT,
@@ -347,7 +347,7 @@ function verifies(sig: Uint8Array, digest: Uint8Array, pub: Uint8Array): boolean
   }
 }
 
-test("a print before the key is rejected and a print inside the minute is accepted", async () => {
+test("a print before the expiry is rejected and a print inside the minute is accepted", async () => {
   const expiry = 1_700_000_000;
   const ctx = await boot({ now: () => expiry + 120 });
   try {
@@ -357,7 +357,7 @@ test("a print before the key is rejected and a print inside the minute is accept
     assert.equal(early.status, 200, JSON.stringify(early.json));
     const rejected = await call(ctx.oracle.url, "/api/publish", { expiry }, "test-token");
     assert.equal(rejected.status, 400);
-    assert.equal(rejected.json.error, "sample before key");
+    assert.equal(rejected.json.error, "sample before expiry");
     assert.equal(ctx.submitted.length, 0);
 
     const inside = await call(ctx.oracle.url, "/api/samples", { price: "10000000", time: expiry + 30 }, "test-token");
@@ -377,17 +377,17 @@ test("a one-cent price change fails verification", async () => {
   const secretKey = secret(9);
   const pub = schnorr.getPublicKey(secretKey);
   const ctrl = beaconIdOf(asset.AssetId.create("ee".repeat(32), 0)).txid;
-  const key = 1_700_000_000n;
+  const expiry = 1_700_000_000n;
   const price = 8_277_570n;
-  const time = key + 15n;
-  const digest = sampleDigest(ctrl, key, price, time);
+  const time = expiry + 15n;
+  const digest = sampleDigest(ctrl, expiry, price, time);
   const sig = await SingleKey.fromHex(hex.encode(secretKey)).signSchnorrDeterministic(digest);
   assert.equal(verifies(sig, digest, pub), true);
-  assert.equal(verifies(sig, sampleDigest(ctrl, key, price + 1n, time), pub), false);
-  assert.equal(verifies(sig, sampleDigest(ctrl, key + 60n, price, time), pub), false);
+  assert.equal(verifies(sig, sampleDigest(ctrl, expiry, price + 1n, time), pub), false);
+  assert.equal(verifies(sig, sampleDigest(ctrl, expiry + 60n, price, time), pub), false);
 });
 
-test("an evicted key is rewritten with the same price and time", async () => {
+test("an evicted expiry is rewritten with the same price and time", async () => {
   const base = 1_700_000_000;
   const ctx = await boot({ now: () => base + 800 + 60 });
   try {
@@ -410,9 +410,9 @@ test("an evicted key is rewritten with the same price and time", async () => {
     assert.equal(again.json.time, base + 10);
     const tx = Transaction.fromPSBT(base64.decode(ctx.submitted.at(-1)!));
     const decoded = decodeState(statePacketOf(tx));
-    assert.equal(decoded.slots[0]?.key, BigInt(base));
+    assert.equal(decoded.slots[0]?.expiry, BigInt(base));
     assert.deepEqual(decoded.slots[0]?.value, priceValue(111n, BigInt(base + 10)));
-    assert.equal(decoded.slots.some((item) => item.key === BigInt(base + 100)), false);
+    assert.equal(decoded.slots.some((item) => item.expiry === BigInt(base + 100)), false);
   } finally {
     await ctx.close();
   }
@@ -505,8 +505,8 @@ test("the sampler stores a price without the admin route", async () => {
   }
 });
 
-test("a print before the key or after the close is skipped on the minute pass", async () => {
-  assert.equal(skippedPublish("sample before key"), true);
+test("a print before the expiry or after the close is skipped on the minute pass", async () => {
+  assert.equal(skippedPublish("sample before expiry"), true);
   assert.equal(skippedPublish("sample after close"), true);
   assert.equal(skippedPublish("beacon coin"), false);
   const expiry = 1_700_000_000;

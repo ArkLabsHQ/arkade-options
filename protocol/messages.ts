@@ -235,16 +235,16 @@ function parseStatus(body: Record<string, unknown>): RfqStatus | null {
   };
 }
 
-/** `OptionVault` hardcodes this sample window. A quote needs a beacon with the same `keyLag`. */
-export const VAULT_KEY_LAG = 60n;
+/** `OptionVault` hardcodes this sample window. A quote needs a beacon with the same `expiryLag`. */
+export const VAULT_EXPIRY_LAG = 60n;
 
 /**
  * Why the desk must not build a vault for this beacon window.
- * Empty string means `keyLag` is the vault's 60 seconds.
+ * Empty string means `expiryLag` is the vault's 60 seconds.
  */
-export function beaconWindowRefusal(keyLag: bigint | null): string {
-  if (keyLag == null) return "oracle";
-  if (keyLag !== VAULT_KEY_LAG) return "key lag";
+export function beaconWindowRefusal(expiryLag: bigint | null): string {
+  if (expiryLag == null) return "oracle";
+  if (expiryLag !== VAULT_EXPIRY_LAG) return "expiry lag";
   return "";
 }
 

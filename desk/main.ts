@@ -53,7 +53,7 @@ import { spotCents } from "./spot.ts";
  *   DESK_KEY        32-byte hex. Nostr pubkey and the option holder key.
  *   BEACON_TXID     required 64-hex display txid of the oracle's identity asset
  *   BEACON_GIDX     optional vout index of that asset. Default 0
- *   ORACLE_URL      oracle origin. keyLag is read once at startup. A quote is refused unless it is 60.
+ *   ORACLE_URL      oracle origin. expiryLag is read once at startup. A quote is refused unless it is 60.
  *   RELAYS          comma-separated websocket URLs
  *   ARK_URL         default Mutinynet arkd
  *   EMULATOR_URL    default Mutinynet emulator
@@ -338,7 +338,7 @@ async function onRequest(message: RfqRequest, from: string) {
     createdAt: now,
     clientPubkey: from,
   };
-  const lagRefusal = beaconWindowRefusal(beaconKeyLag);
+  const lagRefusal = beaconWindowRefusal(beaconExpiryLag);
   if (lagRefusal) {
     await refuse(from, message.rfq_id, lagRefusal);
     return;
@@ -394,19 +394,19 @@ async function onMessage({ from, message }: Incoming) {
   }
 }
 
-let beaconKeyLag: bigint | null = null;
+let beaconExpiryLag: bigint | null = null;
 try {
   const parsed = parseOracleBeacon(
     await fetchOracleStatus(oracleUrl, AbortSignal.timeout(10_000)),
     beaconDisplay.txid,
     beaconDisplay.gidx,
   );
-  if (parsed.ok) beaconKeyLag = parsed.beacon.keyLag;
+  if (parsed.ok) beaconExpiryLag = parsed.beacon.expiryLag;
 } catch {
-  beaconKeyLag = null;
+  beaconExpiryLag = null;
 }
-if (beaconWindowRefusal(beaconKeyLag)) {
-  console.error(beaconKeyLag == null ? "oracle unreachable, quotes refused" : `beacon keyLag ${beaconKeyLag}, quotes refused`);
+if (beaconWindowRefusal(beaconExpiryLag)) {
+  console.error(beaconExpiryLag == null ? "oracle unreachable, quotes refused" : `beacon expiryLag ${beaconExpiryLag}, quotes refused`);
 }
 
 const transport = connectTransport({ relays, secretKey: secret, onMessage });

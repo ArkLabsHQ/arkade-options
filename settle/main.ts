@@ -170,7 +170,7 @@ async function progressDue() {
   }
   noted.delete("oracle-fetch");
 
-  const lag = Number(parsed.beacon.keyLag);
+  const lag = Number(parsed.beacon.expiryLag);
   const nowMs = Date.now();
   for (const position of due) {
     if (position.expiry + lag > now) continue;
