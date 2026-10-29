@@ -9,12 +9,12 @@ import { schnorr } from "@noble/curves/secp256k1.js";
 import { ArkAddress, asset, CSVMultisigTapscript, Extension, networks, SingleKey, Transaction } from "@arkade-os/sdk";
 import { base64, hex } from "@scure/base";
 
-import { beaconIdOf, bindBeacon, genesisState, nextState, priceValue, sampleDigest, statePacketOf } from "../protocol/beacon.ts";
+import { beaconIdOf, bindBeacon, decodeState, genesisState, nextState, priceValue, sampleDigest, statePacketOf } from "../protocol/beacon.ts";
 import { EXIT } from "../protocol/constants.ts";
 import { statePacket } from "../protocol/cospend.ts";
 import { bytesToHex } from "../protocol/hex.ts";
 import { createOracle, dueExpiries, type HeldCoin, type OracleDeps, type OracleWallet } from "./service.ts";
-import { pruneSamples, SAMPLE_HISTORY_S } from "./store.ts";
+import { chooseSample, loadStore, pruneSamples, SAMPLE_HISTORY_S, saveStore } from "./store.ts";
 
 const CHECKPOINT_HEX = "03080040b27520dfcaec558c7e78cf3e38b898ba8a43cfb5727266bae32c5c5b3aeb32c558aa0bac";
 
@@ -114,6 +114,40 @@ async function call(url: string, pathName: string, body?: unknown, token?: strin
   const text = await res.text();
   return { status: res.status, headers: res.headers, json: text ? JSON.parse(text) as Record<string, unknown> : {}, text };
 }
+
+test("chooseSample stays inside the key lag", () => {
+  const expiry = 1_000_000;
+  const lag = 60;
+  const old = { time: expiry - lag - 1, price: "1" };
+  const near = { time: expiry - lag, price: "2" };
+  const inside = { time: expiry + 10, price: "3" };
+  const later = { time: expiry + 20, price: "5" };
+  const after = { time: expiry + lag + 1, price: "4" };
+  assert.equal(chooseSample([old, near], expiry, lag)?.price, "2");
+  assert.equal(chooseSample([old], expiry, lag), null);
+  assert.equal(chooseSample([near, inside, after], expiry, lag)?.price, "3");
+  assert.equal(chooseSample([inside, later, old], expiry, lag)?.price, "5");
+  assert.equal(chooseSample([after], expiry, lag), null);
+});
+
+test("a stored sample keeps its price and drops a keyless signature", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "oracle-store-"));
+  try {
+    await saveStore(dir, {
+      assetId: null,
+      issueTxid: null,
+      deployTxid: null,
+      samples: [{ price: "10", time: 50, sigs: ["aa".repeat(64)] }],
+      fixings: [],
+    });
+    const loaded = await loadStore(dir);
+    assert.equal(loaded.samples[0]?.price, "10");
+    assert.equal(loaded.samples[0]?.time, 50);
+    assert.deepEqual(loaded.samples[0]?.sigs, []);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
 
 test("price history keeps one day", () => {
   const now = 2_000_000;
@@ -231,12 +265,13 @@ test("status, admin order, deploy change, and a print that becomes a fixing", as
     const again = await call(ctx.oracle.url, "/api/publish", { expiry: Number(expiry) }, "test-token");
     assert.equal(again.status, 409);
     const after = await call(ctx.oracle.url, "/api/status");
-    assert.deepEqual(after.json.fixings, [{ expiry: Number(expiry), price: "10000000", txid: published.json.txid }]);
+    assert.deepEqual(after.json.fixings, [{ expiry: Number(expiry), price: "10000000", time: Number(expiry + 60n), txid: published.json.txid }]);
     const tx = Transaction.fromPSBT(base64.decode(ctx.submitted[0]!));
-    const next = nextState(genesisState(), expiry, priceValue(10_000_000n));
+    const next = nextState(genesisState(), expiry, priceValue(10_000_000n, expiry + 60n));
     assert.deepEqual(statePacketOf(tx), next);
     const witness = Extension.fromTx(tx).getEmulatorPacket()!.entries[0]!.witness!;
-    const digest = sampleDigest(beaconIdOf(asset.AssetId.create("ee".repeat(32), 0)).txid, 10_000_000n, expiry + 60n);
+    const ctrl = beaconIdOf(asset.AssetId.create("ee".repeat(32), 0)).txid;
+    const digest = sampleDigest(ctrl, expiry, 10_000_000n, expiry + 60n);
     const pubkey = schnorr.getPublicKey(secret(9));
     let found = false;
     for (let i = 0; i + 64 <= witness.length; i += 1) {
@@ -247,6 +282,16 @@ test("status, admin order, deploy change, and a print that becomes a fixing", as
       }
     }
     assert.equal(found, true, bytesToHex(witness));
+    const shifted = sampleDigest(ctrl, expiry, 10_000_001n, expiry + 60n);
+    let shiftedOk = false;
+    for (let i = 0; i + 64 <= witness.length; i += 1) {
+      try {
+        if (schnorr.verify(witness.subarray(i, i + 64), shifted, pubkey)) shiftedOk = true;
+      } catch {
+        // a one-cent change is not this signature
+      }
+    }
+    assert.equal(shiftedOk, false);
   } finally {
     await ctx.close();
   }
@@ -275,9 +320,9 @@ test("admin backdate publishes a sample inside a closed window", async () => {
     assert.equal(published.json.price, price);
     assert.equal(published.json.time, sampleTime);
     const tx = Transaction.fromPSBT(base64.decode(ctx.submitted[0]!));
-    assert.deepEqual(statePacketOf(tx), nextState(genesisState(), BigInt(expiry), priceValue(BigInt(price))));
+    assert.deepEqual(statePacketOf(tx), nextState(genesisState(), BigInt(expiry), priceValue(BigInt(price), BigInt(sampleTime))));
     const witness = Extension.fromTx(tx).getEmulatorPacket()!.entries[0]!.witness!;
-    const digest = sampleDigest(beaconIdOf(asset.AssetId.create("ee".repeat(32), 0)).txid, BigInt(price), BigInt(sampleTime));
+    const digest = sampleDigest(beaconIdOf(asset.AssetId.create("ee".repeat(32), 0)).txid, BigInt(expiry), BigInt(price), BigInt(sampleTime));
     const pubkey = schnorr.getPublicKey(secret(9));
     let found = false;
     for (let i = 0; i + 64 <= witness.length; i += 1) {
@@ -288,6 +333,85 @@ test("admin backdate publishes a sample inside a closed window", async () => {
       }
     }
     assert.equal(found, true, bytesToHex(witness));
+  } finally {
+    await ctx.close();
+  }
+});
+
+function verifies(sig: Uint8Array, digest: Uint8Array, pub: Uint8Array): boolean {
+  try {
+    return schnorr.verify(sig, digest, pub) === true;
+  } catch {
+    return false;
+  }
+}
+
+test("a print before the key is rejected and a print inside the minute is accepted", async () => {
+  const expiry = 1_700_000_000;
+  const ctx = await boot({ now: () => expiry + 120 });
+  try {
+    assert.equal((await call(ctx.oracle.url, "/api/issue", {}, "test-token")).status, 200);
+    assert.equal((await call(ctx.oracle.url, "/api/deploy", {}, "test-token")).status, 200);
+    const early = await call(ctx.oracle.url, "/api/samples", { price: "10000000", time: expiry - 1 }, "test-token");
+    assert.equal(early.status, 200, JSON.stringify(early.json));
+    const rejected = await call(ctx.oracle.url, "/api/publish", { expiry }, "test-token");
+    assert.equal(rejected.status, 400);
+    assert.equal(rejected.json.error, "sample before key");
+    assert.equal(ctx.submitted.length, 0);
+
+    const inside = await call(ctx.oracle.url, "/api/samples", { price: "10000000", time: expiry + 30 }, "test-token");
+    assert.equal(inside.status, 200, JSON.stringify(inside.json));
+    const accepted = await call(ctx.oracle.url, "/api/publish", { expiry }, "test-token");
+    assert.equal(accepted.status, 200, JSON.stringify(accepted.json));
+    assert.equal(accepted.json.price, "10000000");
+    assert.equal(accepted.json.time, expiry + 30);
+    const tx = Transaction.fromPSBT(base64.decode(ctx.submitted[0]!));
+    assert.deepEqual(statePacketOf(tx), nextState(genesisState(), BigInt(expiry), priceValue(10_000_000n, BigInt(expiry + 30))));
+  } finally {
+    await ctx.close();
+  }
+});
+
+test("a one-cent price change fails verification", async () => {
+  const secretKey = secret(9);
+  const pub = schnorr.getPublicKey(secretKey);
+  const ctrl = beaconIdOf(asset.AssetId.create("ee".repeat(32), 0)).txid;
+  const key = 1_700_000_000n;
+  const price = 8_277_570n;
+  const time = key + 15n;
+  const digest = sampleDigest(ctrl, key, price, time);
+  const sig = await SingleKey.fromHex(hex.encode(secretKey)).signSchnorrDeterministic(digest);
+  assert.equal(verifies(sig, digest, pub), true);
+  assert.equal(verifies(sig, sampleDigest(ctrl, key, price + 1n, time), pub), false);
+  assert.equal(verifies(sig, sampleDigest(ctrl, key + 60n, price, time), pub), false);
+});
+
+test("an evicted key is rewritten with the same price and time", async () => {
+  const base = 1_700_000_000;
+  const ctx = await boot({ now: () => base + 800 + 60 });
+  try {
+    assert.equal((await call(ctx.oracle.url, "/api/issue", {}, "test-token")).status, 200);
+    assert.equal((await call(ctx.oracle.url, "/api/deploy", {}, "test-token")).status, 200);
+    assert.equal((await call(ctx.oracle.url, "/api/samples", { price: "111", time: base + 10 }, "test-token")).status, 200);
+    const first = await call(ctx.oracle.url, "/api/publish", { expiry: base }, "test-token");
+    assert.equal(first.status, 200, JSON.stringify(first.json));
+    assert.equal(first.json.price, "111");
+    assert.equal((await call(ctx.oracle.url, "/api/samples", { price: "999", time: base + 50 }, "test-token")).status, 200);
+    for (let i = 1; i <= 8; i += 1) {
+      const expiry = base + i * 100;
+      assert.equal((await call(ctx.oracle.url, "/api/samples", { price: String(2_000 + i), time: expiry + 10 }, "test-token")).status, 200);
+      const published = await call(ctx.oracle.url, "/api/publish", { expiry }, "test-token");
+      assert.equal(published.status, 200, JSON.stringify(published.json));
+    }
+    const again = await call(ctx.oracle.url, "/api/publish", { expiry: base }, "test-token");
+    assert.equal(again.status, 200, JSON.stringify(again.json));
+    assert.equal(again.json.price, "111");
+    assert.equal(again.json.time, base + 10);
+    const tx = Transaction.fromPSBT(base64.decode(ctx.submitted.at(-1)!));
+    const decoded = decodeState(statePacketOf(tx));
+    assert.equal(decoded.slots[0]?.key, BigInt(base));
+    assert.deepEqual(decoded.slots[0]?.value, priceValue(111n, BigInt(base + 10)));
+    assert.equal(decoded.slots.some((item) => item.key === BigInt(base + 100)), false);
   } finally {
     await ctx.close();
   }

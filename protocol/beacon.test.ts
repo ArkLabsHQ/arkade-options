@@ -160,6 +160,12 @@ test("state packet encodes and decodes the documented layout", () => {
   assert.equal(bin2num(two.subarray(1, 9)), 2n);
   assert.throws(() => nextState(two, 1_700_000_000n, value), /already in a slot/);
   assert.throws(() => nextState(two, 0n, value), /positive/);
+
+  const timed = priceValue(10_000_000n, 1_700_000_030n);
+  assert.equal(bin2num(timed.subarray(0, 8)), 10_000_000n);
+  assert.equal(bin2num(timed.subarray(8, 16)), 1_700_000_030n);
+  assert.ok(timed.subarray(16).every((byte) => byte === 0));
+  assert.deepEqual(priceValue(10_000_000n), num2bin(10_000_000n, 32));
 });
 
 test("script numbers are little-endian sign-magnitude", () => {
@@ -183,6 +189,11 @@ test("slot offsets match both contract sources", () => {
   assert.ok(beacon.includes("const int VALUE_AT = 17;"));
   assert.ok(beacon.includes("const int HISTORY_AT = 49;"));
   assert.ok(beacon.includes("const int HISTORY = 280;"));
+  assert.ok(beacon.includes("num2bin(key, 8) + num2bin(price, 8) + num2bin(time, 8)"));
+  assert.ok(beacon.includes('require(time >= key, "sample before key")'));
+  const vault = readFileSync(here("../contracts/option_vault.ark"), "utf8");
+  assert.ok(vault.includes('require(sampleTime >= expiry, "sample before key")'));
+  assert.ok(vault.includes('require(sampleTime <= expiry + KEY_LAG, "sample after close")'));
 });
 
 test("the beacon leaves check what the design says", () => {

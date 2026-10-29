@@ -21,8 +21,25 @@ export function pruneSamples(samples: readonly StoredSample[], now: number): Sto
 export type StoredFixing = {
   expiry: number;
   price: string;
+  /** Sample time signed for this key. The same pair is what a later rewrite may use. */
+  time?: number;
   txid: string;
 };
+
+/**
+ * The sample for an expiry. Prefer one taken inside `[expiry, expiry + keyLag]`.
+ * If that minute was missed, the newest sample in the keyLag before expiry.
+ * Anything older is not a fixing.
+ */
+export function chooseSample<T extends { time: number }>(samples: readonly T[], expiry: number, keyLag: number): T | null {
+  const hi = expiry + keyLag;
+  const close = samples.filter((sample) => sample.time >= expiry && sample.time <= hi);
+  const pool = close.length > 0
+    ? close
+    : samples.filter((sample) => sample.time >= expiry - keyLag && sample.time < expiry);
+  if (!pool.length) return null;
+  return pool.reduce((best, sample) => (sample.time >= best.time ? sample : best));
+}
 
 export type OracleFile = {
   assetId: string | null;
@@ -36,15 +53,11 @@ const empty = (): OracleFile => ({ assetId: null, issueTxid: null, deployTxid: n
 
 function normalizeSample(value: unknown): StoredSample | null {
   if (!value || typeof value !== "object") return null;
-  const sample = value as { price?: unknown; time?: unknown; sigs?: unknown; sig?: unknown };
+  const sample = value as { price?: unknown; time?: unknown };
   if (typeof sample.price !== "string" || typeof sample.time !== "number") return null;
-  const sigs = Array.isArray(sample.sigs)
-    ? sample.sigs.filter((item): item is string => typeof item === "string")
-    : typeof sample.sig === "string"
-      ? [sample.sig]
-      : [];
-  if (!sigs.length) return null;
-  return { price: sample.price, time: sample.time, sigs };
+  // A sample is signed at publish, for one key. Signatures stored before that
+  // named no key, so they are not loaded back onto the public price feed.
+  return { price: sample.price, time: sample.time, sigs: [] };
 }
 
 /** Only this service writes the file, so it is read back as is. */

@@ -54,6 +54,25 @@ export function serviceOrigin(raw: string): string {
   return url.origin;
 }
 
+export type OracleSample = { price: string; time: number };
+
+/** Samples from `GET /api/prices`. Rows that are not a price and a time are skipped. */
+export async function fetchOraclePrices(origin: string, from: number, to: number, signal?: AbortSignal): Promise<OracleSample[]> {
+  const res = await fetch(`${origin}/api/prices?from=${from}&to=${to}&limit=200`, { signal });
+  if (!res.ok) throw new Error(`oracle prices ${res.status}`);
+  const body = await res.json() as { samples?: unknown };
+  if (!body || typeof body !== "object" || !Array.isArray(body.samples)) throw new Error("oracle prices");
+  const samples: OracleSample[] = [];
+  for (const row of body.samples) {
+    if (!row || typeof row !== "object") continue;
+    const sample = row as { price?: unknown; time?: unknown };
+    if (typeof sample.price !== "string" || !/^[0-9]+$/.test(sample.price)) continue;
+    if (typeof sample.time !== "number" || !Number.isSafeInteger(sample.time)) continue;
+    samples.push({ price: sample.price, time: sample.time });
+  }
+  return samples;
+}
+
 export async function fetchOracleStatus(origin: string, signal?: AbortSignal): Promise<unknown> {
   const res = await fetch(`${origin}/api/status`, { signal });
   if (!res.ok) throw new Error(`oracle status ${res.status}`);

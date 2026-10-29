@@ -98,7 +98,7 @@ From [settle/main.ts](../settle/main.ts) and [settle/Dockerfile](../settle/Docke
 
 The image starts `node --experimental-strip-types settle/main.ts`. On boot it connects to Mutinynet, subscribes to the relay, and ticks every 2 seconds. `GET /status` returns `commit`, `oracle`, `relay`, `watching`, and `settled`.
 
-When a fill is published, the settler rebuilds the vault from that event. Once `expiry + 60` has passed, about once a minute, it `POST`s `/api/publish` for that expiry and then spends the vault. `no sample` or any other publish failure is logged and the pass continues with the next vault. `409 already a fixing` means that expiry is already on the beacon, so the settler settles it. One beacon coin settles one vault per pass. The 1,000-sat read fee comes out of the vault. The settler holds no key and no fee wallet. The oracle still samples about once a minute; it does not attest a new key on every clock minute.
+When a fill is published, the settler rebuilds the vault from that event. Once `expiry + 60` has passed, about once a minute, it `POST`s `/api/publish` for that expiry and then spends the vault. `no sample` or any other publish failure is logged and the pass continues with the next vault. `409 already a fixing` means that expiry is already on the beacon. The settler reads the slot and settles only when its price and time are the sample the oracle would have chosen for that expiry. One beacon coin settles one vault per pass. The 1,000-sat read fee comes out of the vault. The settler holds no key and no fee wallet. The oracle still samples about once a minute; it does not attest a new key on every clock minute.
 
 ## Beacon fees
 

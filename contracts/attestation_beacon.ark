@@ -6,18 +6,23 @@ pragma arkade ^0.1.0;
 // One to five oracle keys sign each sample. `signersN` is how many of the five
 // slots are real, and `threshold` is how many of those must sign (at least 1).
 // A sample is
-// sha256(ctrlTxid || 0x425443555344 || num2bin(price, 8) || num2bin(time, 8)).
-// Anyone who has those signatures can write the slot. The aggregator does that
+// sha256(ctrlTxid || 0x425443555344 || num2bin(key, 8) || num2bin(price, 8) || num2bin(time, 8)).
+// The key is the slot this print fixes. A signature for one key cannot write another.
+// Anyone who has those signatures can write that slot. The aggregator does that
 // in one transaction. Reading the coin still adds readFee, paid by the vault.
-// The sample time must be at or before key + keyLag. The clock must have
-// reached key + keyLag, so a fixing cannot land before its close.
+// The sample time must sit in [key, key + keyLag], so a print fixes only the
+// minute it was taken. The clock must have reached key + keyLag, so a fixing
+// cannot land before its close.
 // adminPk migrates the coin and takes the unilateral exit. It does not sign prices.
 //
 // State is the extension packet of type STATE, 329 bytes:
 //   0        version, 0x01
 //   1..9     round, num2bin(round, 8)
 //   9..329   8 slots of 40 bytes, newest first: key num2bin(key, 8), value 32 bytes
-// The value is num2bin(price, 32). The vault reads the first 8 bytes.
+// The value keeps the price in the first 8 bytes. The next 8 are the sample
+// time. The rest are zero. A key already in a slot cannot be replaced. After
+// it falls off, the same signatures can write it again, and only those: a
+// different price or time does not verify.
 //
 // `read` adds readFee sats to output 0. The vault being settled pays that fee
 // out of its locked collateral. There is no third input.
@@ -89,11 +94,11 @@ contract AttestationBeacon(
     }
     require(price > 0, "nonpositive price");
     require(price <= PRICE_MAX, "price cap");
-    require(time > 0, "nonpositive time");
+    require(time >= key, "sample before key");
     require(time <= key + keyLag, "sample after close");
     committee();
     let ticker = 0x425443555344;
-    let msg = sha256(ctrlTxid + ticker + num2bin(price, 8) + num2bin(time, 8));
+    let msg = sha256(ctrlTxid + ticker + num2bin(key, 8) + num2bin(price, 8) + num2bin(time, 8));
     int valid = 0;
     for (i, sig) in sigs {
       if (i < signersN) {
@@ -113,7 +118,8 @@ contract AttestationBeacon(
     absent(prev, key);
     require(bin2num(substr(next, 1, 8)) == bin2num(substr(prev, 1, 8)) + 1, "round");
     require(substr(next, SLOTS, 8) == num2bin(key, 8), "slot key");
-    require(substr(next, VALUE_AT, 32) == num2bin(price, 32), "slot value");
+    let slotValue = num2bin(price, 8) + num2bin(time, 8) + num2bin(0, 16);
+    require(substr(next, VALUE_AT, 32) == slotValue, "slot value");
     require(substr(next, HISTORY_AT, HISTORY) == substr(prev, SLOTS, HISTORY), "history");
     require(tx.outputs[0].value >= tx.input.current.value, "value");
     continues(next);

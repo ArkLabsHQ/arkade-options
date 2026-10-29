@@ -31,6 +31,7 @@ export type SettleOutcome =
   | { result: "waiting"; reason: "early" | "vault" | "beacon" }
   | { result: "unfixed" }
   | { result: "mismatch" }
+  | { result: "rejected" }
   | {
     result: "settled";
     txid: string;
@@ -41,8 +42,8 @@ export type SettleOutcome =
     writer?: bigint;
   };
 
-/** The price the vault reads: the first 8 bytes of the newest slot whose key is `expiry`. */
-export function slotPrice(state: Uint8Array, expiry: bigint): bigint | null {
+/** Price and sample time from the newest slot whose key is `expiry`. */
+export function slotFixing(state: Uint8Array, expiry: bigint): { price: bigint; time: bigint } | null {
   let decoded;
   try {
     decoded = decodeState(state);
@@ -51,10 +52,16 @@ export function slotPrice(state: Uint8Array, expiry: bigint): bigint | null {
   }
   if (decoded.version !== 1) return null;
   const slot = decoded.slots.find((item) => item.key === expiry);
-  if (!slot) return null;
+  if (!slot || slot.value.length < 16) return null;
   const price = bin2num(slot.value.subarray(0, 8));
-  if (price <= 0n || price > PRICE_MAX) return null;
-  return price;
+  const time = bin2num(slot.value.subarray(8, 16));
+  if (price <= 0n || price > PRICE_MAX || time < 0n) return null;
+  return { price, time };
+}
+
+/** The price the vault reads: the first 8 bytes of the newest slot whose key is `expiry`. */
+export function slotPrice(state: Uint8Array, expiry: bigint): bigint | null {
+  return slotFixing(state, expiry)?.price ?? null;
 }
 
 /** Payout outputs after the beacon continuation. Amounts sum to the locked coin. */
@@ -153,6 +160,11 @@ export async function settleQuote(env: {
   terms: Terms;
   beacon: BeaconSpec;
   now: number;
+  /**
+   * Set when the beacon already had this expiry. Settle only if the slot is
+   * this price and sample time. Omit it when this process just published.
+   */
+  expected?: { price: bigint; time: bigint };
 }): Promise<SettleOutcome> {
   if (env.now < Number(env.terms.expiry)) return { result: "waiting", reason: "early" };
   const id = asset.AssetId.fromString(env.beacon.assetId);
@@ -204,8 +216,12 @@ export async function settleQuote(env: {
   const chosen = liveBeacon(holders, txs);
   if (!chosen) return { result: "waiting", reason: "beacon" };
   const { coin: beaconCoin, prev: beaconPrev, state } = chosen;
-  const price = slotPrice(state, env.terms.expiry);
-  if (price == null) return { result: "unfixed" };
+  const fixing = slotFixing(state, env.terms.expiry);
+  if (!fixing) return { result: "unfixed" };
+  if (env.expected && (fixing.price !== env.expected.price || fixing.time !== env.expected.time)) {
+    return { result: "rejected" };
+  }
+  const price = fixing.price;
 
   const locked = BigInt(vaultCoin.value);
   const payout = settlePayouts({

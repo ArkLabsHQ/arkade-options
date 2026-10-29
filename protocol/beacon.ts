@@ -102,9 +102,15 @@ export function nextState(prev: Uint8Array, key: bigint, value: Uint8Array): Uin
   });
 }
 
-/** Slot value `num2bin(cents, 32)`. The vault reads the first 8 bytes. */
-export function priceValue(cents: bigint): Uint8Array {
-  return num2bin(cents, 32);
+/**
+ * Slot value the vault reads. The price is the first 8 bytes. The sample time
+ * is the next 8. The rest are zero, so a price-only reader still sees the price.
+ */
+export function priceValue(cents: bigint, time = 0n): Uint8Array {
+  const out = new Uint8Array(32);
+  out.set(num2bin(cents, 8), 0);
+  out.set(num2bin(time, 8), 8);
+  return out;
 }
 
 /** Operator digest: `sha256(ctrlTxid || nextState)`. `ctrlTxid` is the reversed display txid. */
@@ -116,10 +122,10 @@ export function publishDigest(ctrlTxid: Uint8Array, next: Uint8Array): Uint8Arra
 
 const TICKER = new Uint8Array([0x42, 0x54, 0x43, 0x55, 0x53, 0x44]);
 
-/** Sample the beacon checks: `sha256(ctrlTxid || BTCUSD || price_le64 || time_le64)`. */
-export function sampleDigest(ctrlTxid: Uint8Array, price: bigint, time: bigint): Uint8Array {
+/** Sample the beacon checks: `sha256(ctrlTxid || BTCUSD || key_le64 || price_le64 || time_le64)`. */
+export function sampleDigest(ctrlTxid: Uint8Array, key: bigint, price: bigint, time: bigint): Uint8Array {
   if (ctrlTxid.length !== 32) throw new Error("ctrlTxid must be 32 bytes");
-  return sha256(ctrlTxid, TICKER, num2bin(price, 8), num2bin(time, 8));
+  return sha256(ctrlTxid, TICKER, num2bin(key, 8), num2bin(price, 8), num2bin(time, 8));
 }
 
 export const SIGNER_SLOTS = 5;

@@ -351,7 +351,15 @@ test("a filled vault settles from the beacon state the oracle published", async 
   const early = await settleQuote({ ...env, now: EXPIRY - 1 });
   assert.deepEqual(early, { result: "waiting", reason: "early" });
 
-  const settled = await settleQuote({ ...env, now: EXPIRY });
+  const refused = await settleQuote({
+    ...env,
+    now: EXPIRY,
+    expected: { price: PRICE + 1n, time: 0n },
+  });
+  assert.equal(refused.result, "rejected");
+  assert.equal(submitted.length, 0);
+
+  const settled = await settleQuote({ ...env, now: EXPIRY, expected: { price: PRICE, time: 0n } });
   assert.equal(settled.result, "settled");
   if (settled.result !== "settled") return;
   assert.equal(submitted.length, 1);

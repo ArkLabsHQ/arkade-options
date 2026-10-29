@@ -14,7 +14,8 @@ import { bindContracts } from "../protocol/contracts.ts";
 import type { OptionPosition } from "../protocol/messages.ts";
 import { quoteRelay, watchPositions } from "../protocol/nostr.ts";
 import { revision } from "../protocol/sqlite-storage.ts";
-import { fetchOracleStatus, parseOracleBeacon, serviceOrigin } from "./oracle.ts";
+import { chooseSample } from "../oracle/store.ts";
+import { fetchOraclePrices, fetchOracleStatus, parseOracleBeacon, serviceOrigin } from "./oracle.ts";
 import { duePositions, manualPositions, positionFromAnnouncement, publishOutcome, publishReady, termsFor, type WatchPosition } from "./positions.ts";
 import { Progress } from "./progress.ts";
 import { settleQuote } from "./vault.ts";
@@ -76,7 +77,7 @@ function once(key: string, line: string, error = false) {
 
 const asked = new Map<number, { at: number; result: "published" | "fixed" | "failed" }>();
 
-/** Ask once a minute. "already a fixing" is published. "no sample" and other failures are logged. */
+/** Ask once a minute. "no sample" and other failures are logged. 409 still has to match the oracle's sample. */
 async function askPublish(expiry: number, nowMs: number): Promise<"published" | "fixed" | "failed"> {
   const prev = asked.get(expiry);
   if (prev && !publishReady(prev.at, nowMs)) return prev.result;
@@ -180,6 +181,26 @@ async function progressDue() {
     }
     const published = await askPublish(position.expiry, nowMs);
     if (published === "failed") continue;
+    let expected: { price: bigint; time: bigint } | undefined;
+    if (published === "fixed") {
+      try {
+        const samples = await fetchOraclePrices(
+          oracleUrl,
+          position.expiry - lag,
+          position.expiry + lag,
+          AbortSignal.timeout(10_000),
+        );
+        const chosen = chooseSample(samples, position.expiry, lag);
+        if (!chosen) {
+          console.error(`publish ${position.expiry} fixing is not the oracle sample`);
+          continue;
+        }
+        expected = { price: BigInt(chosen.price), time: BigInt(chosen.time) };
+      } catch (err) {
+        console.error(`publish ${position.expiry} ${err instanceof Error ? err.message : err}`);
+        continue;
+      }
+    }
     try {
       const outcome = await settleQuote({
         chain: client.indexer!,
@@ -191,7 +212,12 @@ async function progressDue() {
         terms,
         beacon: parsed.beacon,
         now,
+        expected,
       });
+      if (outcome.result === "rejected") {
+        console.error(`skip ${position.rfqId} fixing is not the oracle sample`);
+        continue;
+      }
       if (outcome.result === "settled") {
         progress.note(position.id, outcome.txid);
         try {
