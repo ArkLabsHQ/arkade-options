@@ -52,7 +52,7 @@ function coinTx(outputs: { script: Uint8Array; amount: bigint }[], packets: Para
   return tx;
 }
 
-test("the vault price is the first 8 bytes of the newest matching slot", () => {
+test("the newest slot's price is its first 8 bytes only when the sample time is inside the minute", () => {
   const expiry = BigInt(EXPIRY);
   const fixed = nextState(genesisState(), expiry, priceValue(PRICE, expiry));
   assert.equal(slotPrice(fixed, expiry), PRICE);

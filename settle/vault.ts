@@ -148,6 +148,7 @@ function liveBeacon(coins: readonly ChainCoin[], txs: readonly string[]): { coin
  * Settle one vault. The price is the fixing in the beacon coin's state packet,
  * which is what `OptionVault.settle` reads. One beacon coin means one settle
  * at a time; the caller refetches the coin for the next vault.
+ * A fresh publish is trusted because signing is deterministic, and the sample comparison runs only on 409.
  */
 export async function settleQuote(env: {
   chain: Chain;

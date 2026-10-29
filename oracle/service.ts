@@ -93,6 +93,11 @@ export function dueExpiries(expiries: Iterable<number>, now: number, done: Reado
   return [...new Set(expiries)].filter((expiry) => !done.has(expiry) && now >= expiry + lag).sort((a, b) => a - b);
 }
 
+/** A missing or out-of-window print. The minute pass skips it quietly and tries that expiry again later. */
+export function skippedPublish(message: string): boolean {
+  return message === "no sample" || message === "sample before key" || message === "sample after close";
+}
+
 function authorized(header: string | undefined, token: string): boolean {
   const presented = header?.startsWith("Bearer ") ? header.slice("Bearer ".length) : "";
   const left = createHash("sha256").update(presented).digest();
@@ -363,7 +368,7 @@ export async function createOracle(deps: OracleDeps) {
     keepRecent();
     if (store.samples.some((sample) => sample.time === stamp)) return { ok: true, time: stamp, price: price.toString(), duplicate: true };
     // The signature needs the slot key, so a sample is not signed until publish.
-    store.samples.push({ price: price.toString(), time: stamp, sigs: [] });
+    store.samples.push({ price: price.toString(), time: stamp });
     await save();
     return { ok: true, time: stamp, price: price.toString() };
   }
@@ -532,7 +537,7 @@ export async function createOracle(deps: OracleDeps) {
           publishedExpiries.add(expiry);
           continue;
         }
-        if (message === "no sample" || message === "sample before key" || message === "sample after close") continue;
+        if (skippedPublish(message)) continue;
         console.error(`oracle publish ${expiry} ${message || "publish failed"}`);
       }
     }

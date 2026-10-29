@@ -65,7 +65,7 @@ From [desk/main.ts](../desk/main.ts) and the root [Dockerfile](../Dockerfile).
 | `DESK_KEY` | New 32-byte hex. Nostr pubkey and the option holder key. |
 | `BEACON_TXID` | The new oracle `issueTxid`, 64 hex characters. The process exits if this is missing or not 64 hex. Set it after deploy, then restart. |
 | `BEACON_GIDX` | Leave unset (`0`) unless status shows the identity asset at another vout. |
-| `ORACLE_URL` | Origin of the Oracle service. A quote is refused unless `GET /api/status` shows `args.keyLag` `60`, the window `OptionVault` hardcodes. |
+| `ORACLE_URL` | Origin of the Oracle service. At startup the desk reads `args.keyLag` once and refuses a quote unless it is `60`, the window `OptionVault` hardcodes. |
 | `ARK_URL` | `https://mutinynet.arkade.sh`. |
 | `EMULATOR_URL` | `https://emulator.mutinynet.arkade.sh`. |
 | `RELAYS` | Leave unset. Default is `wss://nostr.arkade.sh`. |

@@ -13,7 +13,7 @@ import { beaconIdOf, bindBeacon, decodeState, genesisState, nextState, priceValu
 import { EXIT } from "../protocol/constants.ts";
 import { statePacket } from "../protocol/cospend.ts";
 import { bytesToHex } from "../protocol/hex.ts";
-import { createOracle, dueExpiries, type HeldCoin, type OracleDeps, type OracleWallet } from "./service.ts";
+import { createOracle, dueExpiries, skippedPublish, type HeldCoin, type OracleDeps, type OracleWallet } from "./service.ts";
 import { chooseSample, loadStore, pruneSamples, SAMPLE_HISTORY_S, saveStore } from "./store.ts";
 
 const CHECKPOINT_HEX = "03080040b27520dfcaec558c7e78cf3e38b898ba8a43cfb5727266bae32c5c5b3aeb32c558aa0bac";
@@ -137,13 +137,13 @@ test("a stored sample keeps its price and drops a keyless signature", async () =
       assetId: null,
       issueTxid: null,
       deployTxid: null,
-      samples: [{ price: "10", time: 50, sigs: ["aa".repeat(64)] }],
+      samples: [{ price: "10", time: 50, sigs: ["aa".repeat(64)] } as { price: string; time: number }],
       fixings: [],
     });
     const loaded = await loadStore(dir);
     assert.equal(loaded.samples[0]?.price, "10");
     assert.equal(loaded.samples[0]?.time, 50);
-    assert.deepEqual(loaded.samples[0]?.sigs, []);
+    assert.equal("sigs" in (loaded.samples[0] ?? {}), false);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -152,8 +152,8 @@ test("a stored sample keeps its price and drops a keyless signature", async () =
 test("price history keeps one day", () => {
   const now = 2_000_000;
   const kept = pruneSamples([
-    { price: "1", time: now - SAMPLE_HISTORY_S - 1, sigs: ["aa"] },
-    { price: "2", time: now - SAMPLE_HISTORY_S, sigs: ["bb"] },
+    { price: "1", time: now - SAMPLE_HISTORY_S - 1 },
+    { price: "2", time: now - SAMPLE_HISTORY_S },
   ], now);
   assert.deepEqual(kept.map((sample) => sample.price), ["2"]);
 });
@@ -237,8 +237,9 @@ test("status, admin order, deploy change, and a print that becomes a fixing", as
     assert.equal(againSample.status, 200);
     assert.equal(againSample.json.duplicate, true);
     const historyRes = await fetch(ctx.oracle.url + `/api/prices?from=${expiry}&to=${expiry + 60n}`);
-    const history = (await historyRes.json()) as { samples: unknown[] };
+    const history = (await historyRes.json()) as { samples: Record<string, unknown>[] };
     assert.equal(history.samples.length, 1);
+    assert.equal("sigs" in history.samples[0]!, false);
 
     const disabled = await boot({ adminToken: undefined, now: () => Number(expiry + 60n) });
     assert.equal((await call(disabled.oracle.url, "/api/samples", { price: "1" }, "test-token")).status, 404);
@@ -501,6 +502,33 @@ test("the sampler stores a price without the admin route", async () => {
   } finally {
     await oracle.close();
     await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("a print before the key or after the close is skipped on the minute pass", async () => {
+  assert.equal(skippedPublish("sample before key"), true);
+  assert.equal(skippedPublish("sample after close"), true);
+  assert.equal(skippedPublish("beacon coin"), false);
+  const expiry = 1_700_000_000;
+  const later = expiry + 80;
+  const ctx = await boot({ now: () => expiry + 200, announcedExpiries: () => [expiry, later] });
+  const errors: string[] = [];
+  const log = console.error;
+  console.error = (...args: unknown[]) => {
+    errors.push(args.map(String).join(" "));
+  };
+  try {
+    assert.equal((await call(ctx.oracle.url, "/api/issue", {}, "test-token")).status, 200);
+    assert.equal((await call(ctx.oracle.url, "/api/deploy", {}, "test-token")).status, 200);
+    assert.equal((await call(ctx.oracle.url, "/api/samples", { price: "10000000", time: expiry - 1 }, "test-token")).status, 200);
+    assert.equal((await call(ctx.oracle.url, "/api/samples", { price: "10000000", time: later + 61 }, "test-token")).status, 200);
+    await ctx.oracle.publishAnnounced();
+    assert.equal(ctx.submitted.length, 0);
+    assert.deepEqual(errors, []);
+    assert.deepEqual((await call(ctx.oracle.url, "/api/status")).json.fixings, []);
+  } finally {
+    console.error = log;
+    await ctx.close();
   }
 });
 

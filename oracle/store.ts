@@ -6,11 +6,9 @@ import { writeJsonFile } from "../protocol/sqlite-storage.ts";
 export type StoredSample = {
   price: string;
   time: number;
-  /** One signature per oracle key, in constructor order. */
-  sigs: string[];
 };
 
-/** Signed samples older than this are dropped. A day of one-minute prints. */
+/** Samples older than this are dropped. A day of one-minute prints. */
 export const SAMPLE_HISTORY_S = 24 * 60 * 60;
 
 export function pruneSamples(samples: readonly StoredSample[], now: number): StoredSample[] {
@@ -55,9 +53,7 @@ function normalizeSample(value: unknown): StoredSample | null {
   if (!value || typeof value !== "object") return null;
   const sample = value as { price?: unknown; time?: unknown };
   if (typeof sample.price !== "string" || typeof sample.time !== "number") return null;
-  // A sample is signed at publish, for one key. Signatures stored before that
-  // named no key, so they are not loaded back onto the public price feed.
-  return { price: sample.price, time: sample.time, sigs: [] };
+  return { price: sample.price, time: sample.time };
 }
 
 /** Only this service writes the file, so it is read back as is. */
