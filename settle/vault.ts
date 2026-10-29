@@ -42,7 +42,7 @@ export type SettleOutcome =
     writer?: bigint;
   };
 
-/** Price and sample time from the newest slot whose key is `expiry`. */
+/** Price and sample time from the newest slot whose key is `expiry`. The time must sit in the vault's `[expiry, expiry + 60]` window. */
 export function slotFixing(state: Uint8Array, expiry: bigint): { price: bigint; time: bigint } | null {
   let decoded;
   try {
@@ -55,7 +55,7 @@ export function slotFixing(state: Uint8Array, expiry: bigint): { price: bigint; 
   if (!slot || slot.value.length < 16) return null;
   const price = bin2num(slot.value.subarray(0, 8));
   const time = bin2num(slot.value.subarray(8, 16));
-  if (price <= 0n || price > PRICE_MAX || time < 0n) return null;
+  if (price <= 0n || price > PRICE_MAX || time < expiry || time > expiry + 60n) return null;
   return { price, time };
 }
 

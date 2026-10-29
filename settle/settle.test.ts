@@ -54,22 +54,25 @@ function coinTx(outputs: { script: Uint8Array; amount: bigint }[], packets: Para
 
 test("the vault price is the first 8 bytes of the newest matching slot", () => {
   const expiry = BigInt(EXPIRY);
-  const fixed = nextState(genesisState(), expiry, priceValue(PRICE));
+  const fixed = nextState(genesisState(), expiry, priceValue(PRICE, expiry));
   assert.equal(slotPrice(fixed, expiry), PRICE);
+  assert.equal(slotPrice(nextState(genesisState(), expiry, priceValue(PRICE, expiry + 60n)), expiry), PRICE);
+  assert.equal(slotPrice(nextState(genesisState(), expiry, priceValue(PRICE, expiry - 1n)), expiry), null);
+  assert.equal(slotPrice(nextState(genesisState(), expiry, priceValue(PRICE, expiry + 61n)), expiry), null);
   assert.equal(slotPrice(genesisState(), expiry), null);
-  const value = priceValue(50n);
+  const value = priceValue(50n, expiry);
   value[8] = 0xff;
   const tagged = encodeState({
     version: 1,
     round: 2n,
     slots: [
-      { key: expiry, value: priceValue(11n) },
+      { key: expiry, value: priceValue(11n, expiry) },
       { key: expiry, value },
       ...blankSlots(6),
     ],
   });
   assert.equal(slotPrice(tagged, expiry), 11n);
-  assert.equal(slotPrice(encodeState({ version: 1, round: 1n, slots: [{ key: expiry, value: priceValue(0n) }, ...blankSlots(7)] }), expiry), null);
+  assert.equal(slotPrice(encodeState({ version: 1, round: 1n, slots: [{ key: expiry, value: priceValue(0n, expiry) }, ...blankSlots(7)] }), expiry), null);
 });
 
 test("dust folding pays one leg the whole coin", () => {
@@ -223,7 +226,7 @@ test("a filled vault settles from the beacon state the oracle published", async 
     emulatorKey,
   };
   const bound = bindContracts(terms);
-  const fixed = nextState(genesisState(), terms.expiry, priceValue(PRICE));
+  const fixed = nextState(genesisState(), terms.expiry, priceValue(PRICE, terms.expiry));
   const beaconTx = coinTx([{ script: beacon.pkScript, amount: 330n }], [statePacket(fixed)]);
   const vaultTx = coinTx([
     { script: bound.writerPkScript, amount: 330n },
@@ -354,12 +357,12 @@ test("a filled vault settles from the beacon state the oracle published", async 
   const refused = await settleQuote({
     ...env,
     now: EXPIRY,
-    expected: { price: PRICE + 1n, time: 0n },
+    expected: { price: PRICE + 1n, time: terms.expiry },
   });
   assert.equal(refused.result, "rejected");
   assert.equal(submitted.length, 0);
 
-  const settled = await settleQuote({ ...env, now: EXPIRY, expected: { price: PRICE, time: 0n } });
+  const settled = await settleQuote({ ...env, now: EXPIRY, expected: { price: PRICE, time: terms.expiry } });
   assert.equal(settled.result, "settled");
   if (settled.result !== "settled") return;
   assert.equal(submitted.length, 1);
@@ -377,7 +380,7 @@ test("a filled vault settles from the beacon state the oracle published", async 
   assert.equal(bytesToHex(tx.getOutput(2)!.script!), bytesToHex(bound.writerPkScript));
   assert.deepEqual(statePacketOf(tx), fixed);
 
-  const flat = nextState(genesisState(), terms.expiry, priceValue(STRIKE));
+  const flat = nextState(genesisState(), terms.expiry, priceValue(STRIKE, terms.expiry));
   const flatTx = coinTx([{ script: beacon.pkScript, amount: 330n }], [statePacket(flat)]);
   coins[1] = { ...coins[1]!, txid: flatTx.id };
   prev.set(flatTx.id, base64.encode(flatTx.toPSBT()));

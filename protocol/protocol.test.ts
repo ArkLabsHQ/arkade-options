@@ -8,7 +8,7 @@ import { beaconIdOf } from "./beacon.ts";
 import { bindContracts, bindSwap, directPayoutKey } from "./contracts.ts";
 import { bytesToHex, hexToBytes, xOnly } from "./hex.ts";
 import { PAIR, POSITION_KIND } from "./constants.ts";
-import { parsePosition, parseWire, premiumRefusal, requestRefusal, type OptionPosition, type RfqRequest } from "./messages.ts";
+import { beaconWindowRefusal, parsePosition, parseWire, premiumRefusal, requestRefusal, type OptionPosition, type RfqRequest } from "./messages.ts";
 import { nostrPubkey, openSealed, positionEvent, quoteRelay, readPosition, seal } from "./nostr.ts";
 import { payablePremium, premiumSats, quotedPremium } from "./pricing.ts";
 
@@ -224,6 +224,10 @@ test("a wire message with the wrong pair is dropped", () => {
   assert.deepEqual(parseWire(request), request);
   assert.equal(parseWire({ ...request, pair: "arkade:BTC->arkade:BTC" }), null);
   assert.equal(parseWire({ ...request, amount: "0001" }), null);
+  assert.equal(beaconWindowRefusal(60n), "");
+  assert.equal(beaconWindowRefusal(120n), "key lag");
+  assert.equal(beaconWindowRefusal(0n), "key lag");
+  assert.equal(beaconWindowRefusal(null), "oracle");
   assert.equal(requestRefusal(request, 1_790_000_000), "expiry");
   assert.equal(requestRefusal({ ...request, profile: { ...request.profile, expiry: 1_790_000_600 } }, 1_790_000_000), "");
   assert.equal(requestRefusal({ ...request, profile: { ...request.profile, expiry: 1_790_000_060 } }, 1_790_000_000), "expiry");

@@ -57,7 +57,7 @@ A key that falls off the eight slots may be written again only with the same pri
 
 ### Consumer: `OptionVault`
 
-`oracles[5]` is not a parameter. The vault commits to `(beaconTxid, beaconGidx)`. `settle()` takes no witness. It requires the emulator clock at or past `expiry`, itself at input 0, at least two inputs, one unit of the identity asset on input 1, and reads `tx.inputs[1].packet(32)`. The newest slot whose key equals `num2bin(expiry, 8)` gives the price in the first 8 bytes of the value and the sample time in the next 8. The time must sit in `[expiry, expiry + 60]`, the same window `attest` enforces when `keyLag` is 60. Payoff and dust folding pay outputs 1 and 2; output 0 belongs to the beacon. An expiry of 0 matches only empty slots, whose price 0 then fails `st > 0`.
+`oracles[5]` is not a parameter. The vault commits to `(beaconTxid, beaconGidx)`. `settle()` takes no witness. It requires the emulator clock at or past `expiry`, itself at input 0, at least two inputs, one unit of the identity asset on input 1, and reads `tx.inputs[1].packet(32)`. The newest slot whose key equals `num2bin(expiry, 8)` gives the price in the first 8 bytes of the value and the sample time in the next 8. The time must sit in `[expiry, expiry + 60]`, the same window `attest` enforces when `keyLag` is 60. The desk refuses a quote when the live beacon's `keyLag` is not 60, so a vault is never built against a different window. Payoff and dust folding pay outputs 1 and 2; output 0 belongs to the beacon. An expiry of 0 matches only empty slots, whose price 0 then fails `st > 0`.
 
 `close` and `unilateral` are unchanged.
 

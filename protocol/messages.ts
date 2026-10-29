@@ -235,6 +235,19 @@ function parseStatus(body: Record<string, unknown>): RfqStatus | null {
   };
 }
 
+/** `OptionVault` hardcodes this sample window. A quote needs a beacon with the same `keyLag`. */
+export const VAULT_KEY_LAG = 60n;
+
+/**
+ * Why the desk must not build a vault for this beacon window.
+ * Empty string means `keyLag` is the vault's 60 seconds.
+ */
+export function beaconWindowRefusal(keyLag: bigint | null): string {
+  if (keyLag == null) return "oracle";
+  if (keyLag !== VAULT_KEY_LAG) return "key lag";
+  return "";
+}
+
 /** Why a parsed request is not quotable. Empty string means the desk may price it. */
 export function requestRefusal(message: RfqRequest, now: number): string {
   const collateral = BigInt(message.amount);
