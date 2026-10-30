@@ -1,6 +1,14 @@
 # Arkade Options
 
-Cash-settled covered calls and limited puts on Mutinynet. The desk pays the premium. The seller sends collateral to the address on the page.
+The contracts are the engine. OptionVault and AttestationBeacon are what an external developer uses.
+
+A Derive-style orderbook frontend can sit on them. That developer quotes both sides, holds inventory, and lists any expiry the beacon can publish. They do not use this repo's desk.
+
+This repo's desk, RFQ, Friday list, and sell-side page are one deployment on top of the engine. They are not required to use the contracts.
+
+That frontend imports `arkade-options/contracts`. It still needs the artifacts, a filled-vault announcement, and a beacon price for the expiry. See [contracts/README.md](contracts/README.md).
+
+Buying is the same vault with the pubkeys swapped. Selling is the path this page implements.
 
 Day-to-day work is funding the desk. The oracle signs BTCUSD itself and keeps the history. The settler publishes a fixing after expiry and settles the vault. A new beacon is a new identity. Deploy and bootstrap steps are in [docs/runbook.md](docs/runbook.md).
 
