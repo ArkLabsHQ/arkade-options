@@ -2,6 +2,8 @@
 
 Cash-settled covered calls and limited puts on Mutinynet. The desk pays the premium. The seller sends collateral to the address on the page.
 
+The contracts in [contracts/](contracts/README.md) are the engine; the desk RFQ, the Friday list, the 10-minute test, and the sell-side page are a deployment of that engine and stay in `desk/`, `settle/`, `oracle/`, and `app/`.
+
 Day-to-day work is funding the desk. The oracle signs BTCUSD itself and keeps the history. The settler publishes a fixing after expiry and settles the vault. A new beacon is a new identity. Deploy and bootstrap steps are in [docs/runbook.md](docs/runbook.md).
 
 ## Live

@@ -550,13 +550,18 @@ export async function createOracle(deps: OracleDeps) {
     await recordSample(price, now());
   }
 
+  const pending = new Set<Promise<unknown>>();
+  const track = (work: Promise<unknown>) => {
+    pending.add(work);
+    void work.finally(() => pending.delete(work));
+  };
   const minute = () => {
-    void takeSample().catch((err) => {
+    track(takeSample().catch((err) => {
       console.error("oracle sample", err instanceof Error ? err.message : "sample failed");
-    });
-    void publishAnnounced().catch((err) => {
+    }));
+    track(publishAnnounced().catch((err) => {
       console.error("oracle publish", err instanceof Error ? err.message : "publish failed");
-    });
+    }));
   };
   const timer = deps.sampleEveryMs && deps.sampleEveryMs > 0 ? setInterval(minute, deps.sampleEveryMs) : undefined;
   if (timer) minute();
@@ -564,10 +569,13 @@ export async function createOracle(deps: OracleDeps) {
     port,
     url: `http://127.0.0.1:${port}`,
     publishAnnounced,
-    close: () => new Promise<void>((resolve, reject) => {
+    close: async () => {
       if (timer) clearInterval(timer);
-      server.close((err) => (err ? reject(err) : resolve()));
-    }),
+      await Promise.all([...pending]);
+      await new Promise<void>((resolve, reject) => {
+        server.close((err) => (err ? reject(err) : resolve()));
+      });
+    },
   };
 }
 
