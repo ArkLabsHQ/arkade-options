@@ -27,6 +27,7 @@ import { bytesToHex, hexToBytes } from "../protocol/hex.ts";
 import { networkByName } from "../protocol/network.ts";
 import { intentProgram } from "../protocol/programs.ts";
 import {
+  beaconWindowRefusal,
   parsePosition,
   premiumRefusal,
   requestRefusal,
@@ -39,6 +40,7 @@ import { connectTransport, nostrPubkey, type Incoming } from "../protocol/nostr.
 import { deribitPremium, fetchSurface, surfaceStatus } from "../protocol/deribit.ts";
 import { premiumSats, quotedPremium } from "../protocol/pricing.ts";
 import { openSqliteStorage, revision } from "../protocol/sqlite-storage.ts";
+import { fetchOracleStatus, parseOracleBeacon, serviceOrigin } from "../settle/oracle.ts";
 import { Book, hasBeacon, openPremium, pageQuotes, quoteCounts, type QuoteFilter, type QuoteRow } from "./book.ts";
 import { countFill, countQuote, emptyHour, hourLine, msUntilNextHour } from "./digest.ts";
 import { finalizeDeskSpends } from "./finalize.ts";
@@ -51,6 +53,7 @@ import { spotCents } from "./spot.ts";
  *   DESK_KEY        32-byte hex. Nostr pubkey and the option holder key.
  *   BEACON_TXID     required 64-hex display txid of the oracle's identity asset
  *   BEACON_GIDX     optional vout index of that asset. Default 0
+ *   ORACLE_URL      oracle origin. expiryLag is read once at startup. A quote is refused unless it is 60.
  *   RELAYS          comma-separated websocket URLs
  *   ARK_URL         default Mutinynet arkd
  *   EMULATOR_URL    default Mutinynet emulator
@@ -76,6 +79,7 @@ function bigintEnv(name: string, fallback: bigint): bigint {
 }
 
 const deskKeyHex = required("DESK_KEY");
+const oracleUrl = serviceOrigin(required("ORACLE_URL"));
 const secret = hexToBytes(deskKeyHex);
 if (secret.length !== 32) throw new Error("DESK_KEY must be 32 bytes");
 
@@ -334,6 +338,11 @@ async function onRequest(message: RfqRequest, from: string) {
     createdAt: now,
     clientPubkey: from,
   };
+  const lagRefusal = beaconWindowRefusal(beaconExpiryLag);
+  if (lagRefusal) {
+    await refuse(from, message.rfq_id, lagRefusal);
+    return;
+  }
   const bound = bindContracts(termsFor(row));
   if (bytesToHex(bound.writerPkScript) !== message.profile.writer_pk_script) {
     await refuse(from, message.rfq_id, "writer script");
@@ -383,6 +392,21 @@ async function onMessage({ from, message }: Incoming) {
   } catch (err) {
     console.error("rfq", err);
   }
+}
+
+let beaconExpiryLag: bigint | null = null;
+try {
+  const parsed = parseOracleBeacon(
+    await fetchOracleStatus(oracleUrl, AbortSignal.timeout(10_000)),
+    beaconDisplay.txid,
+    beaconDisplay.gidx,
+  );
+  if (parsed.ok) beaconExpiryLag = parsed.beacon.expiryLag;
+} catch {
+  beaconExpiryLag = null;
+}
+if (beaconWindowRefusal(beaconExpiryLag)) {
+  console.error(beaconExpiryLag == null ? "oracle unreachable, quotes refused" : `beacon expiryLag ${beaconExpiryLag}, quotes refused`);
 }
 
 const transport = connectTransport({ relays, secretKey: secret, onMessage });

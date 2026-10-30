@@ -90,7 +90,9 @@ export function publishReady(lastAt: number, nowMs: number, every = PUBLISH_EVER
 
 /**
  * `published` is a new fixing. `fixed` is 409 "already a fixing": the expiry
- * is on the beacon, so settle it. Anything else, including "no sample", failed.
+ * is already on the beacon. The caller still has to read the slot and refuse
+ * it when it is not the sample the oracle would have chosen. Anything else,
+ * including "no sample", failed.
  */
 export function publishOutcome(status: number, error?: string): "published" | "fixed" | "failed" {
   if (status >= 200 && status < 300) return "published";

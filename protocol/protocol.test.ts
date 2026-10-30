@@ -8,7 +8,7 @@ import { beaconIdOf } from "./beacon.ts";
 import { bindContracts, bindSwap, directPayoutKey } from "./contracts.ts";
 import { bytesToHex, hexToBytes, xOnly } from "./hex.ts";
 import { PAIR, POSITION_KIND } from "./constants.ts";
-import { parsePosition, parseWire, premiumRefusal, requestRefusal, type OptionPosition, type RfqRequest } from "./messages.ts";
+import { beaconWindowRefusal, parsePosition, parseWire, premiumRefusal, requestRefusal, type OptionPosition, type RfqRequest } from "./messages.ts";
 import { nostrPubkey, openSealed, positionEvent, quoteRelay, readPosition, seal } from "./nostr.ts";
 import { payablePremium, premiumSats, quotedPremium } from "./pricing.ts";
 
@@ -52,11 +52,11 @@ test("derived intent and vault addresses stay pinned", async () => {
   const bound = bindContracts(terms);
   assert.equal(
     bound.intentAddress,
-    "tark1qqhsre0ptn9r28d07wzrldc08shs5x7aqhj6lzy2vauyaulppg4qrw8e8gxqpf8uffxsl6fp7pxrt999p46rylk89mvpttr4ed9ju76y0rfw9p",
+    "tark1qqhsre0ptn9r28d07wzrldc08shs5x7aqhj6lzy2vauyaulppg4qrzwqrstu39ns5tzp4a0uvvs0q3spe06e44va37ddc3jqsnflxl3h03fnat",
   );
   assert.equal(
     bound.vaultAddress,
-    "tark1qqhsre0ptn9r28d07wzrldc08shs5x7aqhj6lzy2vauyaulppg4qrqgmxp4q0dp4p05myrmtg3y8h2vplvax0j4q8ahe8gr3x5yavzd7dlvs5x",
+    "tark1qqhsre0ptn9r28d07wzrldc08shs5x7aqhj6lzy2vauyaulppg4qrmttzk499tz7hwkm0vv5nxt8a6w809wxqv6y087jn6f86htw46gncvs7ef",
   );
   assert.equal(bytesToHex(bound.writerPkScript), "51203d002da23716b1975b89b46563d89040a3c71d017593934bfb751b68a7cae991");
   assert.deepEqual(bindContracts(terms).intentPkScript, bound.intentPkScript);
@@ -224,6 +224,10 @@ test("a wire message with the wrong pair is dropped", () => {
   assert.deepEqual(parseWire(request), request);
   assert.equal(parseWire({ ...request, pair: "arkade:BTC->arkade:BTC" }), null);
   assert.equal(parseWire({ ...request, amount: "0001" }), null);
+  assert.equal(beaconWindowRefusal(60n), "");
+  assert.equal(beaconWindowRefusal(120n), "expiry lag");
+  assert.equal(beaconWindowRefusal(0n), "expiry lag");
+  assert.equal(beaconWindowRefusal(null), "oracle");
   assert.equal(requestRefusal(request, 1_790_000_000), "expiry");
   assert.equal(requestRefusal({ ...request, profile: { ...request.profile, expiry: 1_790_000_600 } }, 1_790_000_000), "");
   assert.equal(requestRefusal({ ...request, profile: { ...request.profile, expiry: 1_790_000_060 } }, 1_790_000_000), "expiry");
