@@ -2,11 +2,11 @@
 
 The contracts are the engine. OptionVault and AttestationBeacon are what an external developer uses.
 
-A Derive-style orderbook frontend can sit on them. That developer quotes both sides, holds inventory, and lists any expiry the beacon can publish. They do not use this repo's desk.
+A pure order book lists both sides and matches two users. This repo's desk is optional. See [contracts/](contracts/).
 
 This repo's desk, RFQ, Friday list, and sell-side page are one deployment on top of the engine. They are not required to use the contracts.
 
-That frontend imports `arkade-options/contracts`. It still needs the artifacts, a filled-vault announcement, and a beacon price for the expiry. See [contracts/README.md](contracts/README.md).
+An order book imports `arkade-options/contracts`. It still needs the artifacts, a filled-vault announcement, and a beacon price for the expiry. See [contracts/README.md](contracts/README.md).
 
 Buying is the same vault with the pubkeys swapped. Selling is the path this page implements.
 

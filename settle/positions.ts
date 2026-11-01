@@ -1,6 +1,7 @@
 import { asset } from "@arkade-os/sdk";
 
 import { beaconIdOf } from "../protocol/beacon-id.ts";
+import { OPTION_VAULT_PROGRAM_ID } from "../protocol/constants.ts";
 import { directPayoutKey, type Terms } from "../protocol/contracts.ts";
 import { hexToBytes } from "../protocol/hex.ts";
 import { parsePosition, type OptionPosition } from "../protocol/messages.ts";
@@ -19,6 +20,7 @@ export type WatchPosition = {
   exit: bigint;
   writerPk: Uint8Array;
   holderPk: Uint8Array;
+  programId: string;
   payoutKey?: Uint8Array;
   beaconTxid: string;
   beaconGidx: number;
@@ -60,12 +62,23 @@ export function positionFromAnnouncement(body: unknown): WatchPosition | null {
     exit: BigInt(row.exit),
     writerPk: hexToBytes(row.writer_pubkey),
     holderPk: hexToBytes(row.holder_pubkey),
+    programId: row.program_id,
     payoutKey: directPayoutKey(row.writer_pubkey, row.writer_pk_script),
     beaconTxid: row.beacon_txid,
     beaconGidx: row.beacon_gidx,
     vaultAddress: row.vault_address,
     fillTxid: row.fill_txid,
   };
+}
+
+export function settlementPositions(rows: readonly OptionPosition[]): WatchPosition[] {
+  const positions: WatchPosition[] = [];
+  for (const row of rows) {
+    const position = positionFromAnnouncement(row);
+    if (!position || position.programId !== OPTION_VAULT_PROGRAM_ID) continue;
+    positions.push(position);
+  }
+  return positions;
 }
 
 /** Filled vaults whose expiry is at least `lag` seconds ago. Oldest first. */

@@ -20,13 +20,13 @@ import {
   priceValue,
   statePacketOf,
 } from "../protocol/beacon.ts";
-import { EXIT, PAIR } from "../protocol/constants.ts";
+import { EXIT, OPTION_VAULT_PROGRAM_ID, PAIR } from "../protocol/constants.ts";
 import { bindContracts, payoutVtxo, type Terms } from "../protocol/contracts.ts";
 import { statePacket } from "../protocol/cospend.ts";
 import { bytesToHex, hexToBytes } from "../protocol/hex.ts";
 import { parsePosition } from "../protocol/messages.ts";
 import { serviceOrigin, parseOracleBeacon } from "./oracle.ts";
-import { duePositions, manualPositions, positionFromAnnouncement, publishOutcome, publishReady, termsFor } from "./positions.ts";
+import { duePositions, manualPositions, positionFromAnnouncement, publishOutcome, publishReady, settlementPositions, termsFor } from "./positions.ts";
 import { settleQuote, slotPrice, settlePayouts, type ChainCoin } from "./vault.ts";
 
 const CHECKPOINT = "03080040b27520dfcaec558c7e78cf3e38b898ba8a43cfb5727266bae32c5c5b3aeb32c558aa0bac";
@@ -182,6 +182,12 @@ test("a positions file accepts one vault, a list, or a positions object", () => 
   assert.equal(manualPositions([row, { ...row, type: "rfq_quote" }]).length, 1);
   assert.equal(manualPositions({ positions: [row] }).length, 1);
   assert.equal(manualPositions({ quotes: [row] }).length, 0);
+  const predict = { ...row, rfq_id: "bb".repeat(32), program_id: "PredictVault" };
+  assert.equal(parsePosition(predict)?.program_id, "PredictVault");
+  assert.equal(parsePosition({ ...predict, program_id: "not an id" }), null);
+  const kept = settlementPositions(manualPositions([predict, row]));
+  assert.deepEqual(kept.map((item) => item.id), [row.rfq_id]);
+  assert.equal(kept[0]?.programId, OPTION_VAULT_PROGRAM_ID);
 });
 
 test("a service origin drops the path and refuses other schemes", () => {

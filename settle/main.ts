@@ -16,7 +16,7 @@ import { quoteRelay, watchPositions } from "../protocol/nostr.ts";
 import { revision } from "../protocol/sqlite-storage.ts";
 import { chooseSample } from "../oracle/store.ts";
 import { fetchOraclePrices, fetchOracleStatus, parseOracleBeacon, serviceOrigin } from "./oracle.ts";
-import { duePositions, manualPositions, positionFromAnnouncement, publishOutcome, publishReady, termsFor, type WatchPosition } from "./positions.ts";
+import { duePositions, manualPositions, publishOutcome, publishReady, settlementPositions, termsFor } from "./positions.ts";
 import { Progress } from "./progress.ts";
 import { settleQuote } from "./vault.ts";
 
@@ -148,11 +148,7 @@ function onPosition(position: OptionPosition) {
 async function progressDue() {
   await loadManual();
   const now = Math.floor(Date.now() / 1000);
-  const positions: WatchPosition[] = [];
-  for (const row of progress.positions()) {
-    const position = positionFromAnnouncement(row);
-    if (position) positions.push(position);
-  }
+  const positions = settlementPositions(progress.positions());
   watching = positions.length;
   const due = duePositions(positions, now, progress.ids());
   if (!due.length) return;

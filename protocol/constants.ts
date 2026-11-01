@@ -4,6 +4,7 @@ export const RFQ_KIND = 24859;
 /** NIP-78 app data. One replaceable event per filled vault, tagged `arkade-option`. */
 export const POSITION_KIND = 30078;
 export const POSITION_TAG = "arkade-option";
+export const OPTION_VAULT_PROGRAM_ID = "OptionVault";
 // Mutinynet's unilateralExitDelay. Arkd refuses to cosign a vtxo whose shortest
 // exit leaf is below this, and BIP68 seconds must be a multiple of 512.
 export const EXIT = 2048n;
