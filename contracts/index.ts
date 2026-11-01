@@ -10,7 +10,7 @@ import optionVaultArtifact from "./option_vault.artifact.json" with { type: "jso
 
 export { attestationBeaconArtifact, optionVaultArtifact };
 
-export { beaconProgram, vaultProgram } from "../protocol/programs.ts";
+export { beaconProgram, standingLegProgram, standingVaultProgram, vaultProgram } from "../protocol/programs.ts";
 
 export { bindContracts, type Bound as OptionBound, type Terms } from "../protocol/contracts.ts";
 
@@ -23,5 +23,14 @@ export {
 } from "../protocol/beacon.ts";
 
 export { buildSettle, submit } from "../protocol/cospend.ts";
+
+export {
+  bindHolderLeg,
+  bindStandingVault,
+  bindWriterLeg,
+  buildStandingMatch,
+  STANDING_PARTY,
+  type StandingTerms,
+} from "../protocol/standing.ts";
 
 export { settlePayouts, slotFixing, slotPrice } from "../settle/vault.ts";

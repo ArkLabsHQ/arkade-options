@@ -4,6 +4,8 @@ import beaconArtifact from "../contracts/attestation_beacon.artifact.json" with 
 import swapArtifact from "../contracts/non_interactive_swap.artifact.json" with { type: "json" };
 import intentArtifact from "../contracts/option_intent.artifact.json" with { type: "json" };
 import vaultArtifact from "../contracts/option_vault.artifact.json" with { type: "json" };
+import standingLegArtifact from "../contracts/standing_leg.artifact.json" with { type: "json" };
+import standingVaultArtifact from "../contracts/standing_vault.artifact.json" with { type: "json" };
 
 // CHECKTIME (0xdc) is in the SDK. The vault's slot loop still compiles to OP_PUT
 // (0xbb), which that table does not list, so the spent program cannot load
@@ -55,6 +57,14 @@ export function intentProgram() {
   return secondsExit(intentArtifact as arkade.ContractArtifact);
 }
 
+export function standingLegProgram() {
+  return secondsExit(standingLegArtifact as arkade.ContractArtifact);
+}
+
+export function standingVaultProgram() {
+  return secondsExit(standingVaultArtifact as arkade.ContractArtifact);
+}
+
 /**
  * The compiler's NonInteractiveSwap, the pattern OptionIntent copies. Its
  * `swap` path compares output 0 against `new SingleSig(makerPk, exit)`, which
@@ -80,6 +90,14 @@ export function rawBeaconProgram() {
 
 export function rawIntentProgram() {
   return arkade.programFromArtifact(intentArtifact as arkade.ContractArtifact);
+}
+
+export function rawStandingLegProgram() {
+  return arkade.programFromArtifact(standingLegArtifact as arkade.ContractArtifact);
+}
+
+export function rawStandingVaultProgram() {
+  return arkade.programFromArtifact(standingVaultArtifact as arkade.ContractArtifact);
 }
 
 export function rawSwapProgram() {

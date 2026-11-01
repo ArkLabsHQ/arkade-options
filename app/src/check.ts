@@ -8,8 +8,12 @@ import {
   intentProgram,
   rawBeaconProgram,
   rawIntentProgram,
+  rawStandingLegProgram,
+  rawStandingVaultProgram,
   rawSwapProgram,
   rawVaultProgram,
+  standingLegProgram,
+  standingVaultProgram,
   swapProgram,
   vaultProgram,
 } from "../../protocol/programs.ts";
@@ -43,6 +47,8 @@ onlySecondsDiffers(rawVaultProgram(), vaultProgram());
 onlySecondsDiffers(rawIntentProgram(), intentProgram());
 onlySecondsDiffers(rawSwapProgram(), swapProgram());
 onlySecondsDiffers(rawBeaconProgram(), beaconProgram());
+onlySecondsDiffers(rawStandingLegProgram(), standingLegProgram());
+onlySecondsDiffers(rawStandingVaultProgram(), standingVaultProgram());
 
 const key = (fill: number) => new Uint8Array(32).fill(fill);
 const emulatorKey = new Uint8Array(33);
