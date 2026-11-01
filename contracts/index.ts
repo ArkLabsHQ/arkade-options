@@ -1,28 +1,18 @@
 /**
- * Import surface for a desk, an order book, or a UI.
+ * Import surface for a desk or a UI.
  *
  * The JSON files in this directory are the compiler artifacts. `vaultProgram`
- * and `beaconProgram` load them. `bindFill` takes an explicit holder and
- * writer. An announcement's program id defaults to OptionVault.
+ * and `beaconProgram` load them. The bind and settle helpers are the same
+ * functions the services already call; this module only re-exports them.
  */
 import attestationBeaconArtifact from "./attestation_beacon.artifact.json" with { type: "json" };
 import optionVaultArtifact from "./option_vault.artifact.json" with { type: "json" };
 
 export { attestationBeaconArtifact, optionVaultArtifact };
 
-export { OPTION_VAULT_PROGRAM_ID } from "../protocol/constants.ts";
+export { beaconProgram, vaultProgram } from "../protocol/programs.ts";
 
-export { beaconProgram, vaultProgram, vaultProgramFor } from "../protocol/programs.ts";
-
-export { announceFill, parsePosition, type OptionPosition } from "../protocol/messages.ts";
-
-export {
-  bindContracts,
-  bindFill,
-  type Bound as OptionBound,
-  type Terms,
-  type VaultFill,
-} from "../protocol/contracts.ts";
+export { bindContracts, type Bound as OptionBound, type Terms } from "../protocol/contracts.ts";
 
 export {
   beaconIdOf,

@@ -36,10 +36,8 @@ import {
   optionVaultArtifact,
   attestationBeaconArtifact,
   vaultProgram,
-  vaultProgramFor,
   beaconProgram,
-  bindFill,
-  announceFill,
+  bindContracts,
   bindBeacon,
   buildSettle,
   submit,
@@ -48,7 +46,7 @@ import {
 } from "arkade-options/contracts";
 ```
 
-`vaultProgram()` and `beaconProgram()` load the committed artifacts. `bindFill` derives the vault for an explicit holder and writer. This repo's desk passes its own key as the holder. A filled vault's `program_id` defaults to `OptionVault`. `bindBeacon` derives the beacon from a `beaconIdOf` id. `buildSettle` spends the vault and the beacon together, and `submit` sends that transaction. `slotPrice` is the fixing that vault would accept. `settlePayouts` is what that spend pays.
+`vaultProgram()` and `beaconProgram()` load the committed artifacts. `bindContracts` derives the vault a desk quotes. `bindBeacon` derives the beacon from a `beaconIdOf` id. `buildSettle` spends the vault and the beacon together, and `submit` sends that transaction. `slotPrice` is the fixing that vault would accept. `settlePayouts` is what that spend pays.
 
 Programs load the JSON in this directory. The design of the beacon is in [beacon.md](beacon.md).
 

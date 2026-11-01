@@ -10,7 +10,7 @@ import {
 
 import { ARK_URL, DEFAULT_RELAYS, EMULATOR_URL } from "../protocol/constants.ts";
 import { networkByName } from "../protocol/network.ts";
-import { bindFill } from "../protocol/contracts.ts";
+import { bindContracts } from "../protocol/contracts.ts";
 import type { OptionPosition } from "../protocol/messages.ts";
 import { quoteRelay, watchPositions } from "../protocol/nostr.ts";
 import { revision } from "../protocol/sqlite-storage.ts";
@@ -148,9 +148,7 @@ function onPosition(position: OptionPosition) {
 async function progressDue() {
   await loadManual();
   const now = Math.floor(Date.now() / 1000);
-  const positions = settlementPositions(progress.positions(), (position) => {
-    once(`program:${position.id}`, `skip ${position.rfqId} program ${position.programId}`, true);
-  });
+  const positions = settlementPositions(progress.positions());
   watching = positions.length;
   const due = duePositions(positions, now, progress.ids());
   if (!due.length) return;
@@ -173,11 +171,7 @@ async function progressDue() {
   for (const position of due) {
     if (position.expiry + lag > now) continue;
     const terms = termsFor(position, client.serverKey, client.emulatorKey!, parsed.beacon.readFee);
-    const bound = bindFill(
-      { holder: position.holderPk, writer: position.writerPk, programId: position.programId },
-      terms,
-    );
-    if (bound.vaultAddress !== position.vaultAddress) {
+    if (bindContracts(terms).vaultAddress !== position.vaultAddress) {
       once(`addr:${position.id}`, `skip ${position.rfqId} vault address`, true);
       continue;
     }
@@ -212,15 +206,10 @@ async function progressDue() {
         checkpoint: client.checkpoint,
         fillTxid: position.fillTxid,
         terms,
-        programId: position.programId,
         beacon: parsed.beacon,
         now,
         expected,
       });
-      if (outcome.result === "unsupported") {
-        once(`program:${position.id}`, `skip ${position.rfqId} program ${position.programId}`, true);
-        continue;
-      }
       if (outcome.result === "rejected") {
         console.error(`skip ${position.rfqId} fixing is not the oracle sample`);
         continue;

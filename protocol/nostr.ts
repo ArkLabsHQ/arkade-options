@@ -71,7 +71,7 @@ export function positionEvent(secretKey: Uint8Array, position: OptionPosition, n
   }, secretKey);
 }
 
-/** A verified public vault. The signer is the holder named on the fill. Sealed RFQs do not pass. */
+/** A verified public vault. The signer is the holder. Sealed RFQs do not pass. */
 export function readPosition(event: Sealed): OptionPosition | null {
   if (event.kind !== POSITION_KIND) return null;
   if (!event.tags.some((tag) => tag[0] === "t" && tag[1] === POSITION_TAG)) return null;

@@ -1,7 +1,7 @@
 import { arkade, DefaultVtxo, networks, RestArkProvider } from "@arkade-os/sdk";
 
 import type { BeaconId } from "./beacon-id.ts";
-import { ARK_URL, EXIT, OPTION_VAULT_PROGRAM_ID } from "./constants.ts";
+import { ARK_URL, EXIT } from "./constants.ts";
 import { bytesToHex, hexToBytes, xOnly } from "./hex.ts";
 import { intentProgram, swapProgram, vaultProgram } from "./programs.ts";
 
@@ -79,31 +79,6 @@ export function directPayout(key: Uint8Array): { tweakedPublicKey: Uint8Array; p
 
 export function addressOf(script: { address: (hrp: string, server: Uint8Array) => { encode: () => string } }, serverKey: Uint8Array) {
   return script.address(networks.mutinynet.hrp, xOnly(serverKey)).encode();
-}
-
-/**
- * The two parties on a vault. Neither has to be this repo's desk.
- * `programId` omitted means OptionVault.
- */
-export type VaultFill = {
-  holder: Uint8Array;
-  writer: Uint8Array;
-  programId?: string;
-};
-
-/**
- * Bind `fill.holder` and `fill.writer` into a vault. A pure order book passes
- * two user pubkeys. Only OptionVault can be derived here.
- */
-export function bindFill(fill: VaultFill, terms: Omit<Terms, "holderPk" | "writerPk">): Bound {
-  const programId = fill.programId ?? OPTION_VAULT_PROGRAM_ID;
-  if (programId !== OPTION_VAULT_PROGRAM_ID) throw new Error(`unsupported program ${programId}`);
-  // fill.holder and fill.writer override any holder or writer already on the terms object.
-  return bindContracts({
-    ...terms,
-    holderPk: fill.holder,
-    writerPk: fill.writer,
-  });
 }
 
 /**

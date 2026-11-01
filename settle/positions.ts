@@ -20,7 +20,6 @@ export type WatchPosition = {
   exit: bigint;
   writerPk: Uint8Array;
   holderPk: Uint8Array;
-  /** Contract this vault settles. Older events are OptionVault. */
   programId: string;
   payoutKey?: Uint8Array;
   beaconTxid: string;
@@ -72,22 +71,11 @@ export function positionFromAnnouncement(body: unknown): WatchPosition | null {
   };
 }
 
-/**
- * OptionVault rows this settler will try. Another program id stays in progress
- * and is skipped. Parsing a foreign id does not throw.
- */
-export function settlementPositions(
-  rows: readonly OptionPosition[],
-  onSkip?: (position: WatchPosition) => void,
-): WatchPosition[] {
+export function settlementPositions(rows: readonly OptionPosition[]): WatchPosition[] {
   const positions: WatchPosition[] = [];
   for (const row of rows) {
     const position = positionFromAnnouncement(row);
-    if (!position) continue;
-    if (position.programId !== OPTION_VAULT_PROGRAM_ID) {
-      onSkip?.(position);
-      continue;
-    }
+    if (!position || position.programId !== OPTION_VAULT_PROGRAM_ID) continue;
     positions.push(position);
   }
   return positions;

@@ -1,7 +1,7 @@
 import { arkade, DefaultVtxo, type ArkTxInput } from "@arkade-os/sdk";
 
 import { DUST_SATS } from "../protocol/constants.ts";
-import { bindFill, type Terms } from "../protocol/contracts.ts";
+import { bindContracts, type Terms } from "../protocol/contracts.ts";
 import { bytesToHex } from "../protocol/hex.ts";
 import { classifyIntent, psbtView } from "../protocol/intent-state.ts";
 import { intentProgram } from "../protocol/programs.ts";
@@ -56,8 +56,7 @@ export async function fillQuote(opts: {
    */
   ark?: PendingArk;
 }): Promise<{ result: FillResult; txid?: string; spent?: Coin[] }> {
-  const terms = opts.termsFor(opts.row);
-  const bound = bindFill({ holder: terms.holderPk, writer: terms.writerPk }, terms);
+  const bound = bindContracts(opts.termsFor(opts.row));
   const intent = opts.client.contract(intentProgram(), bound.intent);
   const coins = await intent.getUtxos();
   const collateral = BigInt(opts.row.collateral);

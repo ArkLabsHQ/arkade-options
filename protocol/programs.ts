@@ -4,7 +4,6 @@ import beaconArtifact from "../contracts/attestation_beacon.artifact.json" with 
 import swapArtifact from "../contracts/non_interactive_swap.artifact.json" with { type: "json" };
 import intentArtifact from "../contracts/option_intent.artifact.json" with { type: "json" };
 import vaultArtifact from "../contracts/option_vault.artifact.json" with { type: "json" };
-import { OPTION_VAULT_PROGRAM_ID } from "./constants.ts";
 
 // CHECKTIME (0xdc) is in the SDK. The vault's slot loop still compiles to OP_PUT
 // (0xbb), which that table does not list, so the spent program cannot load
@@ -50,12 +49,6 @@ function secondsExit(artifact: arkade.ContractArtifact): ReturnType<typeof arkad
 
 export function vaultProgram() {
   return secondsExit(vaultArtifact as arkade.ContractArtifact);
-}
-
-/** The vault artifact for an announcement program id. Only OptionVault is loaded. */
-export function vaultProgramFor(programId: string = OPTION_VAULT_PROGRAM_ID) {
-  if (programId !== OPTION_VAULT_PROGRAM_ID) throw new Error(`unsupported program ${programId}`);
-  return vaultProgram();
 }
 
 export function intentProgram() {
