@@ -7,7 +7,7 @@ import { generateSecretKey } from "nostr-tools/pure";
 import { beaconIdOf } from "./beacon.ts";
 import { bindContracts, bindSwap, directPayoutKey } from "./contracts.ts";
 import { bytesToHex, hexToBytes, xOnly } from "./hex.ts";
-import { PAIR, POSITION_KIND } from "./constants.ts";
+import { OPTION_VAULT_PROGRAM_ID, PAIR, POSITION_KIND } from "./constants.ts";
 import { beaconWindowRefusal, parsePosition, parseWire, premiumRefusal, requestRefusal, type OptionPosition, type RfqRequest } from "./messages.ts";
 import { nostrPubkey, openSealed, positionEvent, quoteRelay, readPosition, seal } from "./nostr.ts";
 import { payablePremium, premiumSats, quotedPremium } from "./pricing.ts";
@@ -170,6 +170,7 @@ test("a filled vault is public on nostr and a sealed quote is not", () => {
   const position: OptionPosition = {
     v: 1,
     type: "option_position",
+    program_id: OPTION_VAULT_PROGRAM_ID,
     rfq_id: "11".repeat(32),
     pair: PAIR,
     kind: 0,
@@ -188,6 +189,10 @@ test("a filled vault is public on nostr and a sealed quote is not", () => {
   const event = positionEvent(desk, position, 1_790_000_000);
   assert.equal(event.kind, POSITION_KIND);
   assert.deepEqual(readPosition(event), position);
+  const { program_id: _programId, ...legacyBody } = position;
+  const legacy = readPosition(positionEvent(desk, legacyBody as OptionPosition, 1_790_000_000));
+  assert.equal(legacy?.program_id, OPTION_VAULT_PROGRAM_ID);
+  assert.equal(legacy?.holder_pubkey, position.holder_pubkey);
   assert.equal(openSealed(generateSecretKey(), event), null);
   const tampered = {
     id: event.id,

@@ -1,4 +1,4 @@
-import { DUST_SATS, EXIT, PAIR, PRICE_MAX, Q_MAX, Q_MIN } from "./constants.ts";
+import { DUST_SATS, EXIT, OPTION_VAULT_PROGRAM_ID, PAIR, PRICE_MAX, Q_MAX, Q_MIN } from "./constants.ts";
 
 const HEX64 = /^[0-9a-f]{64}$/;
 const AMOUNT = /^[1-9][0-9]{0,15}$/;
@@ -71,6 +71,8 @@ export type RfqStatus = {
 export type OptionPosition = {
   v: 1;
   type: "option_position";
+  /** Contract this vault settles. Missing on older events; those are OptionVault. */
+  program_id: string;
   rfq_id: string;
   pair: typeof PAIR;
   kind: 0 | 1;
@@ -193,9 +195,58 @@ function parseStatusRequest(body: Record<string, unknown>): RfqStatusRequest | n
   return { v: 1, type: "rfq_status_request", rfq_id: body.rfq_id };
 }
 
+const PROGRAM_ID = /^[A-Za-z][A-Za-z0-9_]{0,63}$/;
+
+/** Missing means OptionVault. Any other well-formed id is kept for a later contract. */
+function readProgramId(value: unknown): string | null {
+  if (value === undefined) return OPTION_VAULT_PROGRAM_ID;
+  if (typeof value === "string" && PROGRAM_ID.test(value)) return value;
+  return null;
+}
+
+/** Public record of one fill. `holder` and `writer` are the two parties. */
+export function announceFill(input: {
+  holder: string;
+  writer: string;
+  programId?: string;
+  writerScript: string;
+  rfqId: string;
+  kind: 0 | 1;
+  collateral: string;
+  strike: string;
+  expiry: number;
+  exit: number;
+  beaconTxid: string;
+  beaconGidx: number;
+  vaultAddress: string;
+  fillTxid: string;
+}): OptionPosition | null {
+  return parsePosition({
+    v: 1,
+    type: "option_position",
+    program_id: input.programId ?? OPTION_VAULT_PROGRAM_ID,
+    rfq_id: input.rfqId,
+    pair: PAIR,
+    kind: input.kind,
+    collateral: input.collateral,
+    strike: input.strike,
+    expiry: input.expiry,
+    exit: input.exit,
+    writer_pubkey: input.writer,
+    writer_pk_script: input.writerScript,
+    holder_pubkey: input.holder,
+    beacon_txid: input.beaconTxid,
+    beacon_gidx: input.beaconGidx,
+    vault_address: input.vaultAddress,
+    fill_txid: input.fillTxid,
+  });
+}
+
 export function parsePosition(value: unknown): OptionPosition | null {
   const body = record(value);
   if (!body || body.v !== 1 || body.type !== "option_position" || body.pair !== PAIR) return null;
+  const program_id = readProgramId(body.program_id);
+  if (!program_id) return null;
   if (!hex64(body.rfq_id) || (body.kind !== 0 && body.kind !== 1)) return null;
   if (!amount(body.collateral) || !amount(body.strike)) return null;
   if (!int(body.expiry, 4_000_000_000) || !int(body.exit, 4_000_000_000)) return null;
@@ -205,6 +256,7 @@ export function parsePosition(value: unknown): OptionPosition | null {
   return {
     v: 1,
     type: "option_position",
+    program_id,
     rfq_id: body.rfq_id.toLowerCase(),
     pair: PAIR,
     kind: body.kind,

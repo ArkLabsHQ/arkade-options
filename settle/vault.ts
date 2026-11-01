@@ -3,11 +3,11 @@ import { base64 } from "@scure/base";
 
 import { holderPayoff, settlementOutputs } from "../app/settle-math.js";
 import { beaconIdOf, bin2num, bindBeacon, decodeState, statePacketOf, type BeaconState } from "../protocol/beacon.ts";
-import { PRICE_MAX } from "../protocol/constants.ts";
-import { bindContracts, type Terms } from "../protocol/contracts.ts";
+import { OPTION_VAULT_PROGRAM_ID, PRICE_MAX } from "../protocol/constants.ts";
+import { bindFill, type Terms } from "../protocol/contracts.ts";
 import { buildSettle, submit } from "../protocol/cospend.ts";
 import { bytesToHex } from "../protocol/hex.ts";
-import { vaultProgram } from "../protocol/programs.ts";
+import { vaultProgramFor } from "../protocol/programs.ts";
 import type { BeaconSpec } from "./oracle.ts";
 
 export type ChainCoin = {
@@ -159,6 +159,8 @@ export async function settleQuote(env: {
   /** Creating tx of the vault, when the watcher knows which fill paid it. */
   fillTxid?: string;
   terms: Terms;
+  /** Announcement program id. Omitted means OptionVault. */
+  programId?: string;
   beacon: BeaconSpec;
   now: number;
   /**
@@ -174,7 +176,11 @@ export async function settleQuote(env: {
     return { result: "mismatch" };
   }
 
-  const bound = bindContracts(env.terms);
+  const programId = env.programId ?? OPTION_VAULT_PROGRAM_ID;
+  const bound = bindFill(
+    { holder: env.terms.holderPk, writer: env.terms.writerPk, programId },
+    env.terms,
+  );
   const vaultScript = bytesToHex(bound.vaultPkScript);
   const live = await env.chain.getVtxos({ scripts: [vaultScript], spendableOnly: true });
   const page = live.vtxos ?? [];
@@ -237,7 +243,7 @@ export async function settleQuote(env: {
   });
   if ("error" in payout) throw new Error(payout.error);
 
-  const script = new arkade.ArkadeProgramScript(vaultProgram(), bound.vault, {
+  const script = new arkade.ArkadeProgramScript(vaultProgramFor(programId), bound.vault, {
     serverKey: env.serverKey,
     emulatorKey: env.emulatorKey,
   });

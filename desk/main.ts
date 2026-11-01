@@ -19,16 +19,17 @@ import {
   EMULATOR_URL,
   EXIT,
   LOCK_S,
+  OPTION_VAULT_PROGRAM_ID,
   PAIR,
   QUOTE_TTL_S,
 } from "../protocol/constants.ts";
-import { assertServerExit, bindContracts, directPayoutKey, payoutVtxo, type Terms } from "../protocol/contracts.ts";
+import { assertServerExit, bindFill, directPayoutKey, payoutVtxo, type Terms } from "../protocol/contracts.ts";
 import { bytesToHex, hexToBytes } from "../protocol/hex.ts";
 import { networkByName } from "../protocol/network.ts";
 import { intentProgram } from "../protocol/programs.ts";
 import {
+  announceFill,
   beaconWindowRefusal,
-  parsePosition,
   premiumRefusal,
   requestRefusal,
   type OptionPosition,
@@ -221,8 +222,20 @@ function termsFor(row: QuoteRow): Terms {
   };
 }
 
+/** This desk's quotes pass its own key as the holder. */
+function bindQuoted(row: QuoteRow) {
+  return bindFill(
+    {
+      holder: hexToBytes(row.holderPubkey),
+      writer: hexToBytes(row.writerPubkey),
+      programId: OPTION_VAULT_PROGRAM_ID,
+    },
+    termsFor(row),
+  );
+}
+
 function quoteMessage(row: QuoteRow): RfqQuote {
-  const bound = bindContracts(termsFor(row));
+  const bound = bindQuoted(row);
   return {
     v: 1,
     type: "rfq_quote",
@@ -343,7 +356,7 @@ async function onRequest(message: RfqRequest, from: string) {
     await refuse(from, message.rfq_id, lagRefusal);
     return;
   }
-  const bound = bindContracts(termsFor(row));
+  const bound = bindQuoted(row);
   if (bytesToHex(bound.writerPkScript) !== message.profile.writer_pk_script) {
     await refuse(from, message.rfq_id, "writer script");
     return;
@@ -413,23 +426,21 @@ const transport = connectTransport({ relays, secretKey: secret, onMessage });
 
 function filledPosition(row: QuoteRow): OptionPosition | null {
   if (row.status !== "filled" || !row.fillTxid) return null;
-  return parsePosition({
-    v: 1,
-    type: "option_position",
-    rfq_id: row.rfqId,
-    pair: PAIR,
+  return announceFill({
+    holder: row.holderPubkey,
+    writer: row.writerPubkey,
+    programId: OPTION_VAULT_PROGRAM_ID,
+    writerScript: row.writerPkScript,
+    rfqId: row.rfqId,
     kind: row.kind,
     collateral: row.collateral,
     strike: row.strike,
     expiry: row.expiry,
     exit: row.exit,
-    writer_pubkey: row.writerPubkey,
-    writer_pk_script: row.writerPkScript,
-    holder_pubkey: row.holderPubkey,
-    beacon_txid: row.beaconTxid,
-    beacon_gidx: row.beaconGidx,
-    vault_address: row.vaultAddress,
-    fill_txid: row.fillTxid,
+    beaconTxid: row.beaconTxid,
+    beaconGidx: row.beaconGidx,
+    vaultAddress: row.vaultAddress,
+    fillTxid: row.fillTxid,
   });
 }
 
@@ -528,7 +539,7 @@ async function forgetScript(rfqId: string) {
 }
 
 async function track(row: QuoteRow) {
-  const bound = bindContracts(termsFor(row));
+  const bound = bindQuoted(row);
   const intent = client.contract(intentProgram(), bound.intent);
   const script = bytesToHex(intent.pkScript);
   if (quoteByScript.get(script) === row.rfqId) return;

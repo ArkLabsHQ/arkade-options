@@ -20,7 +20,7 @@ import {
   priceValue,
   statePacketOf,
 } from "../protocol/beacon.ts";
-import { EXIT, PAIR } from "../protocol/constants.ts";
+import { EXIT, OPTION_VAULT_PROGRAM_ID, PAIR } from "../protocol/constants.ts";
 import { bindContracts, payoutVtxo, type Terms } from "../protocol/contracts.ts";
 import { statePacket } from "../protocol/cospend.ts";
 import { bytesToHex, hexToBytes } from "../protocol/hex.ts";
@@ -179,6 +179,7 @@ test("a positions file accepts one vault, a list, or a positions object", () => 
     fill_txid: "ee".repeat(32),
   };
   assert.equal(manualPositions(row)[0]?.fill_txid, row.fill_txid);
+  assert.equal(manualPositions(row)[0]?.program_id, OPTION_VAULT_PROGRAM_ID);
   assert.equal(manualPositions([row, { ...row, type: "rfq_quote" }]).length, 1);
   assert.equal(manualPositions({ positions: [row] }).length, 1);
   assert.equal(manualPositions({ quotes: [row] }).length, 0);
@@ -330,6 +331,7 @@ test("a filled vault settles from the beacon state the oracle published", async 
   assert.equal(parsePosition({ ...announcement, type: "rfq_quote" }), null);
   const published = positionFromAnnouncement(announced);
   assert.equal(published?.fillTxid, vaultTx.id);
+  assert.equal(published?.programId, OPTION_VAULT_PROGRAM_ID);
   assert.equal(bindContracts(termsFor(published!, serverKey, emulatorKey)).vaultAddress, bound.vaultAddress);
   const env = {
     chain,

@@ -19,6 +19,8 @@ export type WatchPosition = {
   exit: bigint;
   writerPk: Uint8Array;
   holderPk: Uint8Array;
+  /** Contract this vault settles. Older events are OptionVault. */
+  programId: string;
   payoutKey?: Uint8Array;
   beaconTxid: string;
   beaconGidx: number;
@@ -60,6 +62,7 @@ export function positionFromAnnouncement(body: unknown): WatchPosition | null {
     exit: BigInt(row.exit),
     writerPk: hexToBytes(row.writer_pubkey),
     holderPk: hexToBytes(row.holder_pubkey),
+    programId: row.program_id,
     payoutKey: directPayoutKey(row.writer_pubkey, row.writer_pk_script),
     beaconTxid: row.beacon_txid,
     beaconGidx: row.beacon_gidx,

@@ -8,9 +8,9 @@ import {
   RestIndexerProvider,
 } from "@arkade-os/sdk";
 
-import { ARK_URL, DEFAULT_RELAYS, EMULATOR_URL } from "../protocol/constants.ts";
+import { ARK_URL, DEFAULT_RELAYS, EMULATOR_URL, OPTION_VAULT_PROGRAM_ID } from "../protocol/constants.ts";
 import { networkByName } from "../protocol/network.ts";
-import { bindContracts } from "../protocol/contracts.ts";
+import { bindFill } from "../protocol/contracts.ts";
 import type { OptionPosition } from "../protocol/messages.ts";
 import { quoteRelay, watchPositions } from "../protocol/nostr.ts";
 import { revision } from "../protocol/sqlite-storage.ts";
@@ -151,7 +151,12 @@ async function progressDue() {
   const positions: WatchPosition[] = [];
   for (const row of progress.positions()) {
     const position = positionFromAnnouncement(row);
-    if (position) positions.push(position);
+    if (!position) continue;
+    if (position.programId !== OPTION_VAULT_PROGRAM_ID) {
+      once(`program:${position.id}`, `skip ${position.rfqId} program ${position.programId}`, true);
+      continue;
+    }
+    positions.push(position);
   }
   watching = positions.length;
   const due = duePositions(positions, now, progress.ids());
@@ -175,7 +180,11 @@ async function progressDue() {
   for (const position of due) {
     if (position.expiry + lag > now) continue;
     const terms = termsFor(position, client.serverKey, client.emulatorKey!, parsed.beacon.readFee);
-    if (bindContracts(terms).vaultAddress !== position.vaultAddress) {
+    const bound = bindFill(
+      { holder: position.holderPk, writer: position.writerPk, programId: position.programId },
+      terms,
+    );
+    if (bound.vaultAddress !== position.vaultAddress) {
       once(`addr:${position.id}`, `skip ${position.rfqId} vault address`, true);
       continue;
     }
@@ -210,6 +219,7 @@ async function progressDue() {
         checkpoint: client.checkpoint,
         fillTxid: position.fillTxid,
         terms,
+        programId: position.programId,
         beacon: parsed.beacon,
         now,
         expected,
