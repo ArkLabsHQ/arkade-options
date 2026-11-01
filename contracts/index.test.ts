@@ -4,14 +4,19 @@ import test from "node:test";
 import { bindBeacon as bindBeaconFromProtocol } from "../protocol/beacon.ts";
 import { bindContracts as bindContractsFromProtocol } from "../protocol/contracts.ts";
 import { buildSettle as buildSettleFromProtocol } from "../protocol/cospend.ts";
-import { beaconProgram as beaconProgramFromProtocol, vaultProgram as vaultProgramFromProtocol } from "../protocol/programs.ts";
+import { beaconProgram as beaconProgramFromProtocol, standingLegProgram as standingLegProgramFromProtocol, standingVaultProgram as standingVaultProgramFromProtocol, vaultProgram as vaultProgramFromProtocol } from "../protocol/programs.ts";
+import { bindWriterLeg as bindWriterLegFromProtocol, buildStandingMatch as buildStandingMatchFromProtocol } from "../protocol/standing.ts";
 import { settlePayouts as settlePayoutsFromSettle, slotFixing as slotFixingFromSettle, slotPrice as slotPriceFromSettle } from "../settle/vault.ts";
 import {
   attestationBeaconArtifact,
   beaconProgram,
   bindBeacon,
   bindContracts,
+  bindWriterLeg,
   buildSettle,
+  buildStandingMatch,
+  standingLegProgram,
+  standingVaultProgram,
   optionVaultArtifact,
   settlePayouts,
   slotFixing,
@@ -94,6 +99,10 @@ test("the import surface is the protocol bind and settle helpers", () => {
   assert.equal(bindContracts, bindContractsFromProtocol);
   assert.equal(bindBeacon, bindBeaconFromProtocol);
   assert.equal(buildSettle, buildSettleFromProtocol);
+  assert.equal(bindWriterLeg, bindWriterLegFromProtocol);
+  assert.equal(buildStandingMatch, buildStandingMatchFromProtocol);
+  assert.equal(standingLegProgram, standingLegProgramFromProtocol);
+  assert.equal(standingVaultProgram, standingVaultProgramFromProtocol);
   assert.equal(vaultProgram, vaultProgramFromProtocol);
   assert.equal(beaconProgram, beaconProgramFromProtocol);
   assert.equal(slotPrice, slotPriceFromSettle);

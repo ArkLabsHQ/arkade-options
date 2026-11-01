@@ -10,6 +10,8 @@ An order book imports `arkade-options/contracts`. It still needs the artifacts, 
 
 Buying is the same vault with the pubkeys swapped. Selling is the path this page implements.
 
+A standing offer is separate from that desk. The writer funds a leg that names the vault and not the holder. A holder funds the other leg with an ordinary send. `buildStandingMatch` spends the two coins. The holder is named on that spend. The desk can fund either leg, and it can still pay the premium on a lone writer intent.
+
 Day-to-day work is funding the desk. The oracle signs BTCUSD itself and keeps the history. The settler publishes a fixing after expiry and settles the vault. A new beacon is a new identity. Deploy and bootstrap steps are in [docs/runbook.md](docs/runbook.md).
 
 ## Live
