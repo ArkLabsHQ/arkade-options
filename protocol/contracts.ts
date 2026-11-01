@@ -98,6 +98,7 @@ export type VaultFill = {
 export function bindFill(fill: VaultFill, terms: Omit<Terms, "holderPk" | "writerPk">): Bound {
   const programId = fill.programId ?? OPTION_VAULT_PROGRAM_ID;
   if (programId !== OPTION_VAULT_PROGRAM_ID) throw new Error(`unsupported program ${programId}`);
+  // fill.holder and fill.writer override any holder or writer already on the terms object.
   return bindContracts({
     ...terms,
     holderPk: fill.holder,

@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import test from "node:test";
 
 import { base64 } from "@scure/base";
@@ -26,7 +29,8 @@ import { statePacket } from "../protocol/cospend.ts";
 import { bytesToHex, hexToBytes } from "../protocol/hex.ts";
 import { parsePosition } from "../protocol/messages.ts";
 import { serviceOrigin, parseOracleBeacon } from "./oracle.ts";
-import { duePositions, manualPositions, positionFromAnnouncement, publishOutcome, publishReady, termsFor } from "./positions.ts";
+import { duePositions, manualPositions, positionFromAnnouncement, publishOutcome, publishReady, settlementPositions, termsFor } from "./positions.ts";
+import { Progress } from "./progress.ts";
 import { settleQuote, slotPrice, settlePayouts, type ChainCoin } from "./vault.ts";
 
 const CHECKPOINT = "03080040b27520dfcaec558c7e78cf3e38b898ba8a43cfb5727266bae32c5c5b3aeb32c558aa0bac";
@@ -183,6 +187,74 @@ test("a positions file accepts one vault, a list, or a positions object", () => 
   assert.equal(manualPositions([row, { ...row, type: "rfq_quote" }]).length, 1);
   assert.equal(manualPositions({ positions: [row] }).length, 1);
   assert.equal(manualPositions({ quotes: [row] }).length, 0);
+});
+
+test("a progress position with program_id PredictVault is skipped and does not throw", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "arkade-progress-"));
+  try {
+    const progress = await Progress.open(dir);
+    const predict = parsePosition({
+      v: 1,
+      type: "option_position",
+      program_id: "PredictVault",
+      rfq_id: "aa".repeat(32),
+      pair: PAIR,
+      kind: 0,
+      collateral: "20000",
+      strike: "9700000",
+      expiry: EXPIRY,
+      exit: Number(EXIT),
+      writer_pubkey: "11".repeat(32),
+      writer_pk_script: "5120" + "22".repeat(32),
+      holder_pubkey: "33".repeat(32),
+      beacon_txid: "07".repeat(32),
+      beacon_gidx: 0,
+      vault_address: "tark1qqcpq7yq3e8hhsx6ml3fud93m7827qg",
+      fill_txid: "ee".repeat(32),
+    });
+    const option = parsePosition({
+      v: 1,
+      type: "option_position",
+      rfq_id: "bb".repeat(32),
+      pair: PAIR,
+      kind: 0,
+      collateral: "20000",
+      strike: "9700000",
+      expiry: EXPIRY,
+      exit: Number(EXIT),
+      writer_pubkey: "11".repeat(32),
+      writer_pk_script: "5120" + "22".repeat(32),
+      holder_pubkey: "33".repeat(32),
+      beacon_txid: "07".repeat(32),
+      beacon_gidx: 0,
+      vault_address: "tark1qqcpq7yq3e8hhsx6ml3fud93m7827qg",
+      fill_txid: "dd".repeat(32),
+    });
+    assert.ok(predict);
+    assert.ok(option);
+    assert.equal(predict.program_id, "PredictVault");
+    progress.remember(predict);
+    progress.remember(option);
+    await progress.save();
+    const reopened = await Progress.open(dir);
+    let chosen: ReturnType<typeof settlementPositions> = [];
+    assert.doesNotThrow(() => {
+      chosen = settlementPositions(reopened.positions());
+    });
+    assert.deepEqual(chosen.map((position) => position.programId), [OPTION_VAULT_PROGRAM_ID]);
+    assert.equal(reopened.positions().find((position) => position.rfq_id === predict.rfq_id)?.program_id, "PredictVault");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("settleQuote returns unsupported for PredictVault and does not throw", async () => {
+  const outcome = await settleQuote({
+    programId: "PredictVault",
+    now: 0,
+    terms: { expiry: 0n },
+  } as Parameters<typeof settleQuote>[0]);
+  assert.deepEqual(outcome, { result: "unsupported" });
 });
 
 test("a service origin drops the path and refuses other schemes", () => {

@@ -1,6 +1,7 @@
 import { asset } from "@arkade-os/sdk";
 
 import { beaconIdOf } from "../protocol/beacon-id.ts";
+import { OPTION_VAULT_PROGRAM_ID } from "../protocol/constants.ts";
 import { directPayoutKey, type Terms } from "../protocol/contracts.ts";
 import { hexToBytes } from "../protocol/hex.ts";
 import { parsePosition, type OptionPosition } from "../protocol/messages.ts";
@@ -69,6 +70,27 @@ export function positionFromAnnouncement(body: unknown): WatchPosition | null {
     vaultAddress: row.vault_address,
     fillTxid: row.fill_txid,
   };
+}
+
+/**
+ * OptionVault rows this settler will try. Another program id stays in progress
+ * and is skipped. Parsing a foreign id does not throw.
+ */
+export function settlementPositions(
+  rows: readonly OptionPosition[],
+  onSkip?: (position: WatchPosition) => void,
+): WatchPosition[] {
+  const positions: WatchPosition[] = [];
+  for (const row of rows) {
+    const position = positionFromAnnouncement(row);
+    if (!position) continue;
+    if (position.programId !== OPTION_VAULT_PROGRAM_ID) {
+      onSkip?.(position);
+      continue;
+    }
+    positions.push(position);
+  }
+  return positions;
 }
 
 /** Filled vaults whose expiry is at least `lag` seconds ago. Oldest first. */

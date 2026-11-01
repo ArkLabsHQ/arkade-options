@@ -256,6 +256,7 @@ export function parsePosition(value: unknown): OptionPosition | null {
   return {
     v: 1,
     type: "option_position",
+    // program_id stays PascalCase and is not lowercased.
     program_id,
     rfq_id: body.rfq_id.toLowerCase(),
     pair: PAIR,

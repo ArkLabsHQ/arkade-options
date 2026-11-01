@@ -32,6 +32,7 @@ export type SettleOutcome =
   | { result: "unfixed" }
   | { result: "mismatch" }
   | { result: "rejected" }
+  | { result: "unsupported" }
   | {
     result: "settled";
     txid: string;
@@ -169,6 +170,8 @@ export async function settleQuote(env: {
    */
   expected?: { price: bigint; time: bigint };
 }): Promise<SettleOutcome> {
+  const programId = env.programId ?? OPTION_VAULT_PROGRAM_ID;
+  if (programId !== OPTION_VAULT_PROGRAM_ID) return { result: "unsupported" };
   if (env.now < Number(env.terms.expiry)) return { result: "waiting", reason: "early" };
   const id = asset.AssetId.fromString(env.beacon.assetId);
   const beaconId = beaconIdOf(id);
@@ -176,7 +179,6 @@ export async function settleQuote(env: {
     return { result: "mismatch" };
   }
 
-  const programId = env.programId ?? OPTION_VAULT_PROGRAM_ID;
   const bound = bindFill(
     { holder: env.terms.holderPk, writer: env.terms.writerPk, programId },
     env.terms,

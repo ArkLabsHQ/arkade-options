@@ -8,7 +8,7 @@ import {
   RestIndexerProvider,
 } from "@arkade-os/sdk";
 
-import { ARK_URL, DEFAULT_RELAYS, EMULATOR_URL, OPTION_VAULT_PROGRAM_ID } from "../protocol/constants.ts";
+import { ARK_URL, DEFAULT_RELAYS, EMULATOR_URL } from "../protocol/constants.ts";
 import { networkByName } from "../protocol/network.ts";
 import { bindFill } from "../protocol/contracts.ts";
 import type { OptionPosition } from "../protocol/messages.ts";
@@ -16,7 +16,7 @@ import { quoteRelay, watchPositions } from "../protocol/nostr.ts";
 import { revision } from "../protocol/sqlite-storage.ts";
 import { chooseSample } from "../oracle/store.ts";
 import { fetchOraclePrices, fetchOracleStatus, parseOracleBeacon, serviceOrigin } from "./oracle.ts";
-import { duePositions, manualPositions, positionFromAnnouncement, publishOutcome, publishReady, termsFor, type WatchPosition } from "./positions.ts";
+import { duePositions, manualPositions, publishOutcome, publishReady, settlementPositions, termsFor } from "./positions.ts";
 import { Progress } from "./progress.ts";
 import { settleQuote } from "./vault.ts";
 
@@ -148,16 +148,9 @@ function onPosition(position: OptionPosition) {
 async function progressDue() {
   await loadManual();
   const now = Math.floor(Date.now() / 1000);
-  const positions: WatchPosition[] = [];
-  for (const row of progress.positions()) {
-    const position = positionFromAnnouncement(row);
-    if (!position) continue;
-    if (position.programId !== OPTION_VAULT_PROGRAM_ID) {
-      once(`program:${position.id}`, `skip ${position.rfqId} program ${position.programId}`, true);
-      continue;
-    }
-    positions.push(position);
-  }
+  const positions = settlementPositions(progress.positions(), (position) => {
+    once(`program:${position.id}`, `skip ${position.rfqId} program ${position.programId}`, true);
+  });
   watching = positions.length;
   const due = duePositions(positions, now, progress.ids());
   if (!due.length) return;
@@ -224,6 +217,10 @@ async function progressDue() {
         now,
         expected,
       });
+      if (outcome.result === "unsupported") {
+        once(`program:${position.id}`, `skip ${position.rfqId} program ${position.programId}`, true);
+        continue;
+      }
       if (outcome.result === "rejected") {
         console.error(`skip ${position.rfqId} fixing is not the oracle sample`);
         continue;
