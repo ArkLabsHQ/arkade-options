@@ -3,12 +3,12 @@ import http from "node:http";
 import {
   arkade,
   asset,
-  ContractManager,
   DefaultVtxo,
   RestArkProvider,
   RestEmulatorProvider,
   RestIndexerProvider,
   SingleKey,
+  Wallet,
 } from "@arkade-os/sdk";
 
 import { beaconIdOf } from "../protocol/beacon-id.ts";
@@ -43,7 +43,8 @@ import { openSqliteStorage, revision } from "../protocol/sqlite-storage.ts";
 import { fetchOracleStatus, parseOracleBeacon, serviceOrigin } from "../settle/oracle.ts";
 import { Book, hasBeacon, openPremium, pageQuotes, quoteCounts, type QuoteFilter, type QuoteRow } from "./book.ts";
 import { countFill, countQuote, emptyHour, hourLine, msUntilNextHour } from "./digest.ts";
-import { finalizeDeskSpends } from "./finalize.ts";
+import { finalizeDeskSpends, pendingOutpoints } from "./finalize.ts";
+import { maintainDeskCoins } from "./maintain.ts";
 import { fillQuote } from "./fill.ts";
 import { spotCents } from "./spot.ts";
 
@@ -115,17 +116,16 @@ if (typeof EventSource === "undefined") {
 }
 // Every intent.register persists a script, and the watcher subscribes to all of them.
 // Mutinynet allows 1000 topics. Old quotes are polled, not streamed.
+// default / boarding / delegate belong to the SDK wallet. Deleting them drops the float it renews.
+const walletContracts = new Set(["default", "boarding", "delegate"]);
 const remembered = await storage.contractRepository.getContracts();
+let unwatched = 0;
 for (const contract of remembered) {
+  if (walletContracts.has(contract.type)) continue;
   await storage.contractRepository.deleteContract(contract.script);
+  unwatched += 1;
 }
-if (remembered.length) console.log("unwatched", remembered.length, "old intent scripts");
-const contractManager = await ContractManager.create({
-  indexerProvider: indexer,
-  contractRepository: storage.contractRepository,
-  walletRepository: storage.walletRepository,
-  vtxoSyncMaxAgeMs: 60_000,
-});
+if (unwatched) console.log("unwatched", unwatched, "old intent scripts");
 // The first lookup often dies on a transient EAI_AGAIN. Dokploy only keeps
 // the inner "fetch failed" line, so log the whole cause chain, URL included.
 const ARK_INFO_ATTEMPTS = 4;
@@ -172,6 +172,20 @@ async function readArkInfo() {
 }
 
 const network = networkByName((await readArkInfo()).network);
+// Leave settlement at the SDK default. VtxoManager renews coins before batch
+// expiry and its poll keeps doing that. Passing false disables both.
+const wallet = await Wallet.create({
+  identity,
+  arkProvider: ark,
+  indexerProvider: indexer,
+  storage: {
+    walletRepository: storage.walletRepository,
+    contractRepository: storage.contractRepository,
+    intentRepository: storage.intentRepository,
+  },
+});
+const contractManager = await wallet.getContractManager();
+contractManager.setVtxoSyncMaxAge(60_000);
 const client = await arkade.Arkade.connect({
   arkade: ark,
   indexer,
@@ -186,6 +200,12 @@ await assertServerExit(arkUrl);
 const holderPk = await identity.xOnlyPublicKey();
 const deskScript: DefaultVtxo.Script = payoutVtxo(holderPk, client.serverKey, EXIT);
 const address = deskScript.address(network.hrp, client.serverKey).encode();
+if (bytesToHex(wallet.offchainTapscript.pkScript) !== bytesToHex(deskScript.pkScript)) {
+  throw new Error("desk payout script is not the SDK wallet address");
+}
+if (address !== await wallet.getAddress()) {
+  throw new Error("desk address is not the SDK wallet address");
+}
 const pubkey = nostrPubkey(secret);
 
 let balance = 0n;
@@ -476,15 +496,52 @@ function recount() {
   if (balance > 0n) shortLogged.clear();
 }
 
+/** Finish a submit the wallet never finalized, then recover swept coins and renew the rest. */
+async function maintainWallet() {
+  try {
+    const maintained = await maintainDeskCoins({
+      async markPending() {
+        const state = (await storage.walletRepository.getWalletState()) ?? {};
+        await storage.walletRepository.saveWalletState({
+          ...state,
+          settings: { ...state.settings, hasPendingTx: true },
+        });
+      },
+      finalizePendingTxs: () => wallet.finalizePendingTxs(),
+      refreshCoins: () => contractManager.refreshVtxos({ after: 0 }),
+      async recoverVtxos() {
+        return (await wallet.getVtxoManager()).recoverVtxos();
+      },
+      async renewVtxos() {
+        return (await wallet.getVtxoManager()).renewVtxos();
+      },
+    });
+    console.log(
+      "wallet",
+      `finalized=${maintained.finalized.join(",") || "-"}`,
+      `pending=${maintained.pending.join(",") || "-"}`,
+      `recovered=${maintained.recovered ?? "-"}`,
+      `renewed=${maintained.renewed ?? "-"}`,
+    );
+  } catch (err) {
+    console.error("wallet", err instanceof Error ? err.message : err);
+  }
+}
+
 /** Finish spends the emulator submitted, then trust the indexer for the float. */
 async function refreshFloat() {
   if (!client.indexer) return;
   try {
-    const done = await finalizeDeskSpends({ ark, indexer, identity, deskScript });
-    const pending = await indexer.getVtxos({ scripts: [deskScriptHex], pendingOnly: true });
-    const pendingCount = pending.vtxos?.length ?? 0;
-    if (done.length || pendingCount) {
-      console.log("finalized", done.join(",") || "-", "pending", pendingCount);
+    const done = await finalizeDeskSpends({
+      ark,
+      indexer,
+      identity,
+      deskScript,
+      reconcileSpent: (outpoints) => contractManager.refreshOutpoints(outpoints),
+    });
+    const pending = await pendingOutpoints(indexer, deskScript);
+    if (done.length || pending.size) {
+      console.log("finalized", done.join(",") || "-", "pending", pending.size);
     }
   } catch (err) {
     console.error("finalize", err instanceof Error ? err.message : err);
@@ -662,6 +719,7 @@ contractManager.onContractEvent((event) => {
   const rfqId = quoteByScript.get(event.contractScript);
   if (rfqId) queueFill(rfqId);
 });
+await maintainWallet();
 await refreshFloat();
 await contractManager.watchScript(deskScriptHex, { label: "desk" });
 
