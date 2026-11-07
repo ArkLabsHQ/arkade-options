@@ -11,10 +11,12 @@ import {
 } from "@arkade-os/sdk";
 import { base64 } from "@scure/base";
 
-import { beaconIdOf } from "./beacon.ts";
-import { DUST_SATS, EXIT } from "./constants.ts";
+import { holderPayoff, settlementOutputs } from "../app/settle-math.js";
+
+import { beaconIdOf, bindBeacon, genesisState, nextState, priceValue } from "./beacon.ts";
+import { BEACON_READ_FEE, DUST_SATS, EXIT } from "./constants.ts";
 import { payoutVtxo } from "./contracts.ts";
-import { submit, type Coin } from "./cospend.ts";
+import { buildSettle, statePacket, submit, type Coin } from "./cospend.ts";
 import { bytesToHex, hexToBytes } from "./hex.ts";
 import { rawStandingVaultProgram, rawVaultProgram } from "./programs.ts";
 import {
@@ -176,6 +178,29 @@ test("holder change above dust returns to the holder, and dust folds into the pr
   assert.equal(dust.length, 4);
 });
 
+test("standing vault settle pays the packet holder and the writer, and folds a dust leg", async () => {
+  const split = await settleStanding(10_000_000n, 9_700_000n);
+  assert.equal(holderPayoff(0, 10_000_000n, 9_700_000n, collateral), 600n);
+  assert.equal(split.mode, "split");
+  assert.deepEqual(paidLegs(split.tx), [
+    [bytesToHex(split.holderScript), 600n],
+    [bytesToHex(split.writerScript), 18_400n],
+  ]);
+
+  const toWriter = await settleStanding(10_000_000n, 9_840_000n);
+  assert.equal(holderPayoff(0, 10_000_000n, 9_840_000n, collateral), 320n);
+  assert.ok(320n <= DUST_SATS);
+  assert.equal(toWriter.mode, "writer");
+  assert.deepEqual(paidLegs(toWriter.tx), [[bytesToHex(toWriter.writerScript), collateral - BEACON_READ_FEE]]);
+
+  const toHolder = await settleStanding(10_000_000n, 665_000n);
+  const ph = holderPayoff(0, 10_000_000n, 665_000n, collateral);
+  assert.equal(ph, 18_670n);
+  assert.equal(collateral - BEACON_READ_FEE - ph, DUST_SATS);
+  assert.equal(toHolder.mode, "holder");
+  assert.deepEqual(paidLegs(toHolder.tx), [[bytesToHex(toHolder.holderScript), collateral - BEACON_READ_FEE]]);
+});
+
 test("a holder leg that pays the wrong writer is refused", async () => {
   const shared = await terms();
   const writer = bindWriterLeg(shared);
@@ -205,6 +230,89 @@ test("a holder leg that pays the wrong writer is refused", async () => {
     /short of the premium/,
   );
 });
+
+/** Fill the two legs, then spend the vault coin those legs created. */
+async function settleStanding(price: bigint, strike: bigint) {
+  const shared = { ...(await terms()), strike, readFee: BEACON_READ_FEE };
+  const writer = bindWriterLeg(shared);
+  const holder = bindHolderLeg(shared, await key(2).xOnlyPublicKey());
+  const match = buildStandingMatch({
+    writer: { script: writer.script, coin: await funded(writer.pkScript, collateral) },
+    holder: { script: holder.script, coin: await funded(holder.pkScript, premium) },
+    checkpoint,
+  });
+  const vault = bindStandingVault(shared);
+  assert.equal(vault.args.readFee, BEACON_READ_FEE);
+  assert.equal(bytesToHex(match.arkTx.getOutput(1)!.script!), bytesToHex(vault.pkScript));
+  assert.equal(match.arkTx.getOutput(1)!.amount, collateral);
+  const party = Extension.fromBytes(match.arkTx.getOutput(2)!.script!).getPacketByType(STANDING_PARTY)!.serialize();
+  const holderProgram = holder.args["userScript.program"] as Uint8Array;
+  assert.equal(bytesToHex(party.subarray(33)), bytesToHex(holderProgram));
+
+  const beacon = bindBeacon({
+    id: shared.beacon,
+    signers: [shared.writerPk],
+    threshold: 1n,
+    domain: new TextEncoder().encode("BTCUSD-FIX"),
+    expiryLag: 60n,
+    readFee: BEACON_READ_FEE,
+    adminPk: shared.writerPk,
+    serverKey: shared.serverKey,
+    emulatorKey: shared.emulatorKey,
+  });
+  const fixed = nextState(genesisState(), shared.expiry, priceValue(price, shared.expiry));
+  const beaconTx = new Transaction({ version: 3, allowUnknownOutputs: true });
+  beaconTx.addInput({ txid: new Uint8Array(32), index: 1 });
+  beaconTx.addOutput({ script: beacon.pkScript, amount: 330n });
+  beaconTx.addOutput(Extension.create([statePacket(fixed)]).txOut());
+  const ph = holderPayoff(0, price, strike, collateral);
+  const split = settlementOutputs(ph, collateral, BEACON_READ_FEE);
+  const holderScript = programOf(holderProgram);
+  const writerScript = programOf(vault.args["writerScript.program"] as Uint8Array);
+  const payouts = split.mode === "split"
+    ? [
+        { script: holderScript, amount: split.holder },
+        { script: writerScript, amount: split.writer },
+      ]
+    : [{ script: split.mode === "holder" ? holderScript : writerScript, amount: split.mode === "holder" ? split.holder : split.writer }];
+  const built = buildSettle({
+    vault: {
+      script: vault.script,
+      coin: { txid: match.arkTx.id, vout: 1, value: collateral, prevTx: match.arkTx.toBytes(true, true) },
+    },
+    beacon: {
+      script: beacon.script,
+      coin: { txid: beaconTx.id, vout: 0, value: 330n, prevTx: beaconTx.toBytes(true, true) },
+      state: fixed,
+      id: asset.AssetId.create("07".repeat(32), 0),
+    },
+    readFee: BEACON_READ_FEE,
+    payouts,
+    checkpoint,
+  });
+  const tx = built.arkTx;
+  assert.equal(tx.inputsLength, 2);
+  const spentVault = built.checkpoints[0]!.getInput(0);
+  assert.equal(spentVault.index, 1);
+  assert.equal(bytesToHex(spentVault.txid!), match.arkTx.id);
+  const extensionIndex = split.mode === "split" ? 3 : 2;
+  const extension = Extension.fromBytes(tx.getOutput(extensionIndex)!.script!);
+  const spent = extension.getEmulatorPacket()!.entries[0]!;
+  assert.equal(bytesToHex(spent.script), bytesToHex(vault.script.functionByName("settle")!.arkadeScript!));
+  assert.equal(tx.getOutput(0)!.amount, 330n + BEACON_READ_FEE);
+  assert.equal(bytesToHex(tx.getOutput(0)!.script!), bytesToHex(beacon.pkScript));
+  return { tx, mode: split.mode, holderScript, writerScript };
+}
+
+function paidLegs(tx: Transaction) {
+  const legs = [];
+  for (let i = 1; i < tx.outputsLength; i++) {
+    const out = tx.getOutput(i)!;
+    if (out.amount === 0n) break;
+    legs.push([bytesToHex(out.script!), out.amount]);
+  }
+  return legs;
+}
 
 function programOf(program: Uint8Array): Uint8Array {
   const script = new Uint8Array(34);
