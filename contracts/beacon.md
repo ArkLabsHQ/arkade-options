@@ -141,7 +141,7 @@ The signature is checked inside `attest`. What stays off-chain is whether the si
 
 ## 5. Checked
 
-Both contracts compile with `arkadec` 0.1.0 with no warnings. The artifacts are committed. `AttestationBeacon.attest` has 5 `CHECKSIGFROMSTACK`. `OptionVault.settle` has no `CHECKSIGFROMSTACK`, one `INSPECTINASSETLOOKUP`, one `INSPECTINPUTPACKET`, and checks the stored sample time.
+Both contracts compile with `arkadec` 0.1.0-rc.1. The artifacts are committed. `AttestationBeacon.attest` has 5 `CHECKSIGFROMSTACK`. `OptionVault.settle` has no `CHECKSIGFROMSTACK`, one `INSPECTINASSETLOOKUP`, one `INSPECTINPUTPACKET`, and checks the stored sample time.
 
 `pnpm test` covers the state codec, the artifacts, the bindings, the deploy outputs, the oracle service, and the layout of the transactions `cospend.ts` builds.
 
@@ -149,7 +149,7 @@ Signatures from a beacon deployed before this binding do not verify. Mutinynet n
 
 ## 6. Implementation
 
-An Arkade transaction's inputs spend checkpoint outputs, not the coins themselves. `tx.input.current.scriptPubKey` and `tx.inputs[i].packet` reach the coin through the previous Arkade transaction attached to the input, which is what the continuation and the packet read rely on. The deploy is not a covenant spend; it goes through the wallet's `buildAndSubmitOffchainTx`.
+An Arkade transaction's inputs spend checkpoint outputs, not the coins themselves. `tx.input.current.script` and `tx.inputs[i].packet` reach the coin through the previous Arkade transaction attached to the input, which is what the continuation and the packet read rely on. The deploy is not a covenant spend; it goes through the wallet's `buildAndSubmitOffchainTx`.
 
 The desk and the page bind `OptionVault` to the beacon id they are given (`BEACON_TXID` on the desk, `beacon_txid` on the quote). `messages.ts` does not yet refuse expiries off the daily 08:00 UTC grid, so one-off expiries can fill the eight slots.
 

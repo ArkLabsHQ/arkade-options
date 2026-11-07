@@ -2,7 +2,7 @@ import { arkade, UnknownPacket, type CSVMultisigTapscript } from "@arkade-os/sdk
 
 import type { BeaconId } from "./beacon-id.ts";
 import { DUST_SATS } from "./constants.ts";
-import { addressOf, directPayout, payoutVtxo } from "./contracts.ts";
+import { addressOf, directPayout, payoutVtxo, scriptArg } from "./contracts.ts";
 import { build, type Built, type Coin } from "./cospend.ts";
 import { bytesToHex, xOnly } from "./hex.ts";
 import { standingLegProgram, standingVaultProgram } from "./programs.ts";
@@ -64,7 +64,7 @@ export function bindStandingVault(terms: StandingTerms): StandingScript {
   const args: Record<string, bigint | Uint8Array> = {
     kind: BigInt(terms.kind),
     writerPk,
-    writerScript: writer.tweakedPublicKey,
+    ...scriptArg("writerScript", writer.tweakedPublicKey),
     strike: terms.strike,
     collateral: terms.collateral,
     expiry: terms.expiry,
@@ -81,9 +81,9 @@ function leg(terms: StandingTerms, side: 0 | 1, userPk: Uint8Array, userScript: 
   const keys = keysOf(terms);
   const args: Record<string, bigint | Uint8Array> = {
     userPk: xOnly(userPk),
-    userScript,
-    premiumScript,
-    vaultProgram,
+    ...scriptArg("userScript", userScript),
+    ...scriptArg("premiumScript", premiumScript),
+    ...scriptArg("vaultProgram", vaultProgram),
     side: BigInt(side),
     collateral: terms.collateral,
     premium: terms.premium,
@@ -97,7 +97,7 @@ function leg(terms: StandingTerms, side: 0 | 1, userPk: Uint8Array, userScript: 
 /** Side 0. An ordinary send to this address is the writer's standing offer. */
 export function bindWriterLeg(terms: StandingTerms): StandingScript {
   const vault = bindStandingVault(terms);
-  const writerScript = vault.args.writerScript;
+  const writerScript = vault.args["writerScript.program"];
   if (!(writerScript instanceof Uint8Array)) throw new Error("writer script missing");
   return leg(terms, 0, terms.writerPk, writerScript, writerScript, vault.program);
 }
@@ -109,7 +109,7 @@ export function bindWriterLeg(terms: StandingTerms): StandingScript {
 export function bindHolderLeg(terms: StandingTerms, holderPk: Uint8Array, holderPayoutKey?: Uint8Array): StandingScript {
   const keys = keysOf(terms);
   const vault = bindStandingVault(terms);
-  const writerScript = vault.args.writerScript;
+  const writerScript = vault.args["writerScript.program"];
   if (!(writerScript instanceof Uint8Array)) throw new Error("writer script missing");
   const holder = holderPayoutKey ? directPayout(holderPayoutKey) : payoutVtxo(xOnly(holderPk), keys.serverKey, terms.exit);
   return leg(terms, 1, holderPk, holder.tweakedPublicKey, writerScript, vault.program);
@@ -165,14 +165,14 @@ export function buildStandingMatch(input: {
   const holder = input.holder.script;
   if (intArg(writer, "side") !== 0n) throw new Error("writer leg is not side 0");
   if (intArg(holder, "side") !== 1n) throw new Error("holder leg is not side 1");
-  const writerPayout = bytesArg(writer, "userScript");
-  if (!sameBytes(bytesArg(writer, "premiumScript"), writerPayout)) {
+  const writerPayout = bytesArg(writer, "userScript.program");
+  if (!sameBytes(bytesArg(writer, "premiumScript.program"), writerPayout)) {
     throw new Error("writer premium is not paid to the writer");
   }
-  if (!sameBytes(bytesArg(holder, "premiumScript"), writerPayout)) {
+  if (!sameBytes(bytesArg(holder, "premiumScript.program"), writerPayout)) {
     throw new Error("holder premium is not paid to the writer");
   }
-  if (!sameBytes(bytesArg(writer, "vaultProgram"), bytesArg(holder, "vaultProgram"))) {
+  if (!sameBytes(bytesArg(writer, "vaultProgram.program"), bytesArg(holder, "vaultProgram.program"))) {
     throw new Error("legs name different vaults");
   }
   const collateral = intArg(writer, "collateral");
@@ -192,10 +192,10 @@ export function buildStandingMatch(input: {
   const folded = holderChange > 0n && holderChange <= DUST_SATS ? holderChange : 0n;
   const outputs: { script: Uint8Array; amount: bigint }[] = [
     { script: programPk(writerPayout), amount: premium + writerChange + folded },
-    { script: programPk(bytesArg(writer, "vaultProgram")), amount: collateral },
+    { script: programPk(bytesArg(writer, "vaultProgram.program")), amount: collateral },
   ];
   if (holderChange > DUST_SATS) {
-    outputs.push({ script: programPk(bytesArg(holder, "userScript")), amount: holderChange });
+    outputs.push({ script: programPk(bytesArg(holder, "userScript.program")), amount: holderChange });
   }
 
   return build(
@@ -204,7 +204,7 @@ export function buildStandingMatch(input: {
       { script: holder, fn: "fill", coin: input.holder.coin },
     ],
     outputs,
-    [new UnknownPacket(STANDING_PARTY, standingParty(bytesArg(holder, "userPk"), bytesArg(holder, "userScript")))],
+    [new UnknownPacket(STANDING_PARTY, standingParty(bytesArg(holder, "userPk"), bytesArg(holder, "userScript.program")))],
     input.checkpoint,
   );
 }

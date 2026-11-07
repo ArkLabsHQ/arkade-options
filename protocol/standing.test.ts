@@ -92,9 +92,9 @@ test("the writer's offer does not name a holder", async () => {
   const second = await key(4).xOnlyPublicKey();
   const one = bindHolderLeg(shared, first);
   const other = bindHolderLeg(shared, second);
-  assert.equal(bytesToHex(writer.args.vaultProgram as Uint8Array), bytesToHex(vault.program));
-  assert.equal(bytesToHex(one.args.vaultProgram as Uint8Array), bytesToHex(vault.program));
-  assert.equal(bytesToHex(other.args.vaultProgram as Uint8Array), bytesToHex(vault.program));
+  assert.equal(bytesToHex(writer.args["vaultProgram.program"] as Uint8Array), bytesToHex(vault.program));
+  assert.equal(bytesToHex(one.args["vaultProgram.program"] as Uint8Array), bytesToHex(vault.program));
+  assert.equal(bytesToHex(other.args["vaultProgram.program"] as Uint8Array), bytesToHex(vault.program));
   assert.equal(writer.address, bindWriterLeg(shared).address);
   assert.notEqual(one.address, other.address);
   assert.notEqual(one.address, writer.address);
@@ -127,16 +127,16 @@ test("a matcher spends the writer leg and a later holder leg", async () => {
   }
   const paid = spend(built.arkTx);
   assert.equal(paid[0]?.amount, premium);
-  assert.equal(paid[0]?.script, bytesToHex(programOf(writer.args.userScript as Uint8Array)));
+  assert.equal(paid[0]?.script, bytesToHex(programOf(writer.args["userScript.program"] as Uint8Array)));
   assert.equal(paid[1]?.amount, collateral);
-  assert.equal(paid[1]?.script, bytesToHex(programOf(writer.args.vaultProgram as Uint8Array)));
+  assert.equal(paid[1]?.script, bytesToHex(programOf(writer.args["vaultProgram.program"] as Uint8Array)));
   assert.equal(paid.length, 4);
   const extension = Extension.fromBytes(hexToBytes(paid[2]!.script));
   const party = extension.getPacketByType(STANDING_PARTY)!.serialize();
   assert.equal(party.length, 65);
   assert.equal(party[0], 1);
   assert.equal(bytesToHex(party.subarray(1, 33)), bytesToHex(holderPk));
-  assert.equal(bytesToHex(party.subarray(33)), bytesToHex(holder.args.userScript as Uint8Array));
+  assert.equal(bytesToHex(party.subarray(33)), bytesToHex(holder.args["userScript.program"] as Uint8Array));
   const emulator = extension.getEmulatorPacket()!;
   assert.deepEqual(emulator.entries.map((entry) => entry.vin), [0, 1]);
   assert.equal(bytesToHex(emulator.entries[0]!.script), bytesToHex(writer.script.functionByName("fill")!.arkadeScript!));
@@ -163,7 +163,7 @@ test("holder change above dust returns to the holder, and dust folds into the pr
   const outputs = spend(changed.arkTx);
   assert.equal(outputs[0]?.amount, premium + 500n);
   assert.equal(outputs[2]?.amount, DUST_SATS + 1n);
-  assert.equal(outputs[2]?.script, bytesToHex(programOf(holder.args.userScript as Uint8Array)));
+  assert.equal(outputs[2]?.script, bytesToHex(programOf(holder.args["userScript.program"] as Uint8Array)));
   assert.equal(outputs.length, 5);
 
   const folded = buildStandingMatch({

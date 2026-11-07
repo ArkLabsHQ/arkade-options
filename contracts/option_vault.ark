@@ -25,8 +25,8 @@ contract OptionVault(
   int kind,
   pubkey writerPk,
   pubkey holderPk,
-  bytes32 writerScript,
-  bytes32 holderScript,
+  ScriptPubKey writerScript,
+  ScriptPubKey holderScript,
   int strike,
   int collateral,
   int expiry,
@@ -103,17 +103,17 @@ contract OptionVault(
 
     if (phPay > DUST && writerAmt > DUST) {
       require(tx.outputs[1].value >= phPay, "holder short");
-      require(tx.outputs[1].scriptPubKey == holderScript, "holder script");
+      require(tx.outputs[1].script == holderScript, "holder script");
       require(tx.outputs[2].value >= writerAmt, "writer short");
-      require(tx.outputs[2].scriptPubKey == writerScript, "writer script");
+      require(tx.outputs[2].script == writerScript, "writer script");
     }
     if (phPay <= DUST) {
       require(tx.outputs[1].value >= pot, "writer short");
-      require(tx.outputs[1].scriptPubKey == writerScript, "writer script");
+      require(tx.outputs[1].script == writerScript, "writer script");
     }
     if (writerAmt <= DUST && phPay > DUST) {
       require(tx.outputs[1].value >= pot, "holder short");
-      require(tx.outputs[1].scriptPubKey == holderScript, "holder script");
+      require(tx.outputs[1].script == holderScript, "holder script");
     }
   }
 

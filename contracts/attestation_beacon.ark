@@ -75,7 +75,7 @@ contract AttestationBeacon(
   private function continues(bytes state) {
     require(size(state) == SIZE, "state size");
     require(substr(state, 0, 1) == 0x01, "state version");
-    require(tx.outputs[0].scriptPubKey == tx.input.current.scriptPubKey, "script");
+    require(tx.outputs[0].script == tx.input.current.script, "script");
     require(tx.outputs[0].assets.lookup(ctrlTxid, ctrlGidx) == 1, "identity asset");
   }
 
@@ -133,15 +133,15 @@ contract AttestationBeacon(
     continues(state);
   }
 
-  function migrate(bytes32 next, signature opSig) {
+  function migrate(ScriptPubKey next, signature opSig) {
     require(this.activeInputIndex == 0, "beacon is input 0");
     bytes state = tx.packet(STATE);
     require(state == tx.inputs[0].packet(STATE), "state carried");
     require(size(state) == SIZE, "state size");
     int round = bin2num(substr(state, 1, 8));
-    let msg = sha256(domain + "migrate" + ctrlTxid + num2bin(ctrlGidx, 4) + num2bin(round, 8) + next);
+    let msg = sha256(domain + "migrate" + ctrlTxid + num2bin(ctrlGidx, 4) + num2bin(round, 8) + next.program);
     require(checkSigFromStack(opSig, adminPk, msg), "oracle service");
-    require(tx.outputs[0].scriptPubKey == next, "next script");
+    require(tx.outputs[0].script == next, "next script");
     require(tx.outputs[0].value >= tx.input.current.value, "value");
     require(tx.outputs[0].assets.lookup(ctrlTxid, ctrlGidx) == 1, "identity asset");
   }

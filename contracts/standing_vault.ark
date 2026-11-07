@@ -10,7 +10,7 @@ pragma arkade ^0.1.0;
 contract StandingVault(
   int kind,
   pubkey writerPk,
-  bytes32 writerScript,
+  ScriptPubKey writerScript,
   int strike,
   int collateral,
   int expiry,
@@ -42,7 +42,8 @@ contract StandingVault(
     bytes party = tx.inputs[0].packet(PARTY);
     require(size(party) == PARTY_SIZE, "party");
     require(substr(party, 0, 1) == 0x01, "party version");
-    bytes holderScript = substr(party, 33, 32);
+    // The packet stores the 32-byte program. Payouts are witness version 1.
+    ScriptPubKey holderScript = { program: substr(party, 33, 32), version: 1 };
 
     bytes state = tx.inputs[1].packet(STATE);
     require(size(state) == SIZE, "state size");
@@ -94,17 +95,17 @@ contract StandingVault(
 
     if (phPay > DUST && writerAmt > DUST) {
       require(tx.outputs[1].value >= phPay, "holder short");
-      require(tx.outputs[1].scriptPubKey == holderScript, "holder script");
+      require(tx.outputs[1].script == holderScript, "holder script");
       require(tx.outputs[2].value >= writerAmt, "writer short");
-      require(tx.outputs[2].scriptPubKey == writerScript, "writer script");
+      require(tx.outputs[2].script == writerScript, "writer script");
     }
     if (phPay <= DUST) {
       require(tx.outputs[1].value >= pot, "writer short");
-      require(tx.outputs[1].scriptPubKey == writerScript, "writer script");
+      require(tx.outputs[1].script == writerScript, "writer script");
     }
     if (writerAmt <= DUST && phPay > DUST) {
       require(tx.outputs[1].value >= pot, "holder short");
-      require(tx.outputs[1].scriptPubKey == holderScript, "holder script");
+      require(tx.outputs[1].script == holderScript, "holder script");
     }
   }
 
