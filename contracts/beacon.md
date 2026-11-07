@@ -49,7 +49,7 @@ An expiry that falls off the eight slots may be written again only with the same
 
 `read(selfIndex)`. `selfIndex` is the beacon's own input index. The current transaction carries a packet equal to the beacon's own. Output 0 keeps the script and the asset unit, and is worth at least the input plus `readFee`. The live service sets `readFee` to 1000. The vault pays that out of its collateral. No signature: anyone may read. A read pins nothing else about its transaction: not the number of inputs, not who else is in it.
 
-`migrate(next, opSig)`. Beacon at input 0. `adminPk` signs `sha256(domain + "migrate" + ctrlTxid + num2bin(ctrlGidx, 4) + num2bin(round, 8) + next)`, with `round` read from the current packet, so a migrate signature is good for one state only. Output 0 pays the 32-byte program `next` with the asset unit and at least the value; the packet is carried unchanged. The consumer does not change.
+`migrate(next, opSig)`. Beacon at input 0. Callers pass `next` as `ScriptPubKey { program, version: 1 }`, not a bare 32-byte program. `adminPk` signs `sha256(domain + "migrate" + ctrlTxid + num2bin(ctrlGidx, 4) + num2bin(round, 8) + next.program)`, with `round` read from the current packet, so a migrate signature is good for one state only. Output 0 pays that script with the asset unit and at least the value; the packet is carried unchanged. The consumer does not change.
 
 `committee` checks `1 ≤ threshold ≤ signersN ≤ 5` and that the live signer keys differ. It runs from `attest` only. `migrate` is `adminPk` alone.
 
@@ -141,7 +141,7 @@ The signature is checked inside `attest`. What stays off-chain is whether the si
 
 ## 5. Checked
 
-Both contracts compile with `arkadec` 0.1.0 with no warnings. The artifacts are committed. `AttestationBeacon.attest` has 5 `CHECKSIGFROMSTACK`. `OptionVault.settle` has no `CHECKSIGFROMSTACK`, one `INSPECTINASSETLOOKUP`, one `INSPECTINPUTPACKET`, and checks the stored sample time.
+Both contracts compile with `arkadec` 0.1.0-rc.1. It warns that `OptionVault.settle` inspects `tx.outputs[1].script` more than once, and that `AttestationBeacon.attest` uses `checkSigFromStack` where an invalid signature fails the spend. The artifacts are committed. `AttestationBeacon.attest` has 5 `CHECKSIGFROMSTACK`. `OptionVault.settle` has no `CHECKSIGFROMSTACK`, one `INSPECTINASSETLOOKUP`, one `INSPECTINPUTPACKET`, and checks the stored sample time.
 
 `pnpm test` covers the state codec, the artifacts, the bindings, the deploy outputs, the oracle service, and the layout of the transactions `cospend.ts` builds.
 
@@ -149,7 +149,7 @@ Signatures from a beacon deployed before this binding do not verify. Mutinynet n
 
 ## 6. Implementation
 
-An Arkade transaction's inputs spend checkpoint outputs, not the coins themselves. `tx.input.current.scriptPubKey` and `tx.inputs[i].packet` reach the coin through the previous Arkade transaction attached to the input, which is what the continuation and the packet read rely on. The deploy is not a covenant spend; it goes through the wallet's `buildAndSubmitOffchainTx`.
+An Arkade transaction's inputs spend checkpoint outputs, not the coins themselves. `tx.input.current.script` and `tx.inputs[i].packet` reach the coin through the previous Arkade transaction attached to the input, which is what the continuation and the packet read rely on. The deploy is not a covenant spend; it goes through the wallet's `buildAndSubmitOffchainTx`.
 
 The desk and the page bind `OptionVault` to the beacon id they are given (`BEACON_TXID` on the desk, `beacon_txid` on the quote). `messages.ts` does not yet refuse expiries off the daily 08:00 UTC grid, so one-off expiries can fill the eight slots.
 

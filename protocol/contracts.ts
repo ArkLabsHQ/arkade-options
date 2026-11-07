@@ -68,6 +68,11 @@ export function directPayoutKey(writerPubkey: string, writerPkScript: string): U
   return key;
 }
 
+/** Witness version 1. `program` is the 32-byte output key the contract compares. */
+export function scriptArg(name: string, program: Uint8Array): Record<string, bigint | Uint8Array> {
+  return { [`${name}.program`]: program, [`${name}.version`]: 1n };
+}
+
 export function directPayout(key: Uint8Array): { tweakedPublicKey: Uint8Array; pkScript: Uint8Array } {
   const tweakedPublicKey = xOnly(key);
   const pkScript = new Uint8Array(34);
@@ -102,8 +107,8 @@ export function bindContracts(terms: Terms): Bound {
     kind: BigInt(terms.kind),
     writerPk,
     holderPk,
-    writerScript: writer.tweakedPublicKey,
-    holderScript: holder.tweakedPublicKey,
+    ...scriptArg("writerScript", writer.tweakedPublicKey),
+    ...scriptArg("holderScript", holder.tweakedPublicKey),
     strike: terms.strike,
     collateral: terms.collateral,
     expiry: terms.expiry,
@@ -117,9 +122,9 @@ export function bindContracts(terms: Terms): Bound {
 
   const intentArgs: Record<string, bigint | Uint8Array> = {
     userPk: writerPk,
-    userScript: writer.tweakedPublicKey,
-    solverScript: holder.tweakedPublicKey,
-    optionScript: vaultScript.tweakedPublicKey,
+    ...scriptArg("userScript", writer.tweakedPublicKey),
+    ...scriptArg("solverScript", holder.tweakedPublicKey),
+    ...scriptArg("optionScript", vaultScript.tweakedPublicKey),
     side: 0n,
     collateral: terms.collateral,
     premium: terms.premium,

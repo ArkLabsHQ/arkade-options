@@ -11,9 +11,9 @@ pragma arkade ^0.1.0;
 
 contract StandingLeg(
   pubkey userPk,
-  bytes32 userScript,
-  bytes32 premiumScript,
-  bytes32 vaultProgram,
+  ScriptPubKey userScript,
+  ScriptPubKey premiumScript,
+  ScriptPubKey vaultProgram,
   int side,
   int collateral,
   int premium,
@@ -36,7 +36,7 @@ contract StandingLeg(
     require(substr(party, 0, 1) == 0x01, "party version");
 
     require(tx.outputs[1].value >= collateral, "option size");
-    require(tx.outputs[1].scriptPubKey == vaultProgram, "vault");
+    require(tx.outputs[1].script == vaultProgram, "vault");
 
     int locked = tx.input.current.value;
     if (side == 0) {
@@ -44,18 +44,18 @@ contract StandingLeg(
       require(locked >= collateral, "short collateral");
       int change = locked - collateral;
       require(tx.outputs[0].value >= premium + change, "premium");
-      require(tx.outputs[0].scriptPubKey == userScript, "user");
+      require(tx.outputs[0].script == userScript, "user");
     }
     if (side == 1) {
       require(locked >= premium, "short premium");
       require(substr(party, 1, 32) == userPk, "holder");
-      require(substr(party, 33, 32) == userScript, "holder script");
+      require(substr(party, 33, 32) == userScript.program, "holder script");
       require(tx.outputs[0].value >= premium, "premium");
-      require(tx.outputs[0].scriptPubKey == premiumScript, "writer");
+      require(tx.outputs[0].script == premiumScript, "writer");
       int change = locked - premium;
       if (change > DUST) {
         require(tx.outputs[2].value >= change, "change");
-        require(tx.outputs[2].scriptPubKey == userScript, "change");
+        require(tx.outputs[2].script == userScript, "change");
       }
     }
   }
@@ -64,7 +64,7 @@ contract StandingLeg(
     require(tx.numInputs == 1, "one input");
     require(checkTime(deadline), "open");
     require(tx.outputs[0].value >= tx.input.current.value, "refund");
-    require(tx.outputs[0].scriptPubKey == userScript, "user");
+    require(tx.outputs[0].script == userScript, "user");
   }
 
   function unilateral(signature userSig) tapscript {

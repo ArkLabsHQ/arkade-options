@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 
 import { arkade } from "@arkade-os/sdk";
 
+import { scriptArg } from "../../protocol/contracts.ts";
 import {
   artifactLine,
   beaconProgram,
@@ -62,8 +63,8 @@ const compiledVault = new arkade.ArkadeProgramScript(
     kind: 0n,
     writerPk: key(1),
     holderPk: key(2),
-    writerScript: key(3),
-    holderScript: key(4),
+    ...scriptArg("writerScript", key(3)),
+    ...scriptArg("holderScript", key(4)),
     strike: 10_000_000n,
     collateral: 10_000_000n,
     expiry: 1_800_000_000n,
@@ -98,9 +99,9 @@ const compiledIntent = new arkade.ArkadeProgramScript(
   intent,
   {
     userPk: key(1),
-    userScript: key(3),
-    solverScript: key(4),
-    optionScript: key(5),
+    ...scriptArg("userScript", key(3)),
+    ...scriptArg("solverScript", key(4)),
+    ...scriptArg("optionScript", key(5)),
     side: 0n,
     collateral: 10_000_000n,
     premium: 50_000n,
