@@ -10,7 +10,7 @@ import { base64 } from "@scure/base";
 import { beaconIdOf, bindBeacon, decodeState, genesisOutputs, nextState, priceValue, statePacketOf } from "../protocol/beacon.ts";
 import { BEACON_READ_FEE, EXIT, PRICE_MAX } from "../protocol/constants.ts";
 import { buildAttest, submit } from "../protocol/cospend.ts";
-import { centsOf, type DiaIntent } from "../protocol/dia.ts";
+import { centsOf, intentSigned, type DiaIntent } from "../protocol/dia.ts";
 import { bytesToHex, hexToBytes } from "../protocol/hex.ts";
 import { chooseSample as pickSample, loadStore, pruneSamples, saveStore, type StoredSample } from "./store.ts";
 
@@ -351,7 +351,7 @@ export async function createOracle(deps: OracleDeps) {
     if (cents > PRICE_MAX) throw new HttpError(400, "price");
     if (!Number.isSafeInteger(intent.time) || intent.time <= 0) throw new HttpError(400, "time");
     if (intent.time > now()) throw new HttpError(400, "future timestamp");
-    if (intent.sig.length !== 64) throw new HttpError(400, "sig");
+    if (intent.sig.length !== 64 || !intentSigned(intent)) throw new HttpError(400, "dia signature");
     keepRecent();
     const raw = intent.price.toString();
     if (store.samples.some((sample) => sample.time === intent.time && sample.raw === raw)) {

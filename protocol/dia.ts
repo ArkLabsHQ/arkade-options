@@ -141,8 +141,18 @@ export function decodeIntent(resultHex: string): DiaIntent {
   return { price, time, nonce, intentExpiry, sig: signature.subarray(0, 64) };
 }
 
+/** The pinned DIA key signed this intent. A bad signature is false, not an exception. */
+export function intentSigned(intent: DiaIntent): boolean {
+  if (intent.sig.length !== 64) return false;
+  try {
+    return secp256k1.verify(intent.sig, intentDigest(intent), DIA_PUBKEY.subarray(1), { prehash: false }) === true;
+  } catch {
+    return false;
+  }
+}
+
 function accepts(intent: DiaIntent): boolean {
-  return secp256k1.verify(intent.sig, intentDigest(intent), DIA_PUBKEY.subarray(1), { prehash: false }) === true;
+  return intentSigned(intent);
 }
 
 async function rpc(method: string, params: unknown[], signal?: AbortSignal): Promise<unknown> {
