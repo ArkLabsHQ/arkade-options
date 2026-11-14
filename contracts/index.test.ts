@@ -77,9 +77,6 @@ test("the two artifacts publish the vault and beacon functions", () => {
     constructor: [
       "ctrlTxid",
       "ctrlGidx",
-      "signers",
-      "signersN",
-      "threshold",
       "domain",
       "expiryLag",
       "readFee",
@@ -87,7 +84,7 @@ test("the two artifacts publish the vault and beacon functions", () => {
       "exit",
     ],
     functions: [
-      { name: "attest", inputs: ["expiry", "price", "time", "sigs"] },
+      { name: "attest", inputs: ["expiry", "price", "time", "nonce", "intentExpiry", "sig"] },
       { name: "read", inputs: ["selfIndex"] },
       { name: "migrate", inputs: ["next", "opSig"] },
       { name: "unilateral", inputs: ["adminSig"] },
