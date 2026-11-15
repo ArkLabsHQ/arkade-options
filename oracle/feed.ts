@@ -44,7 +44,7 @@ export function startDiaFeed(everyMs: number, wsUrl = process.env.DIA_WS?.trim()
   connect();
   void pull();
   return {
-    latest: pull,
+    latest: pull, // refetches; a failed read keeps the previous intent
     stop: () => {
       stopped = true;
       clearInterval(timer);

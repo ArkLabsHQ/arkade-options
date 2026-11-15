@@ -122,7 +122,7 @@ function diaSample(cents: string | number, time: number) {
   };
 }
 
-/** A sample already on disk. Publish tests use this; `/api/intent` will not store `DIA_SIG`. */
+/** Bypasses `/api/intent` signature checks. For publish-path unit tests only. */
 function storedSample(cents: string | number, time: number): StoredSample {
   return {
     price: String(cents),

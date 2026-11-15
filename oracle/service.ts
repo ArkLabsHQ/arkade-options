@@ -351,7 +351,7 @@ export async function createOracle(deps: OracleDeps) {
     if (cents > PRICE_MAX) throw new HttpError(400, "price");
     if (!Number.isSafeInteger(intent.time) || intent.time <= 0) throw new HttpError(400, "time");
     if (intent.time > now()) throw new HttpError(400, "future timestamp");
-    if (intent.sig.length !== 64 || !intentSigned(intent)) throw new HttpError(400, "dia signature");
+    if (!intentSigned(intent)) throw new HttpError(400, "dia signature");
     keepRecent();
     const raw = intent.price.toString();
     if (store.samples.some((sample) => sample.time === intent.time && sample.raw === raw)) {

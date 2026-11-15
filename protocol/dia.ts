@@ -209,7 +209,7 @@ export async function fetchPinnedIntent(signal?: AbortSignal): Promise<DiaIntent
     topics: filter.topics,
   }], signal);
   if (!Array.isArray(logs)) throw new Error("dia logs");
-  const want = "10e34723aa722c7a9860f5ec6446f22252db168a";
+  const want = "10e34723aa722c7a9860f5ec6446f22252db168a"; // DIA's pinned signer address
   for (let i = logs.length - 1; i >= 0; i--) {
     const log = logs[i] as { data?: string; topics?: string[] };
     const data = (log.data ?? "").replace(/^0x/, "");
