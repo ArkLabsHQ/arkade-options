@@ -1205,7 +1205,7 @@ function renderAttestations() {
     if (found) dia.append(outLink(`${found.tx.slice(0, 8)}…${found.tx.slice(-4)}`, `${DIA_EXPLORER}/tx/${found.tx}`));
     else if (log === null) dia.append(outLink("registry", `${DIA_EXPLORER}/address/${DIA_REGISTRY}`));
     else dia.append("finding…");
-    verify.append(dia, txLink("Ark", fixing.txid) ?? "");
+    verify.append(dia, txLink("Arkade", fixing.txid) ?? "");
     const row = el("tr");
     row.append(el("td", "", "BTC/USD"), price, time, expiry, who, verify);
     row.childNodes.forEach((td, i) => td.setAttribute("data-label", labels[i]));
