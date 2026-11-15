@@ -25,25 +25,25 @@ Traefik serves these domains with its default certificate. `curl` needs `-k`.
 | Oracle | <https://app-input-bluetooth-program-he5gtr-bb8d3b-138-199-218-130.traefik.me/> |
 | Desk | <https://app-quantify-cross-platform-bus-bwux4e-31e3a4-138-199-218-130.traefik.me/> |
 | Settler | <https://app-back-up-redundant-system-a7rla7-995a33-138-199-218-130.traefik.me/> |
-| Oracle volume | `oracle-week-data` mounted at `/data` (`oracle.json`, `arkade.sqlite`) |
-| Desk volume | `desk-week-data` mounted at `/data` (`book.json`, `arkade.sqlite`) |
-| Settler volume | `settler-week-data` mounted at `/data` (`progress.json`) |
+| Oracle volume | `oracle-dia-data` mounted at `/data` (`oracle.json`, `arkade.sqlite`) |
+| Desk volume | `desk-dia-data` mounted at `/data` (`book.json`, `arkade.sqlite`) |
+| Settler volume | `settler-dia-data` mounted at `/data` (`progress.json`) |
 
 Beacon (Mutinynet). `BEACON_TXID` is the oracle's `issueTxid`. `ctrlTxid` is that same txid with the bytes reversed; the script compares the reversed form.
 
 | | |
 | --- | --- |
-| `issueTxid` / `BEACON_TXID` | `c919606acba781572d5f72e53ffc6d125c98fbbd36df69eaf6f9613bae25499d` |
-| `assetId` | `c919606acba781572d5f72e53ffc6d125c98fbbd36df69eaf6f9613bae25499d0000` |
-| `deployTxid` | `8faf199b199ddd3f3b88c1b290805a1dd78254864f1dd9963d5278d7f45836fa` |
-| `ctrlTxid` | `9d4925ae3b61f9f6ea69df36bdfb985c126dfc3fe5725f2d5781a7cb6a6019c9` |
-| Beacon address | `tark1qqcpq7yq3e8hhsx6ml3fud93m7827qggaurtzu3zwsr4a0qs0gf8449krp83vcrs7yq9vlyn3k7kr3739l3y5dsqqg5xl3tqwtwse5u4kf3yhw` |
+| `issueTxid` / `BEACON_TXID` | `58db69a7a8a64cd1b16fa7ec4dba2c49a62815d88d0f7a660e216c0206e975c2` |
+| `assetId` | `58db69a7a8a64cd1b16fa7ec4dba2c49a62815d88d0f7a660e216c0206e975c20000` |
+| `deployTxid` | `a58272ece0ca3b48e92483375e04b91e751f61cc0416c06f64dbbd7dc428aebf` |
+| `ctrlTxid` | `c275e906026c210e667a0f8dd81528a6492cba4deca76fb1d14ca6a8a769db58` |
+| Beacon address | `tark1qqcpq7yq3e8hhsx6ml3fud93m7827qggaurtzu3zwsr4a0qs0gf849c8k9fmuplslxvex94jqct8d58l229c0jh2seve4ky0n3xy0rjwr978pd` |
 | Oracle wallet | `tark1qqcpq7yq3e8hhsx6ml3fud93m7827qggaurtzu3zwsr4a0qs0gf85q9pwqnt6gkk63gqu8kq6hn67g6rxft96nc3tschxa2mrxn8a63d3ltm5j` |
 | Admin pubkey | `e96d459a88359d713db09e7b226644b84765ac33b0b84f4cb60bc9d39ffb5bbe` |
 | Desk nostr pubkey | `eb36be79b231beeecbea9609767139974137d1f5dbaab56f19396bda3f07edc9` |
 | Desk deposit address | `tark1qqcpq7yq3e8hhsx6ml3fud93m7827qggaurtzu3zwsr4a0qs0gf85yqmhrwnt5zuhcr935nk7w7avtt3nf3kvvucn63tmrsx6q7h9x4txm6sw2` |
 
-`ORACLE_KEY`, `ORACLE_ADMIN`, and `DESK_KEY` live in Dokploy, not on the volume. A redeploy keeps the beacon, the wallet, and the quote book. Replacing a volume, or rotating `ORACLE_KEY`, starts a different beacon. The page settles the beacon in this table. `app/src/beacon-status.ts` is a copy of the oracle `GET /api/status`, because the browser does not trust the Traefik certificate. Quotes use the desk nostr pubkey in `app/rfq-config.js`. The coin at `76ba2970…da89` remains on the previous Oracle and Desk services.
+`ORACLE_KEY`, `ORACLE_ADMIN`, and `DESK_KEY` live in Dokploy, not on the volume. A redeploy keeps the beacon, the wallet, and the quote book. Replacing a volume, or rotating `ORACLE_KEY`, starts a different beacon. The page settles the beacon in this table. `app/src/beacon-status.ts` is a copy of the oracle `GET /api/status`, because the browser does not trust the Traefik certificate. Quotes use the desk nostr pubkey in `app/rfq-config.js`. The earlier beacons `71ae6a54…2802` and `c919606a…499d`, and the coin at `76ba2970…da89`, stay on chain. This table is the DIA beacon.
 
 ## Day to day
 
