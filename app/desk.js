@@ -22,6 +22,9 @@ import {
   walletMessageTarget,
 } from "./src/wallet-link.ts";
 import { requestQuotes } from "./src/rfq.ts";
+import { findIntentTx, intentHashOf } from "./src/attestations.ts";
+import { LIVE_BEACON_STATUS } from "./src/beacon-status.ts";
+import { DIA_REGISTRY } from "../protocol/dia.ts";
 import { btcUsdCents, deribitPremium, fetchSurface } from "../protocol/deribit.ts";
 import { BEACON_READ_FEE, QUOTE_TTL_S } from "../protocol/constants.ts";
 import { quotedPremium } from "../protocol/pricing.ts";
@@ -845,6 +848,7 @@ function pageHash(view) {
   if (view === "connect") return "#/connect";
   if (view === "home") return state.selected ? `#/positions/${state.selected}` : "#/positions";
   if (view === "how") return "#/how";
+  if (view === "attestations") return "#/attestations";
   return state.kind === 1 ? "#/quote/put" : "#/quote/call";
 }
 
@@ -855,6 +859,7 @@ function routeFromHash() {
   if (path.startsWith("/positions")) return { view: "home", kind: state.kind, id: path.slice("/positions/".length) || null };
   if (path.startsWith("/connect")) return { view: "connect", kind: state.kind };
   if (path === "/how" || path.startsWith("/how/")) return { view: "how", kind: state.kind };
+  if (path === "/attestations") return { view: "attestations", kind: state.kind };
   return { view: "sell", kind: state.kind };
 }
 
@@ -864,6 +869,7 @@ function show(view, mode = "push") {
   $("home").hidden = view !== "home";
   $("sell").hidden = view !== "sell";
   $("how").hidden = view !== "how";
+  $("attestations").hidden = view !== "attestations";
   if (view !== "sell") {
     state.open = "";
     closeCheckout();
@@ -876,6 +882,7 @@ function show(view, mode = "push") {
   renderTop();
   if (view === "home") renderBlotter();
   if (view === "sell") renderSell();
+  if (view === "attestations") renderAttestations();
   if (view === "connect") {
     $("connect-current").hidden = !state.address;
     $("connect-address").textContent = shortAddress(state.address);
@@ -1138,6 +1145,73 @@ function txLink(label, txid) {
   link.rel = "noopener";
   row.append(el("span", "", label), link);
   return row;
+}
+
+function outLink(text, href) {
+  const link = el("a", "", text);
+  link.href = href;
+  link.target = "_blank";
+  link.rel = "noopener";
+  return link;
+}
+
+function whenSecond(unix) {
+  const at = new Date(Number(unix) * 1000).toLocaleString("en-US", { timeZone: "UTC", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23" });
+  return `${at} UTC`;
+}
+
+const DIA_EXPLORER = "https://explorer.diadata.org";
+const DIA_SIGNER = "0x10e34723aa722c7a9860f5ec6446f22252db168a";
+/** Intent hash to its Lasernet log: "pending", null when it could not be found, or { tx, signer }. */
+const diaLogs = new Map();
+
+function renderAttestations() {
+  const host = $("attestations-list");
+  const fixings = [...LIVE_BEACON_STATUS.fixings].sort((a, b) => b.expiry - a.expiry);
+  if (!fixings.length) {
+    host.replaceChildren(el("p", "empty", "No attestations yet."));
+    return;
+  }
+  const labels = ["Symbol", "Price", "DIA time", "Option date", "Signer", "Verify"];
+  const table = el("table");
+  const head = el("tr");
+  for (const name of labels) head.append(el("th", "", name));
+  table.append(head);
+  for (const fixing of fixings) {
+    const hash = intentHashOf(fixing);
+    const log = diaLogs.get(hash);
+    if (log === undefined) {
+      diaLogs.set(hash, "pending");
+      findIntentTx(hash)
+        .then((found) => diaLogs.set(hash, found))
+        .catch(() => diaLogs.set(hash, null))
+        .finally(() => {
+          if (state.view === "attestations") renderAttestations();
+        });
+    }
+    const found = log && log !== "pending" ? log : null;
+    const signer = found?.signer ?? DIA_SIGNER;
+    const price = el("td", "mono", `$${usdFromCents(BigInt(fixing.price))}`);
+    price.title = `${fixing.raw} (18 decimals)`;
+    const time = el("td", "", whenSecond(fixing.time));
+    time.title = String(fixing.time);
+    const expiry = el("td", "", whenSecond(fixing.expiry));
+    expiry.title = String(fixing.expiry);
+    const who = el("td", "mono");
+    who.append(outLink(`${signer.slice(0, 6)}…${signer.slice(-4)}`, `${DIA_EXPLORER}/address/${signer}`));
+    const verify = el("td", "verify");
+    const dia = el("p", "tx-link");
+    dia.append(el("span", "", "DIA"));
+    if (found) dia.append(outLink(`${found.tx.slice(0, 8)}…${found.tx.slice(-4)}`, `${DIA_EXPLORER}/tx/${found.tx}`));
+    else if (log === null) dia.append(outLink("registry", `${DIA_EXPLORER}/address/${DIA_REGISTRY}`));
+    else dia.append("finding…");
+    verify.append(dia, txLink("Ark", fixing.txid) ?? "");
+    const row = el("tr");
+    row.append(el("td", "", "BTC/USD"), price, time, expiry, who, verify);
+    row.childNodes.forEach((td, i) => td.setAttribute("data-label", labels[i]));
+    table.append(row);
+  }
+  host.replaceChildren(table);
 }
 
 function txLinks(position) {

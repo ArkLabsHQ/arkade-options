@@ -1,7 +1,8 @@
 /**
  * Public constructor the page settles against. The oracle certificate is not
  * trusted by the browser, so this is a copy of GET /api/status on the
- * Mutinynet oracle. Replace it when that beacon changes.
+ * Mutinynet oracle. Replace it when that beacon changes. `fixings` is what
+ * the attestations page lists, so copy it again after each new fixing.
  */
 export const LIVE_BEACON_STATUS = {
   pubkeys: ["e96d459a88359d713db09e7b226644b84765ac33b0b84f4cb60bc9d39ffb5bbe"],
@@ -18,4 +19,16 @@ export const LIVE_BEACON_STATUS = {
     adminPk: "e96d459a88359d713db09e7b226644b84765ac33b0b84f4cb60bc9d39ffb5bbe",
     exit: 2048,
   },
+  fixings: [
+    {
+      expiry: 1794740208,
+      price: "6547566",
+      time: 1794740227,
+      raw: "65475660863768696455168",
+      nonce: "1793790301274552364",
+      intentExpiry: 1794743827,
+      sig: "0e033152d22ecb653f3de06a641fe2f98d28c0eb31483863fe0723ca4e1f6b0f70dd89f34702e7486da6ce3058f05c723aa21ba4cc99768f82d72afee4096974",
+      txid: "dea11283245be3ac269e1c9acb36036da2d40d5b66becd3533a922e1312c7f92",
+    },
+  ],
 };

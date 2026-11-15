@@ -43,7 +43,7 @@ Beacon (Mutinynet). `BEACON_TXID` is the oracle's `issueTxid`. `ctrlTxid` is tha
 | Desk nostr pubkey | `eb36be79b231beeecbea9609767139974137d1f5dbaab56f19396bda3f07edc9` |
 | Desk deposit address | `tark1qqcpq7yq3e8hhsx6ml3fud93m7827qggaurtzu3zwsr4a0qs0gf85yqmhrwnt5zuhcr935nk7w7avtt3nf3kvvucn63tmrsx6q7h9x4txm6sw2` |
 
-`ORACLE_KEY`, `ORACLE_ADMIN`, and `DESK_KEY` live in Dokploy, not on the volume. A redeploy keeps the beacon, the wallet, and the quote book. Replacing a volume, or rotating `ORACLE_KEY`, starts a different beacon. The page settles the beacon in this table. `app/src/beacon-status.ts` is a copy of the oracle `GET /api/status`, because the browser does not trust the Traefik certificate. Quotes use the desk nostr pubkey in `app/rfq-config.js`. The earlier beacons `71ae6a54…2802` and `c919606a…499d`, and the coin at `76ba2970…da89`, stay on chain. This table is the DIA beacon.
+`ORACLE_KEY`, `ORACLE_ADMIN`, and `DESK_KEY` live in Dokploy, not on the volume. A redeploy keeps the beacon, the wallet, and the quote book. Replacing a volume, or rotating `ORACLE_KEY`, starts a different beacon. The page settles the beacon in this table. `app/src/beacon-status.ts` is a copy of the oracle `GET /api/status`, because the browser does not trust the Traefik certificate. The Attestations tab (`#/attestations`) lists its `fixings`, so copy them again after a new fixing; each row finds its Lasernet `IntentRegistered` tx from `rpc.diadata.org`. Quotes use the desk nostr pubkey in `app/rfq-config.js`. The earlier beacons `71ae6a54…2802` and `c919606a…499d`, and the coin at `76ba2970…da89`, stay on chain. This table is the DIA beacon.
 
 ## Day to day
 

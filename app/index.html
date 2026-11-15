@@ -19,6 +19,7 @@
       <button type="button" data-tab="sell">New</button>
       <button type="button" data-tab="home">Positions<span class="count" id="count" hidden></span></button>
       <button type="button" data-tab="how">How it works</button>
+      <button type="button" data-tab="attestations">Attestations</button>
     </nav>
     <button type="button" class="wallet" id="who" hidden><span class="dot" aria-hidden="true"></span><span class="addr-l" id="who-address"></span><span class="addr-s" id="who-tail"></span></button>
     <button type="button" class="connect" id="top-connect">Connect</button>
@@ -161,6 +162,15 @@
           </div>
         </figure>
       </article>
+    </section>
+
+    <section id="attestations" hidden>
+      <div class="opener"><span class="av"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M0 6L6 0H18L24 6V12H18V6H6V12H0ZM6 18V12H18V18ZM6 24H0V18H6ZM24 18V24H18V18Z"/></svg></span><p>Every settlement price comes from DIA. The price feed only stores a print after checking DIA’s signature.</p></div>
+      <section class="card" aria-labelledby="attestations-title">
+        <h2 id="attestations-title">DIA attestations</h2>
+        <p class="sub">Each row is a BTC/USD print DIA signed on Lasernet and the Arkade price feed recorded for one option date. Check both sides yourself.</p>
+        <div class="atts" id="attestations-list"></div>
+      </section>
     </section>
   </main>
   <p class="note" id="note"><b>Arkade Options is an educational demo</b> showing that selling BTC options works on Arkade. <span id="spot-line"></span></p>
