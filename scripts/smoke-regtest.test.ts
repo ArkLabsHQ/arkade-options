@@ -19,6 +19,7 @@ import {
 } from "@arkade-os/sdk";
 
 import { beaconIdOf, bindBeacon } from "../protocol/beacon.ts";
+import { centsOf, fetchPinnedIntent } from "../protocol/dia.ts";
 import { fillQuote } from "../desk/fill.ts";
 import type { QuoteRow } from "../desk/book.ts";
 import { BEACON_READ_FEE, DUST_SATS, EXIT, Q_MIN } from "../protocol/constants.ts";
@@ -140,8 +141,6 @@ test("option intent fills, cancels, and settles at the strike on local arkade re
     assert.equal(parsed.beacon.exit, EXIT);
     const beaconScript = bytesToHex(bindBeacon({
       id: beaconIdOf(asset.AssetId.fromString(parsed.beacon.assetId)),
-      signers: parsed.beacon.signers,
-      threshold: parsed.beacon.threshold,
       domain: parsed.beacon.domain,
       expiryLag: parsed.beacon.expiryLag,
       readFee: parsed.beacon.readFee,
@@ -235,12 +234,23 @@ test("option intent fills, cancels, and settles at the strike on local arkade re
     if (Math.floor(Date.now() / 1000) > Number(expiry) + expiryLag) {
       throw new Error("missed the publish window");
     }
-    const sample = (await oracleCall(oracle.url, "/api/samples", { price: strike.toString() })).json;
-    assert.equal(sample.price, strike.toString(), `sample ${JSON.stringify(sample)}`);
+    const intent = await fetchPinnedIntent();
+    if (intent.time < Number(expiry) || intent.time > Number(expiry) + expiryLag) {
+      throw new Error("DIA timestamp is outside the expiry window");
+    }
+    const sample = (await oracleCall(oracle.url, "/api/intent", {
+      price: intent.price.toString(),
+      time: intent.time,
+      nonce: intent.nonce.toString(),
+      intentExpiry: intent.intentExpiry,
+      sig: bytesToHex(intent.sig),
+    })).json;
+    const cents = centsOf(intent.price);
+    assert.equal(sample.price, cents.toString(), `sample ${JSON.stringify(sample)}`);
     await sleepUntil(Number(expiry) + expiryLag, "publish");
     const published = (await oracleCall(oracle.url, "/api/publish", { expiry: Number(expiry) })).json;
     console.log("publish", published.txid, published.price);
-    assert.equal(published.price, strike.toString());
+    assert.equal(published.price, cents.toString());
     assert.match(String(published.txid ?? ""), /^[0-9a-f]{64}$/);
 
     await waitFor(async () => {
@@ -267,7 +277,7 @@ test("option intent fills, cancels, and settles at the strike on local arkade re
     }
     assert.ok(settled && settled.result === "settled" && settled.price != null, `settle ${settled?.result}`);
     if (!settled || settled.result !== "settled" || settled.price == null) return;
-    assert.equal(settled.price, strike);
+    assert.equal(settled.price, cents);
     assert.equal(settled.holder, 0n);
     assert.equal(settled.writer, collateral - BEACON_READ_FEE);
     assert.match(settled.txid, /^[0-9a-f]{64}$/);
