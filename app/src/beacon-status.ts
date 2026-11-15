@@ -5,11 +5,11 @@
  */
 export const LIVE_BEACON_STATUS = {
   pubkeys: ["e96d459a88359d713db09e7b226644b84765ac33b0b84f4cb60bc9d39ffb5bbe"],
-  assetId: "c919606acba781572d5f72e53ffc6d125c98fbbd36df69eaf6f9613bae25499d0000",
-  issueTxid: "c919606acba781572d5f72e53ffc6d125c98fbbd36df69eaf6f9613bae25499d",
-  address: "tark1qqcpq7yq3e8hhsx6ml3fud93m7827qggaurtzu3zwsr4a0qs0gf8449krp83vcrs7yq9vlyn3k7kr3739l3y5dsqqg5xl3tqwtwse5u4kf3yhw",
+  assetId: "58db69a7a8a64cd1b16fa7ec4dba2c49a62815d88d0f7a660e216c0206e975c20000",
+  issueTxid: "58db69a7a8a64cd1b16fa7ec4dba2c49a62815d88d0f7a660e216c0206e975c2",
+  address: "tark1qqcpq7yq3e8hhsx6ml3fud93m7827qggaurtzu3zwsr4a0qs0gf849c8k9fmuplslxvex94jqct8d58l229c0jh2seve4ky0n3xy0rjwr978pd",
   args: {
-    ctrlTxid: "9d4925ae3b61f9f6ea69df36bdfb985c126dfc3fe5725f2d5781a7cb6a6019c9",
+    ctrlTxid: "c275e906026c210e667a0f8dd81528a6492cba4deca76fb1d14ca6a8a769db58",
     signersN: 1,
     threshold: 1,
     domain: "4254435553442d464958",
